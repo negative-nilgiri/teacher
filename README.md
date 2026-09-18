@@ -11,20 +11,27 @@ The project ships two Rust binaries from one Cargo package:
 The accepted v1 behavior is specified in [`DESIGN_REVIEW.md`](DESIGN_REVIEW.md).
 Agents generating lessons should start with the concise
 [`docs/AUTHORING.md`](docs/AUTHORING.md) guide and checked examples.
+Developers changing the implementation should start with the architecture and
+code map in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 Run `just` (or `just --list`) to see the documented development commands.
 
 ## Install and use
 
 The only runtime prerequisite is `git`; Node.js is needed only when changing the
-React frontend. Install both Rust binaries from the package root:
+React frontend. Install both Rust binaries from the package root and run a
+lesson with the convenience recipes:
 
 ```sh
-cargo install --path . --locked
-learnc check lesson.json
-learnc build lesson.json
-learn serve lesson.learn
+just install
+just lesson-check path/to/lesson.json
+just lesson-build path/to/lesson.json path/to/lesson.learn
+just serve path/to/lesson.learn
 ```
+
+For local development, `just run` rebuilds the UI, compiles
+`examples/inline-lesson.json` to `target/dev-lesson.learn`, and serves it. Both
+paths are optional positional arguments: `just run lesson.json lesson.learn`.
 
 Commands emit JSON by default for agent use. Pass `--text` or `-t` for concise
 human-readable output. `learn serve` binds to a random loopback port and opens a

@@ -34,12 +34,37 @@ web-dev:
 web-build:
     npm --prefix web run build
 
+# Run the React behavior tests once.
+web-test:
+    npm --prefix web test
+
 # Build both Rust binaries after refreshing embedded frontend assets.
 build: web-build
     cargo build
 
-# Run all non-mutating local verification checks.
-verify: fmt-check lint test
+# Install the learnc and learn binaries from this checkout.
+install: web-build
+    cargo install --path . --locked --force
+
+# Validate an authored lesson without writing an artifact.
+lesson-check lesson="examples/inline-lesson.json":
+    cargo run --quiet --bin learnc -- check "{{lesson}}"
+
+# Compile an authored lesson to a disposable development artifact.
+lesson-build lesson="examples/inline-lesson.json" artifact="target/dev-lesson.learn":
+    cargo run --quiet --bin learnc -- build "{{lesson}}" --output "{{artifact}}"
+
+# Serve an existing compiled artifact.
+serve artifact="target/dev-lesson.learn":
+    cargo run --quiet --bin learn -- serve "{{artifact}}"
+
+# Rebuild the UI, compile an authored lesson, and serve it.
+run lesson="examples/inline-lesson.json" artifact="target/dev-lesson.learn": web-build
+    cargo run --quiet --bin learnc -- build "{{lesson}}" --output "{{artifact}}"
+    cargo run --quiet --bin learn -- serve "{{artifact}}"
+
+# Run all non-mutating Rust and frontend verification checks.
+verify: fmt-check lint test web-test
 
 # Show the exact files that Cargo will place in the distributable crate.
 package-list:
