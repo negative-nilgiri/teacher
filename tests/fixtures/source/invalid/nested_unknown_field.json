@@ -1,0 +1,15 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Nested unknown field",
+  "blocks": [
+    {
+      "type": "code",
+      "id": "sample",
+      "source": {
+        "kind": "inline",
+        "content": "fn main() {}",
+        "language": "rust"
+      }
+    }
+  ]
+}

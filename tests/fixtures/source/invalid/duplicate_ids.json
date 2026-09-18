@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Duplicate IDs",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "same",
+      "source": { "kind": "inline", "content": "First" }
+    },
+    {
+      "type": "code",
+      "id": "same",
+      "source": { "kind": "inline", "content": "second" }
+    }
+  ]
+}

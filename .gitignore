@@ -1,0 +1,6 @@
+/.env
+/target/
+/web/node_modules/
+*.learn
+.idea
+Cargo.lock

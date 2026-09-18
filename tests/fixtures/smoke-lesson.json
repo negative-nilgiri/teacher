@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Packaged smoke lesson",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "introduction",
+      "source": {
+        "kind": "inline",
+        "content": "The packaged frontend is embedded."
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "packaging-question",
+      "prompt": "Which binary serves this lesson?",
+      "choices": [
+        { "content": "`learnc`" },
+        { "content": "`learn`", "correct": true }
+      ],
+      "hints": ["Compilation and serving have separate trust boundaries."],
+      "explanation": "`learn` serves compiled `.learn` artifacts."
+    }
+  ]
+}

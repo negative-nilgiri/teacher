@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Understand queue ordering",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "overview",
+      "source": {
+        "kind": "inline",
+        "content": "# Queue ordering\n\nA queue removes the oldest item first."
+      }
+    },
+    {
+      "type": "code",
+      "id": "implementation",
+      "source": {
+        "kind": "inline",
+        "content": "fn pop(queue: &mut VecDeque<Item>) -> Option<Item> {\n    queue.pop_front()\n}"
+      }
+    },
+    {
+      "type": "diff",
+      "id": "ordering-change",
+      "source": {
+        "kind": "inline",
+        "content": "diff --git a/src/queue.rs b/src/queue.rs\nindex 1111111..2222222 100644\n--- a/src/queue.rs\n+++ b/src/queue.rs\n@@ -1 +1 @@\n-queue.pop_back()\n+queue.pop_front()\n"
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "check-ordering",
+      "prompt": "Which item does `pop_front` return?",
+      "choices": [
+        {
+          "content": "The oldest queued item",
+          "correct": true
+        },
+        {
+          "content": "The newest queued item"
+        }
+      ],
+      "hints": [
+        "Think about **FIFO** ordering."
+      ],
+      "explanation": "FIFO means first in, first out, so the oldest item leaves first."
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Invalid quiz",
+  "blocks": [
+    {
+      "type": "multiple_choice",
+      "id": "ambiguous",
+      "prompt": "Pick one",
+      "choices": [
+        { "content": "A", "correct": true },
+        { "content": "B", "correct": true }
+      ],
+      "explanation": "Only one answer may be correct."
+    }
+  ]
+}

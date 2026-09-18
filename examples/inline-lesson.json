@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Why the queue now removes the oldest item",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "context",
+      "source": {
+        "kind": "inline",
+        "content": "# The behavior change\n\nThe queue now follows **FIFO** ordering."
+      }
+    },
+    {
+      "type": "code",
+      "id": "new-code",
+      "source": {
+        "kind": "inline",
+        "content": "pub fn take_next(queue: &mut VecDeque<Job>) -> Option<Job> {\n    queue.pop_front()\n}"
+      }
+    },
+    {
+      "type": "diff",
+      "id": "focused-diff",
+      "source": {
+        "kind": "inline",
+        "content": "diff --git a/src/queue.rs b/src/queue.rs\nindex 1111111..2222222 100644\n--- a/src/queue.rs\n+++ b/src/queue.rs\n@@ -2 +2 @@\n-    queue.pop_back()\n+    queue.pop_front()\n"
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "verify-order",
+      "prompt": "After jobs A then B are queued, which job leaves first?",
+      "choices": [
+        { "content": "Job A", "correct": true },
+        { "content": "Job B" }
+      ],
+      "hints": ["FIFO expands to first in, first out."],
+      "explanation": "Job A entered first, and `pop_front` removes it first."
+    }
+  ]
+}

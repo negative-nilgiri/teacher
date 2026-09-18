@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Repository-backed queue change",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "overview",
+      "source": { "kind": "file", "path": "docs/overview.md" }
+    },
+    {
+      "type": "code",
+      "id": "current-implementation",
+      "source": {
+        "kind": "file",
+        "path": "src/queue.rs",
+        "lines": { "start": 1, "end": 3 }
+      }
+    },
+    {
+      "type": "code",
+      "id": "implementation-at-head",
+      "source": {
+        "kind": "git_blob",
+        "revision": "HEAD",
+        "path": "src/queue.rs",
+        "lines": { "start": 1, "end": 3 }
+      }
+    },
+    {
+      "type": "diff",
+      "id": "authored-patch",
+      "source": { "kind": "file", "path": "changes/queue.patch" }
+    },
+    {
+      "type": "diff",
+      "id": "live-worktree-change",
+      "source": {
+        "kind": "git",
+        "base": "HEAD",
+        "target": { "kind": "worktree" },
+        "files": [
+          {
+            "path": "src/queue.rs",
+            "after_lines": { "start": 2, "end": 2 }
+          }
+        ],
+        "context_lines": 2
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "check-order",
+      "prompt": "Which operation implements FIFO removal?",
+      "choices": [
+        { "content": "`pop_front`", "correct": true },
+        { "content": "`pop_back`" }
+      ],
+      "hints": ["Look at the generated worktree diff."],
+      "explanation": "Removing from the front returns the oldest queued value."
+    }
+  ]
+}
