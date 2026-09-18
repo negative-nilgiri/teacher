@@ -22,6 +22,8 @@ cargo package --list --allow-dirty >"$package_list"
 for required in \
     Cargo.toml \
     Cargo.lock \
+    examples/create-repository-lesson.sh \
+    examples/run-repository-lesson.sh \
     src/bin/learn.rs \
     src/bin/learnc.rs \
     web/dist/index.html \

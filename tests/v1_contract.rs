@@ -467,38 +467,15 @@ fn cargo_install_smoke() {
 
 fn repository_example() -> TempDir {
     let directory = TempDir::new("repository-example");
-    fs::create_dir_all(directory.path().join("docs")).unwrap();
-    fs::create_dir_all(directory.path().join("src")).unwrap();
-    fs::create_dir_all(directory.path().join("changes")).unwrap();
-    fs::write(
-        directory.path().join("docs/overview.md"),
-        "# Queue change\n\nThe queue now removes from the front.\n",
-    )
-    .unwrap();
-    fs::write(
-        directory.path().join("src/queue.rs"),
-        "pub fn take_next(queue: &mut Vec<i32>) -> Option<i32> {\n    queue.pop()\n}\n",
-    )
-    .unwrap();
-    fs::write(
-        directory.path().join("changes/queue.patch"),
-        "diff --git a/src/queue.rs b/src/queue.rs\nindex 1111111..2222222 100644\n--- a/src/queue.rs\n+++ b/src/queue.rs\n@@ -2 +2 @@\n-    queue.pop()\n+    Some(queue.remove(0))\n",
-    )
-    .unwrap();
-    fs::copy(
-        manifest_dir().join("examples/repository-lesson.json"),
-        directory.path().join("lesson.json"),
-    )
-    .unwrap();
-
-    configure_repository(directory.path());
-    git(directory.path(), &["add", "."]);
-    git(directory.path(), &["commit", "-qm", "base lesson inputs"]);
-    fs::write(
-        directory.path().join("src/queue.rs"),
-        "pub fn take_next(queue: &mut Vec<i32>) -> Option<i32> {\n    Some(queue.remove(0))\n}\n",
-    )
-    .unwrap();
+    let output = output_success(
+        Command::new("bash")
+            .arg(manifest_dir().join("examples/create-repository-lesson.sh"))
+            .arg(directory.path()),
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        directory.path().to_string_lossy()
+    );
     directory
 }
 

@@ -1,6 +1,5 @@
 //! Agent-centric lesson compiler command line.
 
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -63,11 +62,7 @@ enum Success {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<OsString> = std::env::args_os().collect();
-    let text_requested = args
-        .iter()
-        .any(|argument| argument == "--text" || argument == "-t");
-    let cli = match Cli::try_parse_from(&args) {
+    let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error)
             if matches!(
@@ -79,15 +74,16 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Err(error) => {
+            let exit_code = error.exit_code();
             emit_failure(
-                text_requested,
+                false,
                 &[Diagnostic::error(
                     "cli.arguments.invalid",
                     "",
                     error.to_string().trim().to_owned(),
                 )],
             );
-            return ExitCode::FAILURE;
+            return ExitCode::from(exit_code as u8);
         }
     };
 
@@ -281,8 +277,14 @@ mod tests {
 
     #[test]
     fn global_text_flag_is_accepted_after_the_subcommand() {
-        let cli = Cli::try_parse_from(["learnc", "check", "lesson.json", "--text"]).unwrap();
-        assert!(cli.text);
+        for arguments in [
+            ["learnc", "--text", "check", "lesson.json"],
+            ["learnc", "check", "--text", "lesson.json"],
+            ["learnc", "check", "lesson.json", "--text"],
+        ] {
+            let cli = Cli::try_parse_from(arguments).unwrap();
+            assert!(cli.text);
+        }
     }
 
     #[test]

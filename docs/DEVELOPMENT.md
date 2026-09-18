@@ -444,6 +444,7 @@ line to discover the random URL before waiting on the long-running server.
 | `just lesson-build [lesson] [artifact]` | Compiles a source lesson; defaults to a disposable artifact under `target/`. |
 | `just serve [artifact]` | Serves an already compiled artifact. |
 | `just run [lesson] [artifact]` | Rebuilds the UI, compiles a lesson, and serves it in one development workflow. |
+| `just repository-example` | Creates the repository fixture, compiles its lesson, and serves it until interrupted. |
 | `just package-list` | Shows the exact Cargo package contents. |
 | `just package-smoke` | Packages, installs without Node, builds a lesson, and probes the installed server. |
 | `just release-check` | Rebuilds assets, runs verification, and runs the package smoke test. |

@@ -210,9 +210,23 @@ fails instead of emitting a mixed snapshot.
 
 The complete
 [`repository-lesson.json`](../examples/repository-lesson.json) demonstrates file,
-Git blob, patch-file, selected worktree-diff, and quiz blocks. It expects the
-paths and dirty worktree described by its fields; the integration suite creates
-that repository and verifies both `check` and `build`.
+Git blob, patch-file, selected worktree-diff, and quiz blocks. Because those
+sources require committed history plus a deliberate worktree change, create its
+complete disposable repository before compiling it:
+
+```console
+repository=$(examples/create-repository-lesson.sh)
+learnc check --repo "$repository" "$repository/lesson.json"
+learnc build --repo "$repository" "$repository/lesson.json"
+learn serve "$repository/lesson.learn"
+```
+
+The setup script prints the temporary repository path and leaves it in place for
+inspection. Remove that directory when finished. From a source checkout,
+`just repository-example` performs the complete setup, check, build, and serve
+workflow and removes the temporary repository when the server exits. The
+integration test invokes the same setup script, so the documented example and
+tested fixture cannot silently diverge.
 
 ## Acting on diagnostics
 

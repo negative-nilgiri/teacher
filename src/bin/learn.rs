@@ -1,6 +1,5 @@
 //! Local lesson runtime entrypoint.
 
-use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -14,6 +13,10 @@ use clap::CommandFactory;
 #[derive(Debug, Parser)]
 #[command(name = "learn", version, about = "Serve a compiled interactive lesson")]
 struct Cli {
+    /// Use concise human-readable output instead of JSON.
+    #[arg(short = 't', long, global = true)]
+    text: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -25,9 +28,6 @@ enum Command {
         /// Open the generated loopback URL in the default browser.
         #[arg(long)]
         open: bool,
-        /// Use concise human-readable output instead of JSON.
-        #[arg(short = 't', long)]
-        text: bool,
         /// Compiled lesson artifact produced by `learnc build`.
         artifact: PathBuf,
     },
@@ -54,9 +54,7 @@ struct ErrorDetail<'a> {
 
 #[tokio::main]
 async fn main() {
-    let arguments = std::env::args_os().collect::<Vec<_>>();
-    let text_requested = requests_text(&arguments);
-    let cli = match Cli::try_parse_from(&arguments) {
+    let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error)
             if matches!(
@@ -68,20 +66,17 @@ async fn main() {
             return;
         }
         Err(error) => {
-            emit_error("invalid_arguments", error.to_string(), text_requested);
+            emit_error("invalid_arguments", error.to_string(), false);
             std::process::exit(error.exit_code());
         }
     };
 
+    let text = cli.text;
     let result = match cli.command {
-        Command::Serve {
-            open,
-            text,
-            artifact,
-        } => serve(&artifact, open, text).await,
+        Command::Serve { open, artifact } => serve(&artifact, open, text).await,
     };
     if let Err(error) = result {
-        emit_error(error.code(), error.to_string(), text_requested);
+        emit_error(error.code(), error.to_string(), text);
         std::process::exit(1);
     }
 }
@@ -113,12 +108,6 @@ async fn serve(artifact: &Path, open: bool, text: bool) -> Result<(), RuntimeErr
     server.run().await
 }
 
-fn requests_text(arguments: &[OsString]) -> bool {
-    arguments
-        .iter()
-        .any(|argument| argument == "-t" || argument == "--text")
-}
-
 fn emit_error(code: &str, message: String, text: bool) {
     if text {
         println!("error[{code}]: {message}");
@@ -139,19 +128,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn text_mode_can_be_detected_even_when_cli_parsing_fails() {
-        assert!(requests_text(&[
-            "learn".into(),
-            "serve".into(),
-            "--text".into()
-        ]));
-        assert!(!requests_text(&["learn".into(), "serve".into()]));
+    fn global_text_flag_is_accepted_before_and_after_the_subcommand() {
+        for arguments in [
+            ["learn", "--text", "serve", "lesson.learn"],
+            ["learn", "serve", "--text", "lesson.learn"],
+            ["learn", "serve", "lesson.learn", "--text"],
+        ] {
+            let cli = Cli::try_parse_from(arguments).unwrap();
+            assert!(cli.text);
+        }
     }
 
     #[test]
     fn command_shape_is_serve_artifact() {
         Cli::command().debug_assert();
-        let cli = Cli::try_parse_from(["learn", "serve", "lesson.learn"]).unwrap();
-        assert!(matches!(cli.command, Command::Serve { .. }));
+        let cli = Cli::try_parse_from(["learn", "serve", "--open", "lesson.learn"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Serve {
+                open: true,
+                artifact
+            } if artifact == Path::new("lesson.learn")
+        ));
     }
 }

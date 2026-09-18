@@ -63,6 +63,10 @@ run lesson="examples/inline-lesson.json" artifact="target/dev-lesson.learn": web
     cargo run --quiet --bin learnc -- build "{{lesson}}" --output "{{artifact}}"
     cargo run --quiet --bin learn -- serve "{{artifact}}"
 
+# Create, compile, and serve the repository-backed example in a temporary Git repository.
+repository-example:
+    bash examples/run-repository-lesson.sh
+
 # Run all non-mutating Rust and frontend verification checks.
 verify: fmt-check lint test web-test
 
