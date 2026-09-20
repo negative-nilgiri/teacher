@@ -1,3 +1,6 @@
+# Preserve recipe arguments as separate shell arguments for safe passthrough.
+set positional-arguments := true
+
 # Show the available project commands. This is intentionally the default.
 default:
     @just --list
@@ -46,22 +49,30 @@ build: web-build
 install: web-build
     cargo install --path . --locked --force
 
-# Validate an authored lesson without writing an artifact.
-lesson-check lesson="examples/inline-lesson.json":
-    cargo run --quiet --bin learnc -- check "{{lesson}}"
+# Pass arbitrary arguments directly to the compiler binary.
+learnc *args:
+    cargo run --quiet --bin learnc -- "$@"
 
-# Compile an authored lesson to a disposable development artifact.
-lesson-build lesson="examples/inline-lesson.json" artifact="target/dev-lesson.learn":
-    cargo run --quiet --bin learnc -- build "{{lesson}}" --output "{{artifact}}"
+# Pass arbitrary arguments directly to the runtime binary.
+learn *args:
+    cargo run --quiet --bin learn -- "$@"
 
-# Serve an existing compiled artifact.
-serve artifact="target/dev-lesson.learn":
-    cargo run --quiet --bin learn -- serve "{{artifact}}"
+# Validate an authored lesson, forwarding every argument after `check`.
+lesson-check *args:
+    cargo run --quiet --bin learnc -- check "$@"
 
-# Rebuild the UI, compile an authored lesson, and serve it.
-run lesson="examples/inline-lesson.json" artifact="target/dev-lesson.learn": web-build
-    cargo run --quiet --bin learnc -- build "{{lesson}}" --output "{{artifact}}"
-    cargo run --quiet --bin learn -- serve "{{artifact}}"
+# Compile an authored lesson, forwarding every argument after `build`.
+lesson-build *args:
+    cargo run --quiet --bin learnc -- build "$@"
+
+# Serve an existing artifact, forwarding every argument after `serve`.
+serve *args:
+    cargo run --quiet --bin learn -- serve "$@"
+
+# Rebuild the UI, compile the inline example, and forward all arguments to `learn serve`.
+run *serve_args: web-build
+    cargo run --quiet --bin learnc -- build examples/inline-lesson.json --output target/dev-lesson.learn
+    cargo run --quiet --bin learn -- serve target/dev-lesson.learn "$@"
 
 # Create, compile, and serve the repository-backed example in a temporary Git repository.
 repository-example:

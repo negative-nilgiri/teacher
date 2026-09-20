@@ -6,6 +6,7 @@
 //! contract between them belongs to [`artifact`].
 
 pub mod artifact;
+pub mod cli;
 pub mod compiler;
 pub mod diagnostics;
 pub mod repository;

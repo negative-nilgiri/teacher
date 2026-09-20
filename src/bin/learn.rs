@@ -3,12 +3,10 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use agent_teacher::cli::{help_document_for, output_request_from, version_document};
 use agent_teacher::runtime::{RuntimeError, bind};
-use clap::{Parser, Subcommand, error::ErrorKind};
+use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 use serde::Serialize;
-
-#[cfg(test)]
-use clap::CommandFactory;
 
 #[derive(Debug, Parser)]
 #[command(name = "learn", version, about = "Serve a compiled interactive lesson")]
@@ -52,21 +50,46 @@ struct ErrorDetail<'a> {
     message: String,
 }
 
+#[derive(Serialize)]
+struct WarningOutput<'a> {
+    status: &'static str,
+    warning: ErrorDetail<'a>,
+}
+
 #[tokio::main]
 async fn main() {
+    let output_request = output_request_from(Cli::command(), std::env::args_os());
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
-        Err(error)
-            if matches!(
-                error.kind(),
-                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
-            ) =>
-        {
-            let _ = error.print();
+        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
+            if output_request.text {
+                let _ = error.print();
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string(&help_document_for(
+                        Cli::command(),
+                        &output_request.command_path,
+                    ))
+                    .expect("help document serializes")
+                );
+            }
+            return;
+        }
+        Err(error) if error.kind() == ErrorKind::DisplayVersion => {
+            if output_request.text {
+                let _ = error.print();
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string(&version_document(Cli::command()))
+                        .expect("version document serializes")
+                );
+            }
             return;
         }
         Err(error) => {
-            emit_error("invalid_arguments", error.to_string(), false);
+            emit_error("invalid_arguments", error.to_string(), output_request.text);
             std::process::exit(error.exit_code());
         }
     };
@@ -102,10 +125,29 @@ async fn serve(artifact: &Path, open: bool, text: bool) -> Result<(), RuntimeErr
     if open {
         // `url` is generated exclusively from the bound IPv4 loopback address.
         if let Err(error) = webbrowser::open(&url) {
-            eprintln!("could not open the browser: {error}");
+            emit_warning(
+                "browser_open_failed",
+                format!("could not open the browser: {error}"),
+                text,
+            );
         }
     }
     server.run().await
+}
+
+fn emit_warning(code: &str, message: String, text: bool) {
+    if text {
+        eprintln!("warning[{code}]: {message}");
+    } else {
+        let output = WarningOutput {
+            status: "warning",
+            warning: ErrorDetail { code, message },
+        };
+        eprintln!(
+            "{}",
+            serde_json::to_string(&output).expect("warning output serializes")
+        );
+    }
 }
 
 fn emit_error(code: &str, message: String, text: bool) {

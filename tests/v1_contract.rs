@@ -123,6 +123,54 @@ fn invalid_fixtures_return_stable_agent_diagnostics() {
 }
 
 #[test]
+fn cli_help_version_and_usage_errors_follow_the_output_mode() {
+    for (binary, name) in [(learnc(), "learnc"), (learn(), "learn")] {
+        let help = output_success(Command::new(binary).arg("--help"));
+        let help: serde_json::Value = serde_json::from_slice(&help.stdout).unwrap();
+        assert_eq!(help["ok"], true);
+        assert_eq!(help["kind"], "help");
+        assert_eq!(help["help"]["name"], name);
+        assert!(help["help"]["usage"].is_string());
+
+        let version = output_success(Command::new(binary).arg("--version"));
+        let version: serde_json::Value = serde_json::from_slice(&version.stdout).unwrap();
+        assert_eq!(version["ok"], true);
+        assert_eq!(version["kind"], "version");
+        assert_eq!(version["name"], name);
+
+        let human = output_success(Command::new(binary).args(["-t", "--help"]));
+        let human = String::from_utf8(human.stdout).unwrap();
+        assert!(human.contains("Usage:"));
+        assert!(!human.trim_start().starts_with('{'));
+    }
+
+    for arguments in [["check", "--help"], ["help", "check"]] {
+        let help = output_success(Command::new(learnc()).args(arguments));
+        let help: serde_json::Value = serde_json::from_slice(&help.stdout).unwrap();
+        assert_eq!(help["help"]["name"], "check");
+        assert_eq!(help["help"]["invocation"], "learnc check");
+    }
+
+    let help = output_success(Command::new(learn()).args(["serve", "--help"]));
+    let help: serde_json::Value = serde_json::from_slice(&help.stdout).unwrap();
+    assert_eq!(help["help"]["name"], "serve");
+    assert_eq!(help["help"]["invocation"], "learn serve");
+
+    let invalid = Command::new(learnc()).arg("--invalid").output().unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    let invalid: serde_json::Value = serde_json::from_slice(&invalid.stdout).unwrap();
+    assert_eq!(invalid["ok"], false);
+
+    let invalid = Command::new(learnc())
+        .args(["--text", "--invalid"])
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    let invalid = String::from_utf8(invalid.stdout).unwrap();
+    assert!(invalid.starts_with("error[cli.arguments.invalid]"));
+}
+
+#[test]
 fn repository_example_checks_builds_and_freezes_relative_provenance() {
     let repository = repository_example();
     let lesson = repository.path().join("lesson.json");

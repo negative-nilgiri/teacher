@@ -92,6 +92,7 @@ never reopens the lesson source or worktree.
 | Path | Responsibility |
 | --- | --- |
 | [`src/bin/learnc.rs`](../src/bin/learnc.rs) | Compiler CLI, JSON/text reporting, `check`, `build`, and `schema`. |
+| [`src/cli.rs`](../src/cli.rs) | Shared Clap-driven output-mode detection and structured JSON help/version descriptions. |
 | [`src/source/`](../src/source) | Authored model, `SourceId`/`NodeId`, JSON Schema, and source-only validation. |
 | [`src/diagnostics.rs`](../src/diagnostics.rs) | Stable diagnostic codes, JSON Pointers, related locations, and suggestions. |
 | [`src/repository/`](../src/repository) | Validated repository paths, Git execution, content resolution, diff parsing, and consistency guards. |
@@ -103,7 +104,7 @@ never reopens the lesson source or worktree.
 | [`web/dist/`](../web/dist) | Generated production bundle embedded into `learn`; this is a build input. |
 | [`tests/v1_contract.rs`](../tests/v1_contract.rs) | Cross-layer tests using real binaries, Git repositories, and HTTP requests. |
 | [`tests/fixtures/`](../tests/fixtures) | Valid/invalid source documents and artifact/package fixtures. |
-| [`examples/`](../examples) | Checked inline and repository-backed lesson examples. |
+| [`examples/`](../examples) | Runnable inline and repository-backed lesson examples plus their fixture scripts. |
 | [`scripts/package-smoke.sh`](../scripts/package-smoke.sh) | Crate assembly, Node-free installation, and installed-binary smoke test. |
 | [`justfile`](../justfile) | Discoverable development and release commands. |
 
@@ -414,6 +415,9 @@ Both CLIs are agent-centric:
 
 - machine-readable JSON is the default;
 - `--text`/`-t` opts into concise human output;
+- help, version, invalid usage, and operational warnings follow that same rule;
+- default help is structured from Clap's command model, including subcommand
+  usage, arguments, options, actions, and value cardinality;
 - success and failure payloads go to stdout;
 - process status independently communicates success or failure;
 - operational warnings, such as a failed `--open`, go to stderr.
@@ -440,10 +444,12 @@ line to discover the random URL before waiting on the long-running server.
 | `just web-build` | Rebuilds the production bundle in `web/dist`. |
 | `just build` | Rebuilds `web/dist`, then builds both Rust binaries. |
 | `just install` | Rebuilds `web/dist`, then installs both binaries from this checkout. |
-| `just lesson-check [lesson]` | Runs the full compiler pipeline without writing an artifact. |
-| `just lesson-build [lesson] [artifact]` | Compiles a source lesson; defaults to a disposable artifact under `target/`. |
-| `just serve [artifact]` | Serves an already compiled artifact. |
-| `just run [lesson] [artifact]` | Rebuilds the UI, compiles a lesson, and serves it in one development workflow. |
+| `just learnc [args...]` | Passes arbitrary arguments directly to the compiler binary. |
+| `just learn [args...]` | Passes arbitrary arguments directly to the runtime binary. |
+| `just lesson-check [args...]` | Runs `learnc check` with untouched arguments and options. |
+| `just lesson-build [args...]` | Runs `learnc build` with untouched arguments and options. |
+| `just serve [args...]` | Runs `learn serve` with untouched arguments and options. |
+| `just run [serve-args...]` | Rebuilds the UI, compiles the inline example, and forwards all arguments to `learn serve`. |
 | `just repository-example` | Creates the repository fixture, compiles its lesson, and serves it until interrupted. |
 | `just package-list` | Shows the exact Cargo package contents. |
 | `just package-smoke` | Packages, installs without Node, builds a lesson, and probes the installed server. |

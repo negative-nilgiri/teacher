@@ -4,12 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use agent_teacher::artifact::CURRENT_ARTIFACT_VERSION;
+use agent_teacher::cli::{help_document_for, output_request_from, version_document};
 use agent_teacher::compiler::{
     CompileOptions, compile_file, default_artifact_path, write_artifact_atomic,
 };
 use agent_teacher::diagnostics::Diagnostic;
 use agent_teacher::source::{SchemaVersion, source_json_schema};
-use clap::{Parser, Subcommand, error::ErrorKind};
+use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 use serde_json::{Value, json};
 
 #[derive(Debug, Parser)]
@@ -62,21 +63,40 @@ enum Success {
 }
 
 fn main() -> ExitCode {
+    let output_request = output_request_from(Cli::command(), std::env::args_os());
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
-        Err(error)
-            if matches!(
-                error.kind(),
-                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
-            ) =>
-        {
-            let _ = error.print();
+        Err(error) if error.kind() == ErrorKind::DisplayHelp => {
+            if output_request.text {
+                let _ = error.print();
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string(&help_document_for(
+                        Cli::command(),
+                        &output_request.command_path,
+                    ))
+                    .expect("help document serializes")
+                );
+            }
+            return ExitCode::SUCCESS;
+        }
+        Err(error) if error.kind() == ErrorKind::DisplayVersion => {
+            if output_request.text {
+                let _ = error.print();
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string(&version_document(Cli::command()))
+                        .expect("version document serializes")
+                );
+            }
             return ExitCode::SUCCESS;
         }
         Err(error) => {
             let exit_code = error.exit_code();
             emit_failure(
-                false,
+                output_request.text,
                 &[Diagnostic::error(
                     "cli.arguments.invalid",
                     "",

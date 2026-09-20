@@ -14,7 +14,9 @@ learnc build lesson.json
 learn serve lesson.learn
 ```
 
-Commands emit JSON by default. Add `--text` or `-t` for human-readable output.
+Commands emit JSON by default, including `--help`, `--version`, and invalid
+usage. Add `--text` or `-t` for human-readable output; use `learnc -t --help`
+for the normal Clap help page.
 `check` runs the complete parse, validation, repository, Git, and diff pipeline
 without writing a `.learn` file. Never edit a generated `.learn` artifact; change
 the source or referenced inputs and rebuild it.

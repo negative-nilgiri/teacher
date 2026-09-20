@@ -23,6 +23,10 @@ for required in \
     Cargo.toml \
     Cargo.lock \
     examples/create-repository-lesson.sh \
+    examples/repository-fixture/changes/queue.after.rs \
+    examples/repository-fixture/changes/queue.patch \
+    examples/repository-fixture/docs/overview.md \
+    examples/repository-fixture/src/queue.rs \
     examples/run-repository-lesson.sh \
     src/bin/learn.rs \
     src/bin/learnc.rs \

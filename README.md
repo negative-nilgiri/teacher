@@ -25,17 +25,24 @@ lesson with the convenience recipes:
 ```sh
 just install
 just lesson-check path/to/lesson.json
-just lesson-build path/to/lesson.json path/to/lesson.learn
-just serve path/to/lesson.learn
+just lesson-build path/to/lesson.json --output path/to/lesson.learn
+just serve path/to/lesson.learn --open
 ```
 
-For local development, `just run` rebuilds the UI, compiles
-`examples/inline-lesson.json` to `target/dev-lesson.learn`, and serves it. Both
-paths are optional positional arguments: `just run lesson.json lesson.learn`.
+For local development, `just run --open --text` rebuilds the UI, compiles
+`examples/inline-lesson.json` to `target/dev-lesson.learn`, and serves it while
+forwarding every supplied option to `learn serve`.
+All `lesson-check`, `lesson-build`, and `serve` arguments are forwarded without
+interpretation. `just learnc ...` and `just learn ...` expose completely raw
+passthroughs to either binary.
+The repository-backed example has real committed and dirty-worktree inputs;
+`just repository-example` creates that disposable Git fixture, compiles it, and
+serves it. See the [`examples` guide](examples/README.md) for the manual flow.
 
-Commands emit JSON by default for agent use. Pass `--text` or `-t` for concise
-human-readable output. `learn serve` binds to a random loopback port and opens a
-browser only when `--open` is supplied.
+Commands emit JSON by default for agent use, including help, version, invalid
+usage, and warnings. Pass `--text` or `-t` for human-readable output; for
+example, `learnc -t --help`. `learn serve` binds to a random loopback port and
+opens a browser only when `--open` is supplied.
 
 ## Package contract
 
