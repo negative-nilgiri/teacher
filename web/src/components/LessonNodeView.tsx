@@ -1,6 +1,8 @@
 import type { ChoiceId, LessonNode, QuestionState } from "../types";
 import { CodeBlock } from "./CodeBlock";
+import { CollapsibleLessonBlock } from "./CollapsibleLessonBlock";
 import { DiffBlock } from "./DiffBlock";
+import { specificLanguageDisplayName } from "./LanguageLabel";
 import { Markdown } from "./Markdown";
 import { MultipleChoiceBlock } from "./MultipleChoiceBlock";
 
@@ -14,19 +16,29 @@ interface LessonNodeViewProps {
 
 export function LessonNodeView(props: LessonNodeViewProps) {
   const { node } = props;
+  let content;
+  let kind: string;
+
   switch (node.type) {
     case "markdown":
-      return (
-        <section className="lesson-block prose-block">
+      kind = "Markdown";
+      content = (
+        <section className="prose-block">
           <Markdown>{node.content}</Markdown>
         </section>
       );
+      break;
     case "code":
-      return <CodeBlock node={node} />;
+      kind = specificLanguageDisplayName(node.language) ?? "Code";
+      content = <CodeBlock node={node} />;
+      break;
     case "diff":
-      return <DiffBlock node={node} />;
+      kind = "Diff";
+      content = <DiffBlock node={node} />;
+      break;
     case "multiple_choice":
-      return (
+      kind = "Question";
+      content = (
         <MultipleChoiceBlock
           busy={props.busy}
           node={node}
@@ -35,5 +47,12 @@ export function LessonNodeView(props: LessonNodeViewProps) {
           state={props.questionState}
         />
       );
+      break;
   }
+
+  return (
+    <CollapsibleLessonBlock kind={kind} sourceId={node.source_id}>
+      {content}
+    </CollapsibleLessonBlock>
+  );
 }

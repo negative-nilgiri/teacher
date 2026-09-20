@@ -362,11 +362,15 @@ State ownership is split as follows:
 | --- | --- |
 | Attempts and correctness | Unsubmitted radio selection |
 | Explicit reveal state | Expanded `<details>` hints |
-| Completion and progress | Focus, scroll, and loading UI |
+| Completion and progress | Per-block collapsed/expanded state |
+| | Focus, scroll, and loading UI |
 | When answer/explanation become visible | Transient request errors |
 
 [`LessonNodeView`](../web/src/components/LessonNodeView.tsx#L15) is the renderer
-dispatch point:
+dispatch point. It wraps every node in a locally controlled disclosure whose
+collapsed state does not unmount the node, so unfinished quiz input survives a
+fold-and-expand cycle. A code disclosure uses its normalized language as its
+compact label and falls back to `Code` when no specific language is known:
 
 - [`Markdown`](../web/src/components/Markdown.tsx) uses GFM without enabling raw
   HTML.

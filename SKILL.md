@@ -80,6 +80,30 @@ filesystem-root option and pass the common anchor for every relative lesson
 path. A lesson may draw from multiple repositories, but files owned by different
 repositories belong in separate Git diff blocks.
 
+A Git diff may compare any two commit-ish revisions that Git can resolve in the
+selected files' owning repository; neither side has to be the current `HEAD`,
+and the revisions do not need an ancestor relationship. Commit hashes, branches,
+tags, and relative expressions such as `HEAD~2` are valid. Put the first
+revision in `base` and use a revision target for the second:
+
+```json
+{
+  "type": "diff",
+  "id": "release-change",
+  "source": {
+    "kind": "git",
+    "base": "v1.1.0",
+    "target": { "kind": "revision", "revision": "v1.2.0" },
+    "files": [{ "path": "src/compiler.rs" }],
+    "context_lines": 3
+  }
+}
+```
+
+Specify the intended revision pair and let `learnc` resolve, compare, and freeze
+both commits. Do not generate or copy the patch manually when a declarative Git
+source can express the comparison.
+
 Do not assume that an untracked file cannot appear in a lesson just because
 ordinary `git diff` omits it. For a Git diff source whose target is `worktree`,
 `learnc` treats every path in `files` as an explicit selection. If a selected

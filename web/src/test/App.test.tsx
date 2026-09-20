@@ -65,9 +65,38 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { name: "Queue changes" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Why this changed" })).toBeInTheDocument();
     expect(screen.getByLabelText("Code: queue-code")).toHaveTextContent("queue.push_back(item);");
+    expect(screen.getByRole("button", { name: "Collapse rust block queue-code" })).toBeInTheDocument();
     expect(screen.getByLabelText("Diff: queue-diff")).toHaveTextContent("stack.push(item);");
     expect(screen.getByText("0 of 1 questions completed")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/state", expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("folds blocks independently without discarding their local state", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(initialState));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<App />);
+
+    const markdownHeading = await screen.findByRole("heading", { name: "Why this changed" });
+    const code = screen.getByLabelText("Code: queue-code");
+    const markdownToggle = screen.getByRole("button", {
+      name: "Collapse markdown block intro",
+    });
+
+    await user.click(markdownToggle);
+    expect(markdownHeading).not.toBeVisible();
+    expect(code).toBeVisible();
+    expect(markdownToggle).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(screen.getByRole("button", { name: "Expand markdown block intro" }));
+    expect(markdownHeading).toBeVisible();
+
+    const choice = screen.getByRole("radio", { name: "First in, first out" });
+    await user.click(choice);
+    await user.click(screen.getByRole("button", { name: "Collapse question block quiz" }));
+    expect(choice).not.toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Expand question block quiz" }));
+    expect(choice).toBeChecked();
   });
 
   it("submits a generated choice id and adopts server-owned progress", async () => {

@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodeBlock } from "../components/CodeBlock";
 import { DiffBlock } from "../components/DiffBlock";
+import { LessonNodeView } from "../components/LessonNodeView";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -16,6 +17,27 @@ beforeEach(() => {
 });
 
 describe("semantic source rendering", () => {
+  it("falls back to a generic fold label for an unknown code language", () => {
+    render(
+      <LessonNodeView
+        busy={false}
+        node={{
+          content: "some source",
+          language: "future-language",
+          node_id: 0,
+          source_id: "future-code",
+          type: "code",
+        }}
+        onReveal={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Collapse code block future-code" }),
+    ).toBeInTheDocument();
+  });
+
   it("highlights a code block with its compiled language", () => {
     const { container } = render(
       <CodeBlock

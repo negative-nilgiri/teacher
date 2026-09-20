@@ -27,6 +27,20 @@ button, input { font: inherit; }
 .eyebrow { color: var(--accent); font-size: .78rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
 .lesson { padding-block: 2rem 5rem; }
 .lesson-block { margin: 0 0 1.5rem; }
+.lesson-block-shell { overflow: hidden; border: 1px solid var(--line); border-radius: .55rem; background: var(--paper); }
+.lesson-block-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 2.65rem; padding: .4rem .55rem .4rem .75rem; border-bottom: 1px solid var(--line); background: #ece7de; }
+.lesson-block-collapsed .lesson-block-toolbar { border-bottom: 0; }
+.lesson-block-identity { display: flex; min-width: 0; align-items: baseline; gap: .65rem; }
+.lesson-block-kind { flex: 0 0 auto; color: var(--accent); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+.lesson-block-source { overflow: hidden; color: var(--muted); font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
+.lesson-block-toggle { display: inline-flex; flex: 0 0 auto; align-items: center; gap: .35rem; padding: .3rem .5rem; background: var(--paper); color: var(--muted); font-size: .76rem; }
+.lesson-block-toggle:hover { border-color: var(--accent); color: var(--ink); }
+.lesson-block-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lesson-block-toggle-icon { width: .8rem; color: var(--accent); font-size: 1rem; font-weight: 750; line-height: .7; text-align: center; }
+.lesson-block-content > .prose-block { padding: 1.15rem 1.25rem; }
+.lesson-block-content > .code-block,
+.lesson-block-content > .diff-block,
+.lesson-block-content > .question { border: 0; border-radius: 0; }
 
 .markdown { line-height: 1.68; }
 .markdown > :first-child { margin-top: 0; }
@@ -109,6 +123,8 @@ progress { width: 100%; accent-color: var(--accent); }
 @media (max-width: 560px) {
   .lesson-header { padding-top: 2rem; }
   .progress-summary { grid-template-columns: 1fr; }
+  .lesson-block-toolbar { align-items: flex-start; }
+  .lesson-block-identity { display: grid; gap: .2rem; }
   .line-number { width: 2.35rem; }
   .diff-file-header, .mermaid-legend { align-items: flex-start; flex-direction: column; gap: .5rem; }
   .question { padding: 1rem; }
@@ -121,7 +137,7 @@ progress { width: 100%; accent-color: var(--accent); }
     --danger: #f0a096; --danger-soft: #4b2c29; --addition: #233d2f; --deletion: #482a28;
   }
   .markdown :not(pre) > code { background: #353834; }
-  .source-block-header, .diff-file-header { background: #353834; }
+  .lesson-block-toolbar, .source-block-header, .diff-file-header { background: #353834; }
   .diff-hunk-header { background: #263943; color: #a9c5d2; }
   button.primary { color: #16251e; }
 }

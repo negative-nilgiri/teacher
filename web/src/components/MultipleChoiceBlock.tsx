@@ -34,7 +34,7 @@ export function MultipleChoiceBlock({
   }
 
   return (
-    <section className="question lesson-block" aria-labelledby={`${groupName}-prompt`}>
+    <section className="question" aria-labelledby={`${groupName}-prompt`}>
       <Markdown className="question-prompt">{node.prompt}</Markdown>
 
       <form onSubmit={submit}>

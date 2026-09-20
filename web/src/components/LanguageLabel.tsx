@@ -20,6 +20,11 @@ const displayNames: Record<string, string> = {
   yaml: "YAML",
 };
 
+export function specificLanguageDisplayName(language: string): string | null {
+  if (language === "text") return null;
+  return displayNames[language] ?? null;
+}
+
 export function LanguageLabel({ language }: { language: string }) {
   const label = displayNames[language] ?? language;
   return (

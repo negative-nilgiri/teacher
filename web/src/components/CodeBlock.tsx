@@ -5,7 +5,7 @@ import { SyntaxCode } from "./SyntaxCode";
 
 export function CodeBlock({ node }: { node: CodeNode }) {
   return (
-    <section className="code-block lesson-block" aria-label={`Code: ${node.source_id}`}>
+    <section className="code-block" aria-label={`Code: ${node.source_id}`}>
       <header className="source-block-header">
         <LanguageLabel language={node.language} />
       </header>

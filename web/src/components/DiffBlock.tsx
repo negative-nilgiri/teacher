@@ -16,7 +16,7 @@ function fileLabel(oldPath: string | null, newPath: string | null): string {
 
 export function DiffBlock({ node }: { node: DiffNode }) {
   return (
-    <section className="diff-block lesson-block" aria-label={`Diff: ${node.source_id}`}>
+    <section className="diff-block" aria-label={`Diff: ${node.source_id}`}>
       {node.files.map((file, fileIndex) => (
         <article className="diff-file" key={`${file.old_path}:${file.new_path}:${fileIndex}`}>
           <header className="diff-file-header">
