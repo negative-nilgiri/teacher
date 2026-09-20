@@ -9,6 +9,7 @@ publish = false
 include = [
     "/Cargo.toml",
     "/Cargo.lock",
+    "/build.rs",
     "/README.md",
     "/DESIGN_REVIEW.md",
     "/docs/**",

@@ -371,12 +371,13 @@ dispatch point:
 - [`Markdown`](../web/src/components/Markdown.tsx) uses GFM without enabling raw
   HTML.
 - [`CodeBlock`](../web/src/components/CodeBlock.tsx) syntax-highlights known
-  languages, renders `mermaid` as a diagram, and safely falls back to literal
-  text for unknown languages or an invalid diagram. Mermaid runs in strict
-  security mode.
+  languages beneath a visible normalized-language header, renders `mermaid` as
+  a diagram, and safely falls back to literal text for unknown languages or an
+  invalid diagram. Mermaid runs in strict security mode and derives an optional
+  legend from semantic `classDef` declarations.
 - [`DiffBlock`](../web/src/components/DiffBlock.tsx) renders structured lines and
-  old/new line numbers, using the language frozen for each compiled diff file to
-  syntax-highlight its content.
+  old/new line numbers, showing and using the language frozen for each compiled
+  diff file to syntax-highlight its content.
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
 
@@ -416,7 +417,9 @@ flowchart LR
 [`WebAssets`](../src/runtime/server.rs#L135) embeds `web/dist` into the Rust
 binary. [`Cargo.toml`](../Cargo.toml) explicitly packages those assets while
 excluding the frontend toolchain and `node_modules`, so consumer installation
-does not run Node.
+does not run Node. [`build.rs`](../build.rs) fingerprints the complete generated
+asset tree so Vite's content-hashed filename changes always invalidate Cargo's
+embedded-resource build.
 
 Asset routing serves exact files with inferred MIME types, falls back to
 `index.html` for non-API client routes, and never sends the SPA for an unknown

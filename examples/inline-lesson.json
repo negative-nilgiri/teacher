@@ -20,11 +20,64 @@
       }
     },
     {
+      "type": "code",
+      "id": "queue-flow",
+      "language": "mermaid",
+      "source": {
+        "kind": "inline",
+        "content": "flowchart LR\n  A[Job A enters] --> Q[Queue]\n  B[Job B enters] --> Q\n  Q --> O[Job A leaves first]\n\n  classDef producer fill:#dbeafe,stroke:#3b82f6,color:#172554\n  classDef queue fill:#fef3c7,stroke:#d97706,color:#451a03\n  classDef result fill:#dcfce7,stroke:#16a34a,color:#052e16\n\n  class A,B producer\n  class Q queue\n  class O result"
+      }
+    },
+    {
       "type": "diff",
       "id": "focused-diff",
       "source": {
         "kind": "inline",
         "content": "diff --git a/src/queue.rs b/src/queue.rs\nindex 1111111..2222222 100644\n--- a/src/queue.rs\n+++ b/src/queue.rs\n@@ -2 +2 @@\n-    queue.pop_back()\n+    queue.pop_front()\n"
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "language-sampler",
+      "source": {
+        "kind": "inline",
+        "content": "## Language rendering sampler\n\nThe next blocks express the same queue idea in several formats."
+      }
+    },
+    {
+      "type": "code",
+      "id": "python-example",
+      "language": "python",
+      "source": {
+        "kind": "inline",
+        "content": "from collections import deque\n\nqueue = deque([\"A\", \"B\"])\nfirst_job = queue.popleft()"
+      }
+    },
+    {
+      "type": "code",
+      "id": "javascript-example",
+      "language": "javascript",
+      "source": {
+        "kind": "inline",
+        "content": "const queue = [\"A\", \"B\"];\nconst firstJob = queue.shift();"
+      }
+    },
+    {
+      "type": "code",
+      "id": "json-example",
+      "language": "json",
+      "source": {
+        "kind": "inline",
+        "content": "{\n  \"queued\": [\"A\", \"B\"],\n  \"next\": \"A\"\n}"
+      }
+    },
+    {
+      "type": "code",
+      "id": "plain-text-fallback",
+      "language": "not-a-real-language",
+      "source": {
+        "kind": "inline",
+        "content": "Unknown languages fall back to plain text: <Job A> & <Job B>"
       }
     },
     {

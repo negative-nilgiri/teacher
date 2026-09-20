@@ -29,6 +29,7 @@ describe("semantic source rendering", () => {
       />,
     );
 
+    expect(screen.getByLabelText("Language: Rust")).toHaveTextContent("Rust");
     expect(container.querySelector("code.language-rust")).toHaveTextContent("fn main() { let answer = 42; }");
     expect(container.querySelector(".hljs-keyword")).toHaveTextContent("fn");
   });
@@ -57,6 +58,7 @@ describe("semantic source rendering", () => {
       />,
     );
 
+    expect(screen.getByLabelText("Language: JavaScript")).toHaveTextContent("JavaScript");
     expect(container.querySelector("code.language-javascript .hljs-keyword")).toHaveTextContent("const");
   });
 
@@ -74,11 +76,13 @@ describe("semantic source rendering", () => {
 
   it("renders explicit Mermaid code as a strict diagram", async () => {
     mermaidMocks.render.mockResolvedValue({ svg: '<svg data-testid="rendered-mermaid"><text>flow</text></svg>' });
+    const source =
+      "flowchart LR\n  A --> B\n  classDef external fill:#dbeafe,stroke:#3b82f6,color:#172554\n  class A external";
 
     render(
       <CodeBlock
         node={{
-          content: "flowchart LR\n  A --> B",
+          content: source,
           language: "mermaid",
           node_id: 4,
           source_id: "flow",
@@ -90,10 +94,18 @@ describe("semantic source rendering", () => {
     expect(await screen.findByRole("img", { name: "Diagram: flow" })).toContainElement(
       screen.getByTestId("rendered-mermaid"),
     );
-    expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^mermaid-/), "flowchart LR\n  A --> B");
+    expect(screen.getByLabelText("Language: Mermaid")).toHaveTextContent("Mermaid");
+    expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^mermaid-/), source);
     expect(mermaidMocks.initialize).toHaveBeenCalledWith(
       expect.objectContaining({ securityLevel: "strict", startOnLoad: false }),
     );
+    expect(screen.getByLabelText("Diagram legend")).toBeInTheDocument();
+    expect(screen.getByTitle("Mermaid class: external")).toHaveTextContent("external");
+    expect(screen.getByTitle("Mermaid class: external")).toHaveStyle({
+      backgroundColor: "#dbeafe",
+      borderColor: "#3b82f6",
+      color: "#172554",
+    });
   });
 
   it("shows escaped source when Mermaid rejects invalid input", async () => {

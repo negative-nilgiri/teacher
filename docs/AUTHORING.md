@@ -181,6 +181,12 @@ Use `language: "text"` when Mermaid source should be shown literally instead
 of rendered as a diagram. If a Mermaid diagram is invalid, the runtime shows
 its escaped source instead of injecting a partial rendering.
 
+When color communicates semantic categories, define named `classDef` styles
+and assign nodes with `class`. The runtime derives a compact legend from those
+definitions, using the semantic class name as its label. Diagrams without
+`classDef` styles have no legend. Prefer a few meaningful classes over
+decorative `subgraph` containers or one-off node styles.
+
 Paths always use forward slashes and are relative to the selected filesystem
 root. Do not use absolute paths, `.` components, or `..`. Agents do not provide
 content hashes: the compiler computes them after resolution.

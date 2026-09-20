@@ -134,6 +134,11 @@ async fn reveal(
 #[folder = "web/dist/"]
 struct WebAssets;
 
+// The build-script digest makes Cargo recompile this embed when Vite replaces
+// content-hashed filenames. rust-embed alone cannot expose newly added paths as
+// ordinary Rust source dependencies before the macro runs.
+const _: &str = env!("AGENT_TEACHER_WEB_ASSET_DIGEST");
+
 async fn serve_asset(uri: Uri) -> Response {
     if uri.path().starts_with("/api/") {
         return ApiError::not_found("api_route_not_found", "API route not found").into_response();

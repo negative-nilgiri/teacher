@@ -1,21 +1,21 @@
 import type { CodeNode } from "../types";
+import { LanguageLabel } from "./LanguageLabel";
 import { MermaidDiagram } from "./MermaidDiagram";
 import { SyntaxCode } from "./SyntaxCode";
 
 export function CodeBlock({ node }: { node: CodeNode }) {
-  if (node.language === "mermaid") {
-    return (
-      <section className="code-block lesson-block" aria-label={`Code: ${node.source_id}`}>
-        <MermaidDiagram label={`Diagram: ${node.source_id}`} source={node.content} />
-      </section>
-    );
-  }
-
   return (
     <section className="code-block lesson-block" aria-label={`Code: ${node.source_id}`}>
-      <pre>
-        <SyntaxCode language={node.language}>{node.content}</SyntaxCode>
-      </pre>
+      <header className="source-block-header">
+        <LanguageLabel language={node.language} />
+      </header>
+      {node.language === "mermaid" ? (
+        <MermaidDiagram label={`Diagram: ${node.source_id}`} source={node.content} />
+      ) : (
+        <pre>
+          <SyntaxCode language={node.language}>{node.content}</SyntaxCode>
+        </pre>
+      )}
     </section>
   );
 }

@@ -1,4 +1,5 @@
 import type { DiffLine, DiffNode } from "../types";
+import { LanguageLabel } from "./LanguageLabel";
 import { SyntaxCode } from "./SyntaxCode";
 
 function lineMarker(line: DiffLine): string {
@@ -18,7 +19,10 @@ export function DiffBlock({ node }: { node: DiffNode }) {
     <section className="diff-block lesson-block" aria-label={`Diff: ${node.source_id}`}>
       {node.files.map((file, fileIndex) => (
         <article className="diff-file" key={`${file.old_path}:${file.new_path}:${fileIndex}`}>
-          <h2 className="diff-file-name">{fileLabel(file.old_path, file.new_path)}</h2>
+          <header className="diff-file-header">
+            <h2 className="diff-file-name">{fileLabel(file.old_path, file.new_path)}</h2>
+            <LanguageLabel language={file.language} />
+          </header>
           {file.hunks.map((hunk, hunkIndex) => (
             <div className="diff-hunk" key={`${hunk.header}:${hunkIndex}`}>
               <div className="diff-hunk-header">{hunk.header}</div>
