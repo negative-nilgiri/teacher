@@ -14,6 +14,7 @@ export interface MarkdownNode extends LessonNodeBase {
 export interface CodeNode extends LessonNodeBase {
   type: "code";
   content: string;
+  language: string;
 }
 
 export type DiffLineKind = "context" | "addition" | "deletion";
@@ -33,6 +34,7 @@ export interface DiffHunk {
 export interface DiffFile {
   old_path: string | null;
   new_path: string | null;
+  language: string;
   hunks: DiffHunk[];
 }
 

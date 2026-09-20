@@ -27,7 +27,10 @@ struct TempRepo {
 
 impl TempRepo {
     fn new() -> Self {
-        let path = unique_temp_path("repository-test");
+        Self::at(unique_temp_path("repository-test"))
+    }
+
+    fn at(path: PathBuf) -> Self {
         fs::create_dir_all(&path).unwrap();
         let repository = Self { path };
         repository.git(["init", "--quiet"]);
@@ -80,6 +83,24 @@ impl TempRepo {
     }
 }
 
+struct TempRoot {
+    path: PathBuf,
+}
+
+impl TempRoot {
+    fn new() -> Self {
+        let path = unique_temp_path("root-test");
+        fs::create_dir_all(&path).unwrap();
+        Self { path }
+    }
+}
+
+impl Drop for TempRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
 impl Drop for TempRepo {
     fn drop(&mut self) {
         // The path is constructed inside std::env::temp_dir with a fixed test
@@ -97,13 +118,13 @@ fn selected(path: &str) -> DiffFileRequest {
 }
 
 #[test]
-fn discovers_root_and_freezes_file_and_blob_contents() {
+fn uses_selected_root_and_freezes_file_and_blob_contents() {
     let temp = TempRepo::new();
     temp.write("src/code.rs", "one\ntwo\nthree\n");
     temp.commit_all("initial");
     temp.write("src/code.rs", "changed\ntwo\nthree\n");
 
-    let repository = Repository::discover(temp.path().join("src"), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     assert_eq!(repository.root(), fs::canonicalize(temp.path()).unwrap());
 
     let path = RepoPath::parse("src/code.rs").unwrap();
@@ -112,7 +133,7 @@ fn discovers_root_and_freezes_file_and_blob_contents() {
         .unwrap();
     assert_eq!(current.content, "two\nthree\n");
     assert_eq!(current.provenance.sha256.len(), 64);
-    assert_eq!(current.provenance.repository, ".");
+    assert_eq!(current.provenance.repository, None);
 
     let committed = repository.read_git_blob("HEAD", &path, None).unwrap();
     assert_eq!(committed.content, "one\ntwo\nthree\n");
@@ -130,6 +151,94 @@ fn discovers_root_and_freezes_file_and_blob_contents() {
 }
 
 #[test]
+fn reads_plain_files_without_a_git_repository() {
+    let root = TempRoot::new();
+    fs::write(root.path.join("notes.txt"), "plain\n").unwrap();
+
+    let repository = Repository::at_root(
+        root.path.parent().unwrap(),
+        Some(Path::new(root.path.file_name().unwrap())),
+    )
+    .unwrap();
+    assert_eq!(repository.root(), fs::canonicalize(&root.path).unwrap());
+    let resource = repository
+        .read_file(&RepoPath::parse("notes.txt").unwrap(), None)
+        .unwrap();
+
+    assert_eq!(resource.content, "plain\n");
+    assert_eq!(resource.provenance.repository, None);
+    assert_eq!(resource.provenance.path, "notes.txt");
+}
+
+#[cfg(unix)]
+#[test]
+fn plain_file_source_rejects_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let root = TempRoot::new();
+    fs::write(root.path.join("target.txt"), "target bytes\n").unwrap();
+    symlink("target.txt", root.path.join("link.txt")).unwrap();
+    let repository = Repository::at_root(&root.path, None).unwrap();
+
+    let error = repository
+        .read_file(&RepoPath::parse("link.txt").unwrap(), None)
+        .unwrap_err();
+
+    assert_eq!(error.kind(), RepositoryErrorKind::InvalidPath);
+    assert_eq!(
+        error.to_string(),
+        "plain file sources must be regular files (repository.invalid_path): link.txt"
+    );
+}
+
+#[test]
+fn discovers_unrelated_sibling_repositories_per_path() {
+    let root = TempRoot::new();
+    let first = TempRepo::at(root.path.join("first"));
+    let second = TempRepo::at(root.path.join("second"));
+    first.write("file.txt", "first\n");
+    second.write("file.txt", "second\n");
+    first.commit_all("first");
+    second.commit_all("second");
+
+    let repository = Repository::at_root(&root.path, None).unwrap();
+    let first_path = RepoPath::parse("first/file.txt").unwrap();
+    let second_path = RepoPath::parse("second/file.txt").unwrap();
+    let groups = repository
+        .group_by_owner(&[first_path.clone(), second_path.clone()])
+        .unwrap();
+    assert_eq!(
+        groups
+            .iter()
+            .map(|group| group.repository.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+
+    let first_blob = repository.read_git_blob("HEAD", &first_path, None).unwrap();
+    let second_blob = repository
+        .read_git_blob("HEAD", &second_path, None)
+        .unwrap();
+    assert_eq!(first_blob.content, "first\n");
+    assert_eq!(first_blob.provenance.repository.as_deref(), Some("first"));
+    assert_eq!(second_blob.content, "second\n");
+    assert_eq!(second_blob.provenance.repository.as_deref(), Some("second"));
+
+    let guard = SnapshotGuard::start(&repository, &[first_path, second_path]).unwrap();
+    guard.verify(&repository).unwrap();
+
+    let error = repository
+        .resolve_git_diff(&DiffRequest {
+            base: "HEAD".to_owned(),
+            target: DiffTarget::Worktree,
+            files: vec![selected("first/file.txt"), selected("second/file.txt")],
+            context_lines: 3,
+        })
+        .unwrap_err();
+    assert_eq!(error.kind(), RepositoryErrorKind::MixedRepositories);
+}
+
+#[test]
 fn resolves_symbolic_revision_diff_and_range_selection() {
     let temp = TempRepo::new();
     temp.write("file.txt", "alpha\nbeta\ngamma\n");
@@ -137,7 +246,7 @@ fn resolves_symbolic_revision_diff_and_range_selection() {
     temp.write("file.txt", "alpha\nchanged\ngamma\nadded\n");
     temp.commit_all("target");
 
-    let repository = Repository::discover(temp.path(), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     let result = repository
         .resolve_git_diff(&DiffRequest {
             base: "HEAD~1".to_owned(),
@@ -170,7 +279,7 @@ fn range_selection_excludes_nearby_change_merged_by_git() {
     temp.commit_all("base");
     temp.write("file.txt", "one\nTWO\nthree\nFOUR\nfive\nsix\n");
 
-    let repository = Repository::discover(temp.path(), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     let result = repository
         .resolve_git_diff(&DiffRequest {
             base: "HEAD".to_owned(),
@@ -202,7 +311,7 @@ fn final_revision_guard_detects_moved_git_blob_ref() {
     temp.commit_all("first");
     temp.git(["branch", "lesson-ref", "HEAD"]);
 
-    let repository = Repository::discover(temp.path(), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     repository
         .read_git_blob("lesson-ref", &RepoPath::parse("file.txt").unwrap(), None)
         .unwrap();
@@ -224,7 +333,7 @@ fn final_revision_guard_covers_diff_base_and_target_refs() {
     temp.commit_all("second");
     temp.git(["branch", "lesson-target", "HEAD"]);
 
-    let repository = Repository::discover(temp.path(), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     repository
         .resolve_git_diff(&DiffRequest {
             base: "lesson-base".to_owned(),
@@ -248,7 +357,7 @@ fn worktree_diff_includes_explicit_untracked_file_as_complete_addition() {
     temp.write("tracked.txt", "new\n");
     temp.write("notes.txt", "first\nsecond\n");
 
-    let repository = Repository::discover(temp.path(), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     let result = repository
         .resolve_git_diff(&DiffRequest {
             base: "HEAD".to_owned(),
@@ -283,7 +392,7 @@ fn worktree_diff_rejects_explicit_ignored_file() {
     temp.commit_all("base");
     temp.write("secret.ignored", "do not include\n");
 
-    let repository = Repository::discover(temp.path(), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     let error = repository
         .resolve_git_diff(&DiffRequest {
             base: "HEAD".to_owned(),
@@ -293,6 +402,34 @@ fn worktree_diff_rejects_explicit_ignored_file() {
         })
         .unwrap_err();
     assert_eq!(error.kind(), RepositoryErrorKind::IgnoredFile);
+}
+
+#[cfg(unix)]
+#[test]
+fn worktree_diff_rejects_untracked_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TempRepo::new();
+    temp.write("tracked.txt", "base\n");
+    temp.commit_all("base");
+    temp.write("target.txt", "target bytes\n");
+    symlink("target.txt", temp.path().join("link.txt")).unwrap();
+
+    let repository = Repository::at_root(temp.path(), None).unwrap();
+    let error = repository
+        .resolve_git_diff(&DiffRequest {
+            base: "HEAD".to_owned(),
+            target: DiffTarget::Worktree,
+            files: vec![selected("link.txt")],
+            context_lines: 3,
+        })
+        .unwrap_err();
+
+    assert_eq!(error.kind(), RepositoryErrorKind::InvalidPath);
+    assert_eq!(
+        error.to_string(),
+        "untracked worktree diff selections must be regular files (repository.invalid_path): link.txt"
+    );
 }
 
 #[test]
@@ -313,7 +450,7 @@ fn reports_owning_repository_groups_for_submodule() {
     ]);
     outer.commit_all("add submodule");
 
-    let repository = Repository::discover(outer.path(), None).unwrap();
+    let repository = Repository::at_root(outer.path(), None).unwrap();
     let groups = repository
         .group_by_owner(&[
             RepoPath::parse("outer.txt").unwrap(),
@@ -336,7 +473,7 @@ fn reports_owning_repository_groups_for_submodule() {
 }
 
 #[test]
-fn discovers_linked_worktree_as_the_selected_root() {
+fn accepts_linked_worktree_as_the_selected_root() {
     let main = TempRepo::new();
     main.write("file.txt", "content\n");
     main.commit_all("base");
@@ -349,7 +486,7 @@ fn discovers_linked_worktree_as_the_selected_root() {
         OsString::from("HEAD"),
     ]);
 
-    let repository = Repository::discover(&linked_path, None).unwrap();
+    let repository = Repository::at_root(&linked_path, None).unwrap();
     assert_eq!(repository.root(), fs::canonicalize(&linked_path).unwrap());
     let resource = repository
         .read_file(&RepoPath::parse("file.txt").unwrap(), None)
@@ -372,7 +509,7 @@ fn generated_diff_handles_spaces_and_git_quoted_characters_in_paths() {
     temp.commit_all("base");
     temp.write(path, "new\n");
 
-    let repository = Repository::discover(temp.path(), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     let result = repository
         .resolve_git_diff(&DiffRequest {
             base: "HEAD".to_owned(),
@@ -389,11 +526,30 @@ fn snapshot_guard_detects_selected_content_changes() {
     let temp = TempRepo::new();
     temp.write("file.txt", "before\n");
     temp.commit_all("base");
-    let repository = Repository::discover(temp.path(), None).unwrap();
+    let repository = Repository::at_root(temp.path(), None).unwrap();
     let path = RepoPath::parse("file.txt").unwrap();
     let guard = SnapshotGuard::start(&repository, std::slice::from_ref(&path)).unwrap();
 
     temp.write("file.txt", "after\n");
     let error = guard.verify(&repository).unwrap_err();
     assert_eq!(error.kind(), RepositoryErrorKind::SnapshotChanged);
+}
+
+#[test]
+fn snapshot_guard_detects_ownership_boundary_changes() {
+    let temp = TempRepo::new();
+    temp.write("nested/file.txt", "unchanged\n");
+    temp.commit_all("base");
+    let repository = Repository::at_root(temp.path(), None).unwrap();
+    let path = RepoPath::parse("nested/file.txt").unwrap();
+    let guard = SnapshotGuard::start(&repository, std::slice::from_ref(&path)).unwrap();
+
+    temp.git(["init", "--quiet", "nested"]);
+
+    let error = guard.verify(&repository).unwrap_err();
+    assert_eq!(error.kind(), RepositoryErrorKind::SnapshotChanged);
+    assert_eq!(
+        fs::read_to_string(temp.path().join(path.as_str())).unwrap(),
+        "unchanged\n"
+    );
 }

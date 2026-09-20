@@ -30,10 +30,12 @@ To inspect or operate on the fixture manually:
 
 ```sh
 repository=$(examples/create-repository-lesson.sh)
-learnc check --repo "$repository" "$repository/lesson.json"
-learnc build --repo "$repository" "$repository/lesson.json"
+learnc check --root "$repository" "$repository/lesson.json"
+learnc build --root "$repository" "$repository/lesson.json"
 learn serve "$repository/lesson.learn"
 ```
 
-The setup script prints the generated repository path and leaves it in place.
-Remove that temporary directory after inspection.
+The setup script prints the generated repository path. Here that repository is
+also the selected filesystem root; a larger lesson may instead select a parent
+directory containing several repositories. The script leaves its temporary
+directory in place. Remove it after inspection.

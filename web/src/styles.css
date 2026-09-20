@@ -40,6 +40,18 @@ button, input { font: inherit; }
 
 pre { margin: 0; overflow-x: auto; border-radius: .55rem; background: var(--code); color: #f4f1eb; padding: 1rem 1.1rem; line-height: 1.55; tab-size: 4; }
 pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .86rem; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal { color: #d59bf6; }
+.hljs-string, .hljs-attr, .hljs-template-tag { color: #b9d78b; }
+.hljs-title, .hljs-section, .hljs-function .hljs-title { color: #8fc9ef; }
+.hljs-number, .hljs-symbol, .hljs-bullet { color: #efb380; }
+.hljs-comment, .hljs-quote { color: #a6abae; font-style: italic; }
+.hljs-meta, .hljs-doctag { color: #e6d284; }
+.hljs-built_in, .hljs-type { color: #77d4c6; }
+
+.mermaid-loading, .mermaid-error { margin: 0; border-radius: .55rem; background: var(--paper); padding: 1rem; color: var(--muted); }
+.mermaid-error p { margin-top: 0; }
+.mermaid-diagram { overflow-x: auto; border: 1px solid var(--line); border-radius: .55rem; background: white; padding: 1rem; text-align: center; }
+.mermaid-diagram iframe { width: 100%; min-height: 20rem; border: 0; }
 
 .diff-block { overflow: hidden; border: 1px solid var(--line); border-radius: .55rem; background: var(--paper); }
 .diff-file + .diff-file { border-top: 1px solid var(--line); }

@@ -9,7 +9,7 @@ const initialState: StateResponse = {
     title: "Queue changes",
     nodes: [
       { node_id: 0, source_id: "intro", type: "markdown", content: "## Why this changed" },
-      { node_id: 2, source_id: "queue-code", type: "code", content: "queue.push_back(item);" },
+      { node_id: 2, source_id: "queue-code", type: "code", content: "queue.push_back(item);", language: "rust" },
       {
         node_id: 3,
         source_id: "queue-diff",
@@ -18,6 +18,7 @@ const initialState: StateResponse = {
           {
             old_path: "src/queue.rs",
             new_path: "src/queue.rs",
+            language: "rust",
             hunks: [
               {
                 header: "@@ -1 +1 @@",

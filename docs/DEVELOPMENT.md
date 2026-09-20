@@ -21,7 +21,7 @@ For a first pass through the implementation, read these files in order:
 
 1. [`src/lib.rs`](../src/lib.rs) — top-level module and trust boundaries.
 2. [`src/source/model.rs`](../src/source/model.rs) — authored JSON language.
-3. [`src/compiler/mod.rs`](../src/compiler/mod.rs#L54) — compilation pipeline.
+3. [`src/compiler/mod.rs`](../src/compiler/mod.rs#L55) — compilation pipeline.
 4. [`src/artifact/mod.rs`](../src/artifact/mod.rs) — `.learn` contract.
 5. [`src/runtime/model.rs`](../src/runtime/model.rs) — artifact loading and public projection.
 6. [`src/runtime/session.rs`](../src/runtime/session.rs) — learner state machine.
@@ -51,7 +51,7 @@ flowchart LR
     Agent["Coding agent"]
     Learner["Learner"]
     Source["lesson.json<br/>authored lesson"]
-    Repo["Git worktree<br/>files and revisions"]
+    Repo["Filesystem root<br/>files · Git repositories · revisions"]
     Compiler["learnc<br/>validate · resolve · freeze"]
     Artifact["lesson.learn<br/>self-contained JSON"]
     Runtime["learn<br/>artifact loader + session"]
@@ -94,6 +94,7 @@ never reopens the lesson source or worktree.
 | [`src/bin/learnc.rs`](../src/bin/learnc.rs) | Compiler CLI, JSON/text reporting, `check`, `build`, and `schema`. |
 | [`src/cli.rs`](../src/cli.rs) | Shared Clap-driven output-mode detection and structured JSON help/version descriptions. |
 | [`src/source/`](../src/source) | Authored model, `SourceId`/`NodeId`, JSON Schema, and source-only validation. |
+| [`src/language.rs`](../src/language.rs) | Canonical code-language normalization, path inference, aliases, and plain-text fallback. |
 | [`src/diagnostics.rs`](../src/diagnostics.rs) | Stable diagnostic codes, JSON Pointers, related locations, and suggestions. |
 | [`src/repository/`](../src/repository) | Validated repository paths, Git execution, content resolution, diff parsing, and consistency guards. |
 | [`src/compiler/mod.rs`](../src/compiler/mod.rs) | Adapts source types to repository requests and lowers resolved blocks into an artifact. |
@@ -119,19 +120,19 @@ flowchart TD
     Read["compile_file<br/>require .json · read UTF-8"]
     Parse["parse_and_validate<br/>Serde + semantic diagnostics"]
     Symbols["SymbolTable<br/>SourceId → dense NodeId"]
-    Paths["Collect repository-backed paths"]
-    Discover["Repository::discover<br/>optional for all-inline lessons"]
-    Snapshot["Start whole-build snapshot"]
+    Paths["Collect filesystem-backed paths"]
+    Discover["Repository::at_root<br/>optional for all-inline lessons"]
+    Snapshot["Start filesystem + Git-owner snapshots"]
     Lower["Lower blocks in authored order"]
     Refs["Revalidate every observed Git ref"]
-    Verify["Verify selected worktree snapshot"]
+    Verify["Verify selected per-repository snapshots"]
     Build["Construct CompiledLesson"]
     Contract["validate_artifact"]
     Check["check<br/>discard valid artifact"]
     Write["build<br/>atomic .learn write"]
 
     Cli --> Read --> Parse --> Symbols --> Paths
-    Paths -->|"no repository inputs"| Lower
+    Paths -->|"no filesystem inputs"| Lower
     Paths -->|"file, blob, or Git diff"| Discover --> Snapshot --> Lower
     Lower --> Refs --> Verify --> Build --> Contract
     Contract --> Check
@@ -151,30 +152,36 @@ flowchart TD
 ```
 
 The concrete orchestration starts in
-[`compile`](../src/compiler/mod.rs#L54):
+[`compile`](../src/compiler/mod.rs#L55):
 
-1. [`parse_and_validate`](../src/source/validate.rs#L31) performs path-aware
+1. [`parse_and_validate`](../src/source/validate.rs#L34) performs path-aware
    deserialization, rejects trailing JSON, collects independent semantic errors,
    and assigns dense node IDs only after validation succeeds.
-2. [`repository_paths`](../src/compiler/mod.rs#L422) finds every file-backed
-   input. An all-inline lesson compiles without discovering Git.
-3. Repository-backed lessons call
-   [`Repository::discover`](../src/repository/git.rs#L87) and start a
-   [`SnapshotGuard`](../src/repository/snapshot.rs#L18).
-4. Markdown, code, diff, and quiz blocks are lowered in authored order. Resolver
-   errors are collected where possible instead of stopping at the first block.
-5. Every symbolic revision observed by a blob or diff is re-resolved, then the
-   selected worktree snapshot is rechecked. A moved ref or changed input aborts
-   the entire compile before an artifact is constructed.
-6. [`validate_artifact`](../src/artifact/mod.rs#L176) checks dense IDs and quiz
+2. [`repository_paths`](../src/compiler/mod.rs#L457) finds every file-backed
+   input. An all-inline lesson compiles without selecting a filesystem root.
+3. Lessons with file-backed inputs call
+   [`Repository::at_root`](../src/repository/git.rs#L94) and start a filesystem
+   [`SnapshotGuard`](../src/repository/snapshot.rs#L19). Git-backed paths also
+   get a whole-build owner/repository-state guard; plain-file-only lessons never
+   invoke Git.
+4. Markdown, code, diff, and quiz blocks are lowered in authored order. Code
+   languages are normalized or inferred from source paths during lowering.
+   Resolver errors are collected where possible instead of stopping at the
+   first block.
+5. Every symbolic revision observed by a blob or diff is re-resolved in its
+   owning repository, then every selected repository snapshot is rechecked. A
+   moved ref or changed input aborts the entire compile before an artifact is
+   constructed.
+6. [`validate_artifact`](../src/artifact/mod.rs#L178) checks dense IDs and quiz
    cross-references before the artifact crosses the compiler/runtime boundary.
-7. [`write_artifact_atomic`](../src/compiler/mod.rs#L217) writes a same-directory
+7. [`write_artifact_atomic`](../src/compiler/mod.rs#L235) writes a same-directory
    temporary file, flushes it, and renames it over the destination. Compilation
    failures never modify a previous artifact.
 
-Important path rule: repository paths are relative to the selected Git root,
-not to the directory containing `lesson.json`. Without `--repo`, discovery
-starts from the `learnc` process working directory.
+Important path rule: source paths are relative to the selected filesystem root,
+not to the directory containing `lesson.json`. Without `--root`, that root is
+the `learnc` process working directory. The root itself need not be a Git
+repository; Git ownership is discovered independently from each selected path.
 
 ## Source, identity, and artifact model
 
@@ -208,15 +215,15 @@ flowchart LR
     class Private private
 ```
 
-- [`LessonSource`](../src/source/model.rs#L34) contains only
+- [`LessonSource`](../src/source/model.rs#L39) contains only
   `schema_version`, `title`, and ordered `blocks`.
-- [`Block`](../src/source/model.rs#L45) has exactly four v1 variants:
+- [`Block`](../src/source/model.rs#L151) has exactly four v1 variants:
   `markdown`, `code`, `diff`, and `multiple_choice`.
 - [`SourceId`](../src/source/ids.rs#L14) remains in the artifact for diagnostics;
   runtime state and routes use [`NodeId`](../src/source/ids.rs#L83).
 - Choices are not nodes. The compiler removes `correct` markers, generates
-  [`ChoiceId`](../src/artifact/mod.rs#L96), and stores the answer separately.
-- [`CompiledLesson`](../src/artifact/mod.rs#L38) contains presentation data,
+  [`ChoiceId`](../src/artifact/mod.rs#L99), and stores the answer separately.
+- [`CompiledLesson`](../src/artifact/mod.rs#L39) contains presentation data,
   the private answer table, and build provenance.
 - “Private” is an API projection boundary, not encryption. A local user can
   inspect readable `.learn` JSON.
@@ -226,21 +233,23 @@ Three SemVer values evolve independently:
 | Version | Current value | Defined by |
 | --- | --- | --- |
 | Cargo package | `0.1.0` | [`Cargo.toml`](../Cargo.toml) |
-| Authored schema | `1.0.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
+| Authored schema | `1.1.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
 | Artifact schema | `1.0.0` | [`ArtifactVersion`](../src/artifact/mod.rs#L15) |
 
 ## Repository and diff resolution
 
 The source layer and repository layer intentionally have separate `RepoPath`
 types. Source validation can aggregate precise JSON diagnostics; the repository
-boundary validates again before joining a path to the selected root.
+boundary validates again before joining a path to the selected filesystem root.
 
 Repository behavior lives primarily in
 [`src/repository/git.rs`](../src/repository/git.rs):
 
 - Git is always invoked directly with argument arrays, never through a shell.
-- Each selected path is assigned to its nearest owning repository. Paths inside
-  a submodule therefore belong to the submodule, not the outer worktree.
+- Each selected path is assigned to its nearest owning repository. Unrelated
+  sibling repositories, nested repositories, and submodules can all live under
+  one selected root; a path inside a submodule belongs to the submodule, not the
+  outer worktree.
 - One generated diff may cover only one owning repository. Mixed selections
   fail with grouping information so the lesson can split them into blocks.
 - File and Git-blob sources must be UTF-8. Line ranges are one-based and
@@ -250,7 +259,7 @@ Repository behavior lives primarily in
   are rejected.
 
 Raw inline/file patches are parsed once by
-[`parse_unified_diff`](../src/repository/diff.rs#L100). The artifact and browser
+[`parse_unified_diff`](../src/repository/diff.rs#L105). The artifact and browser
 use structured files, hunks, and typed lines; React never parses patch text.
 
 Generated diff ranges are applied to changed regions:
@@ -262,10 +271,11 @@ Generated diff ranges are applied to changed regions:
   they do not intersect the requested ranges;
 - a range that intersects no changed line is an error.
 
-Consistency is checked at two levels. Per-diff guards recheck its refs and
-selected files. The whole-build guard records selected worktree state and every
-`(owning repository, revision expression, resolved commit)` pair, then verifies
-them again after all blocks resolve.
+Consistency is checked at two levels. Per-diff guards recheck the owning
+repository's selected worktree state. Whole-build guards recheck all selected
+filesystem bytes and, for Git-backed paths, their owner boundaries and selected
+repository state. Every `(owning repository, revision expression, resolved
+commit)` observation is also verified again after all blocks resolve.
 
 ## Runtime and HTTP flow
 
@@ -360,10 +370,13 @@ dispatch point:
 
 - [`Markdown`](../web/src/components/Markdown.tsx) uses GFM without enabling raw
   HTML.
-- [`CodeBlock`](../web/src/components/CodeBlock.tsx) renders embedded content as
-  literal text.
+- [`CodeBlock`](../web/src/components/CodeBlock.tsx) syntax-highlights known
+  languages, renders `mermaid` as a diagram, and safely falls back to literal
+  text for unknown languages or an invalid diagram. Mermaid runs in strict
+  security mode.
 - [`DiffBlock`](../web/src/components/DiffBlock.tsx) renders structured lines and
-  old/new line numbers.
+  old/new line numbers, using the language frozen for each compiled diff file to
+  syntax-highlight its content.
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
 
@@ -400,7 +413,7 @@ flowchart LR
     class Learn runtime
 ```
 
-[`WebAssets`](../src/runtime/server.rs#L133) embeds `web/dist` into the Rust
+[`WebAssets`](../src/runtime/server.rs#L135) embeds `web/dist` into the Rust
 binary. [`Cargo.toml`](../Cargo.toml) explicitly packages those assets while
 excluding the frontend toolchain and `node_modules`, so consumer installation
 does not run Node.
@@ -456,7 +469,7 @@ line to discover the random URL before waiting on the long-running server.
 | `just release-check` | Rebuilds assets, runs verification, and runs the package smoke test. |
 
 The ignored `cargo_install_smoke` test in
-[`tests/v1_contract.rs`](../tests/v1_contract.rs#L439) is a slower Rust-harness
+[`tests/v1_contract.rs`](../tests/v1_contract.rs#L837) is a slower Rust-harness
 variant. `just package-smoke` is the stronger release path because it also
 checks the assembled crate, Node failure shims, embedded UI/API, and version
 errors.
@@ -477,9 +490,9 @@ Tests are layered so failures identify the responsible boundary:
 - Source/schema/diagnostics tests are colocated under
   [`src/source/`](../src/source).
 - Patch parsing and range-selection tests live in
-  [`src/repository/diff.rs`](../src/repository/diff.rs#L610).
-- Real Git worktree, submodule, revision, ref-movement, quoting, ignored, and
-  untracked cases live in
+  [`src/repository/diff.rs`](../src/repository/diff.rs#L623).
+- Real Git worktree, sibling-repository, submodule, revision, ref-movement,
+  quoting, ignored, and untracked cases live in
   [`src/repository/tests.rs`](../src/repository/tests.rs).
 - Artifact and compiler unit tests live in their modules.
 - Runtime projection, quiz state, endpoint, and asset tests live under
@@ -533,6 +546,11 @@ Source schema, artifact schema, and package versions are independent. A source
 change may require a new `SchemaVersion` decoder while leaving artifacts stable;
 an artifact change requires explicit runtime compatibility handling. Never infer
 compatibility from the Cargo package version.
+
+The compiler currently decodes source schemas `1.0.0` and `1.1.0`; `1.1.0`
+adds the optional code-block `language` field. Each schema command emits the
+exact closed shape for the requested version, and `SchemaVersion::CURRENT`
+selects the default for new documents.
 
 ### Change package contents
 

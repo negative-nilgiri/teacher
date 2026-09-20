@@ -1,10 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
+use serde::de::DeserializeOwned;
+
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
 
 use super::{
     Block, CodeSource, DiffSource, GitDiffTarget, GitRevision, LessonSource, LineRange,
     MarkdownSource, RepoPath, SourceId, SymbolTable,
+    model::{LessonSourceV1_0_0, LessonSourceV1_1_0},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,8 +32,20 @@ impl ValidatedLesson {
 
 /// Parses one JSON source document and runs all non-I/O semantic checks.
 pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic>> {
+    let version = serde_json::from_str::<serde_json::Value>(input)
+        .ok()
+        .and_then(|value| value.get("schema_version")?.as_str().map(str::to_owned));
+    let source = match version.as_deref() {
+        Some("1.0.0") => deserialize_source::<LessonSourceV1_0_0>(input).map(Into::into),
+        Some("1.1.0") => deserialize_source::<LessonSourceV1_1_0>(input).map(Into::into),
+        _ => deserialize_source::<LessonSource>(input),
+    }?;
+    validate(source)
+}
+
+fn deserialize_source<T: DeserializeOwned>(input: &str) -> Result<T, Vec<Diagnostic>> {
     let mut deserializer = serde_json::Deserializer::from_str(input);
-    let source: LessonSource = match serde_path_to_error::deserialize(&mut deserializer) {
+    let source: T = match serde_path_to_error::deserialize(&mut deserializer) {
         Ok(source) => source,
         Err(error) => {
             let pointer = serde_path_to_json_pointer(&error.path().to_string());
@@ -60,7 +75,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
             ),
         )]);
     }
-    validate(source)
+    Ok(source)
 }
 
 /// Checks source-only invariants and assigns deterministic dense node IDs.
@@ -127,7 +142,17 @@ pub fn validate(source: LessonSource) -> Result<ValidatedLesson, Vec<Diagnostic>
 
         match block {
             Block::Markdown(block) => validate_markdown(&block.source, &base, &mut diagnostics),
-            Block::Code(block) => validate_code(&block.source, &base, &mut diagnostics),
+            Block::Code(block) => {
+                if let Some(language) = &block.language {
+                    nonempty(
+                        language,
+                        &format!("{base}/language"),
+                        "code language",
+                        &mut diagnostics,
+                    );
+                }
+                validate_code(&block.source, &base, &mut diagnostics);
+            }
             Block::Diff(block) => validate_diff(&block.source, &base, &mut diagnostics),
             Block::MultipleChoice(block) => {
                 validate_multiple_choice(block, &base, &mut diagnostics)
@@ -215,7 +240,7 @@ fn validate_diff(source: &DiffSource, base: &str, diagnostics: &mut DiagnosticBa
                         format!("{base}/source/files"),
                         "a Git diff source must select at least one file",
                     )
-                    .with_suggestion("Add a repository-relative file selection."),
+                    .with_suggestion("Add a selected-root-relative file selection."),
                 );
             }
             let mut selected_paths = HashSet::new();
@@ -315,10 +340,10 @@ fn repo_path(path: &RepoPath, pointer: &str, diagnostics: &mut DiagnosticBag) {
             Diagnostic::error(
                 "source.path.invalid",
                 pointer,
-                format!("invalid repository-relative path: {message}"),
+                format!("invalid selected-root-relative path: {message}"),
             )
             .with_suggestion(
-                "Use a forward-slash path below the selected repository root without `.` or `..` components.",
+                "Use a forward-slash path below the selected filesystem root without `.` or `..` components.",
             ),
         );
     }
@@ -515,6 +540,41 @@ mod tests {
         }"#;
         let diagnostics = parse_and_validate(json).expect_err("range starts at zero");
         assert_eq!(diagnostics[0].pointer, "/blocks/0/source/lines/start");
+    }
+
+    #[test]
+    fn rejects_an_explicit_blank_code_language() {
+        let json = r#"{
+            "schema_version":"1.1.0",
+            "title":"Language",
+            "blocks":[{
+                "type":"code",
+                "id":"sample",
+                "language":"   ",
+                "source":{"kind":"inline","content":"some code"}
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(json).expect_err("blank language is invalid");
+        assert_eq!(diagnostics[0].code, "source.content.empty");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0/language");
+    }
+
+    #[test]
+    fn source_1_0_rejects_the_language_field_added_in_1_1() {
+        let json = r#"{
+            "schema_version":"1.0.0",
+            "title":"Legacy contract",
+            "blocks":[{
+                "type":"code",
+                "id":"sample",
+                "language":"rust",
+                "source":{"kind":"inline","content":"fn main() {}"}
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(json).expect_err("1.0 must remain a closed shape");
+        assert_eq!(diagnostics[0].code, "source.deserialize");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0");
+        assert!(diagnostics[0].message.contains("unknown field `language`"));
     }
 
     #[test]

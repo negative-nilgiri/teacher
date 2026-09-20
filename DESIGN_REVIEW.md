@@ -68,7 +68,7 @@ V1 session state is in memory and is lost when `learn` exits. The compiled
 
 ```json
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "title": "Understanding the queue changes",
   "blocks": []
 }
@@ -155,12 +155,17 @@ bounded and visible to the user.
 ## V1 content blocks and sources
 
 The accepted non-interactive blocks are `markdown`, `code`, and `diff`. All have
-required authored source IDs. Markdown handles general prose and incidental fenced
-code; `code` and `diff` remain distinct semantic blocks.
+required authored source IDs. Markdown handles rendered prose; ordinary prose
+must not be placed in code blocks, where Markdown remains literal. A code block
+may use language `markdown` when the syntax itself is the subject, but it should
+contain only the relevant fragment. `code` and `diff` remain distinct semantic
+blocks.
 
 Presentation controls such as captions, colors, layout, line highlights,
 collapsing, and copy-button configuration are excluded from v1. Adjacent Markdown
-can introduce or explain another block.
+can introduce or explain another block. Lessons should form local narrative
+units by interleaving an explanation, its relevant code or diff, and any
+follow-up instead of collecting unrelated diffs at the end.
 
 ### Compiled lesson output
 
@@ -236,7 +241,33 @@ enum DiffSource {
 }
 ```
 
-- Source paths use a validated, repository-relative `RepoPath`; the resolver
+Code blocks also have an optional presentation `language`, independent of the
+source variant. Canonical values are `rust`, `python`, `javascript`,
+`typescript`, `c`, `cpp`, `go`, `java`, `shell`, `json`, `yaml`, `toml`,
+`html`, `css`, `xml`, `sql`, `markdown`, `mermaid`, and `text`. Accepted aliases
+normalize as follows: `rs` to `rust`; `py` to `python`;
+`js`/`jsx`/`mjs`/`cjs` to `javascript`; `ts`/`tsx`/`mts`/`cts` to
+`typescript`; `h` to `c`; `c++`/`cxx`/`cc`/`hpp`/`hxx`/`hh` to `cpp`; `golang` to `go`;
+`sh`/`bash`/`zsh`/`fish` to `shell`; `jsonc` to `json`; `yml` to `yaml`; `htm`
+to `html`; `xsl`/`xslt`/`svg` to `xml`; `scss`/`sass` to `css`; `md`/`mdx` to
+`markdown`; `mmd` to `mermaid`; and `txt`/`plain`/`plaintext` to `text`. For
+file and Git-blob sources, an omitted language is inferred from a recognized
+path extension. Extensionless names such as `Makefile` and `Dockerfile`, inline
+sources, and unknown paths fall back to plain text, as do unknown explicit
+language values.
+
+This field is introduced by source schema `1.1.0`. The compiler continues to
+decode closed `1.0.0` documents without the field and can emit either version's
+exact JSON Schema; new language-aware documents use `1.1.0`.
+
+`mermaid` is rendered as a diagram rather than highlighted source. Mermaid uses
+the ordinary code block with an inline source and `language: "mermaid"`; fenced
+Mermaid inside a Markdown block is not part of the protocol. A lesson uses
+`language: "text"` when it intends to display Mermaid syntax literally. The
+runtime uses Mermaid's strict security mode and falls back to escaped source
+when a diagram cannot be rendered.
+
+- Source paths use a validated, selected-root-relative `RepoPath`; the resolver
   converts them to platform-specific `PathBuf` values.
 - Source line ranges are explicitly one-based and inclusive. They are not exposed
   as Rust's half-open, platform-sized `Range<usize>`.
@@ -272,14 +303,17 @@ ResolvedDiff
 
 The React frontend renders this representation and does not parse unified diffs.
 The compiler validates and parses raw patch sources once. Selected compiled diffs
-are teaching/rendering data and are not required to remain applicable by
+carry a normalized language inferred from each displayed file path so their
+lines receive the same syntax presentation as code blocks. Selected compiled
+diffs are teaching/rendering data and are not required to remain applicable by
 `git apply`; the original raw patch may be retained internally as provenance.
 
 ## Repository resolution and freezing
 
-- Every source path is relative to one runtime-selected repository root. The
-  root defaults to the current Git worktree and can be overridden with `--repo`;
-  lesson content cannot declare an absolute root.
+- Every source path is relative to one runtime-selected filesystem root. The
+  root defaults to the compiler's current working directory and can be
+  overridden with `--root`; lesson content cannot declare an absolute root.
+  The selected root does not need to be a Git repository.
 - Symbolic Git revision expressions such as `HEAD`, `main`, and `HEAD~2` are
   allowed in lesson source. The compiler resolves them to concrete object IDs and
   records those IDs in the artifact.
@@ -290,15 +324,16 @@ are teaching/rendering data and are not required to remain applicable by
   Agents do not provide content hashes in v1.
 - Explicitly selected untracked worktree files compile as complete additions.
   Ignored files remain excluded.
-- A build either produces one internally consistent snapshot or fails if inputs
+- A build either produces one internally consistent snapshot or fails if input
+  bytes, referenced revisions, path ownership, or selected repository state
   change during resolution. It never knowingly emits a mixture of repository
   states.
 - One Git diff source may cover files from only one owning Git repository. The
-  compiler discovers each path's nearest owning repository and runs Git from that
-  repository root. Ordinary directories within one repository may be combined;
-  crossing into a submodule requires a separate diff block. `learnc check`
-  reports the repository groups and tells the agent how to split an invalid
-  selection.
+  compiler discovers each path's nearest owning repository and runs Git from
+  that repository root. One lesson may use unrelated sibling repositories,
+  nested repositories, or submodules beneath its selected root, but paths with
+  different owners require separate diff blocks. `learnc check` reports the
+  repository groups and tells the agent how to split an invalid selection.
 
 Content hashes are provenance/integrity information, not node identity. Authored
 graph references always use `SourceId`; compilation resolves those references to
@@ -360,14 +395,14 @@ The artifact contains:
 - an `artifact_version` independent of the source `schema_version`;
 - the lesson title and ordered compiled nodes;
 - Markdown retained as resolved Markdown text;
-- code retained as resolved plain text;
+- code retained as resolved text plus its normalized or inferred language;
 - diffs lowered into structured file/hunk/line data;
 - a presentation section, including authored hints, separated from server-owned
   quiz answers and explanations;
 - artifact-local `NodeId`/`ChoiceId` values plus retained source IDs for
   diagnostics;
-- compiler version, repository-relative provenance, resolved Git object IDs, and
-  compiler-generated resource hashes;
+- compiler version, selected-root-relative paths, owning-repository provenance,
+  resolved Git object IDs, and compiler-generated resource hashes;
 - no absolute source paths and no copy of the server or frontend assets.
 
 The public/private split is a runtime presentation boundary, not an anti-cheating
@@ -424,7 +459,7 @@ local artifact.
 ```text
 learnc check [OPTIONS] lesson.json
 learnc build [OPTIONS] lesson.json [-o|--output lesson.learn]
-learnc schema [--version 1.0.0]
+learnc schema [--version 1.1.0]
 learn serve [OPTIONS] lesson.learn
 ```
 
@@ -454,10 +489,11 @@ The v1 baseline is therefore limited to:
 
 - `learn` binds to loopback only;
 - `learn` checks the artifact version and structurally deserializes the artifact;
-- source paths remain repository-relative as a language/consistency invariant;
+- source paths remain selected-root-relative as a language/consistency invariant;
 - declarative Git sources are executed through direct process arguments, never an
   authored shell command;
-- code and diff content are rendered as text;
+- code and diff content are rendered without executing authored code; known code
+  languages receive syntax presentation and `mermaid` is rendered as a diagram;
 - raw HTML in Markdown is disabled, primarily to keep rendering deterministic and
   prevent the DSL from acquiring an escape hatch into arbitrary UI.
 
@@ -485,4 +521,5 @@ Both binaries ship together from one Cargo package/workspace and share source an
 artifact schema libraries. Compatibility is enforced with valid/invalid source
 fixtures, JSON Schema tests, compiler-to-runtime loading tests, important golden
 artifact projections, Git integration tests (including worktrees, untracked
-files, revisions, and submodules), and public/private quiz projection tests.
+files, revisions, submodules, and unrelated sibling repositories), and
+public/private quiz projection tests.

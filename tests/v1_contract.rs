@@ -1,11 +1,13 @@
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use agent_teacher::artifact::{CompiledLesson, CompiledNodeContent, ResourceProvenance};
+use agent_teacher::language::Language;
 use agent_teacher::runtime::project_artifact;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -48,9 +50,14 @@ impl Drop for TempDir {
 
 #[test]
 fn emitted_schema_and_valid_fixtures_match_the_decoder() {
-    let output = output_success(Command::new(learnc()).args(["schema", "--version", "1.0.0"]));
+    let output = output_success(Command::new(learnc()).args(["schema", "--version", "1.1.0"]));
     let emitted: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(emitted, agent_teacher::source::source_json_schema());
+    let default_output = output_success(Command::new(learnc()).arg("schema"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&default_output.stdout).unwrap(),
+        emitted
+    );
     assert_eq!(emitted["title"], "LessonSource");
     assert_eq!(emitted["additionalProperties"], false);
     let required = emitted["required"].as_array().expect("root required list");
@@ -63,6 +70,15 @@ fn emitted_schema_and_valid_fixtures_match_the_decoder() {
     assert_schema_objects_are_closed(&emitted, &["kind", "content"]);
     assert_schema_objects_are_closed(&emitted, &["content", "correct"]);
     assert_schema_objects_are_closed(&emitted, &["start", "end"]);
+
+    let legacy = output_success(Command::new(learnc()).args(["schema", "--version", "1.0.0"]));
+    let legacy: serde_json::Value = serde_json::from_slice(&legacy.stdout).unwrap();
+    assert_ne!(legacy, emitted);
+    assert!(
+        !schema_code_block_has_language(&legacy),
+        "source schema 1.0.0 must not advertise the 1.1.0 language field"
+    );
+    assert!(schema_code_block_has_language(&emitted));
 
     let valid = manifest_dir().join("tests/fixtures/source/valid");
     for entry in fs::read_dir(valid).unwrap() {
@@ -79,6 +95,78 @@ fn emitted_schema_and_valid_fixtures_match_the_decoder() {
             "check wrote an artifact"
         );
     }
+}
+
+#[test]
+fn compiler_freezes_normalized_and_inferred_languages_into_public_data() {
+    let root = TempDir::new("languages");
+    fs::create_dir(root.path().join("src")).unwrap();
+    fs::write(root.path().join("src/tool.py"), "print('hello')\n").unwrap();
+    let lesson = root.path().join("languages.json");
+    let source = serde_json::json!({
+        "schema_version": "1.1.0",
+        "title": "Languages",
+        "blocks": [
+            {
+                "type": "code",
+                "id": "explicit-alias",
+                "language": "JS",
+                "source": {"kind": "inline", "content": "console.log('hello')"}
+            },
+            {
+                "type": "code",
+                "id": "inferred-file",
+                "source": {"kind": "file", "path": "src/tool.py"}
+            },
+            {
+                "type": "code",
+                "id": "safe-fallback",
+                "language": "future-language",
+                "source": {"kind": "inline", "content": "some content"}
+            },
+            {
+                "type": "diff",
+                "id": "yaml-change",
+                "source": {
+                    "kind": "inline",
+                    "content": "--- config.yaml\n+++ config.yaml\n@@ -1 +1 @@\n-old: true\n+new: true\n"
+                }
+            }
+        ]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+
+    output_success(
+        Command::new(learnc())
+            .arg("build")
+            .arg("--root")
+            .arg(root.path())
+            .arg(&lesson),
+    );
+
+    let artifact: CompiledLesson =
+        serde_json::from_slice(&fs::read(root.path().join("languages.learn")).unwrap()).unwrap();
+    let code_languages = artifact.presentation.nodes[..3]
+        .iter()
+        .map(|node| match &node.content {
+            CompiledNodeContent::Code { language, .. } => *language,
+            _ => panic!("expected code node"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        code_languages,
+        [Language::JavaScript, Language::Python, Language::Text]
+    );
+    let CompiledNodeContent::Diff { diff, .. } = &artifact.presentation.nodes[3].content else {
+        panic!("expected diff node")
+    };
+    assert_eq!(diff.files[0].language, Language::Yaml);
+
+    let public = serde_json::to_value(project_artifact(&artifact)).unwrap();
+    assert_eq!(public["nodes"][0]["language"], "javascript");
+    assert_eq!(public["nodes"][1]["language"], "python");
+    assert_eq!(public["nodes"][2]["language"], "text");
+    assert_eq!(public["nodes"][3]["files"][0]["language"], "yaml");
 }
 
 #[test]
@@ -149,6 +237,9 @@ fn cli_help_version_and_usage_errors_follow_the_output_mode() {
         let help: serde_json::Value = serde_json::from_slice(&help.stdout).unwrap();
         assert_eq!(help["help"]["name"], "check");
         assert_eq!(help["help"]["invocation"], "learnc check");
+        let options = help["help"]["options"].as_array().unwrap();
+        assert!(options.iter().any(|option| option["long"] == "--root"));
+        assert!(options.iter().all(|option| option["long"] != "--repo"));
     }
 
     let help = output_success(Command::new(learn()).args(["serve", "--help"]));
@@ -178,7 +269,7 @@ fn repository_example_checks_builds_and_freezes_relative_provenance() {
     let checked = output_success(
         Command::new(learnc())
             .arg("check")
-            .arg("--repo")
+            .arg("--root")
             .arg(repository.path())
             .arg(&lesson),
     );
@@ -190,7 +281,7 @@ fn repository_example_checks_builds_and_freezes_relative_provenance() {
     output_success(
         Command::new(learnc())
             .arg("build")
-            .arg("--repo")
+            .arg("--root")
             .arg(repository.path())
             .arg(&lesson),
     );
@@ -224,6 +315,183 @@ fn repository_example_checks_builds_and_freezes_relative_provenance() {
             ..
         } if repository == "." && sha256.len() == 64
     )));
+}
+
+#[test]
+fn filesystem_root_resolves_two_unrelated_sibling_repositories() {
+    let root = sibling_repository_root("sibling-repositories");
+    let lesson = root.path().join("siblings.json");
+    let source = serde_json::json!({
+        "schema_version": "1.0.0",
+        "title": "Sibling repositories",
+        "blocks": [
+            {
+                "type": "code",
+                "id": "repo-a-at-head",
+                "source": {
+                    "kind": "git_blob",
+                    "revision": "HEAD",
+                    "path": "repo-a/src/value.txt"
+                }
+            },
+            {
+                "type": "code",
+                "id": "repo-b-at-head",
+                "source": {
+                    "kind": "git_blob",
+                    "revision": "HEAD",
+                    "path": "repo-b/src/value.txt"
+                }
+            },
+            {
+                "type": "diff",
+                "id": "repo-a-change",
+                "source": {
+                    "kind": "git",
+                    "base": "HEAD",
+                    "target": { "kind": "worktree" },
+                    "files": [{ "path": "repo-a/src/value.txt" }],
+                    "context_lines": 1
+                }
+            },
+            {
+                "type": "diff",
+                "id": "repo-b-change",
+                "source": {
+                    "kind": "git",
+                    "base": "HEAD",
+                    "target": { "kind": "worktree" },
+                    "files": [{ "path": "repo-b/src/value.txt" }],
+                    "context_lines": 1
+                }
+            }
+        ]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+
+    output_success(
+        Command::new(learnc())
+            .arg("build")
+            .arg("--root")
+            .arg(root.path())
+            .arg(&lesson),
+    );
+
+    let bytes = fs::read(root.path().join("siblings.learn")).unwrap();
+    let artifact: CompiledLesson = serde_json::from_slice(&bytes).unwrap();
+    agent_teacher::artifact::validate_artifact(&artifact).unwrap();
+    assert!(
+        !String::from_utf8(bytes)
+            .unwrap()
+            .contains(&root.path().to_string_lossy().to_string())
+    );
+
+    for (source_id, owner, expected_content) in [
+        ("repo-a-at-head", "repo-a", "a-before\n"),
+        ("repo-b-at-head", "repo-b", "b-before\n"),
+    ] {
+        let node = artifact
+            .presentation
+            .nodes
+            .iter()
+            .find(|node| node.source_id == source_id)
+            .unwrap();
+        let CompiledNodeContent::Code {
+            content,
+            provenance:
+                ResourceProvenance::GitBlob {
+                    repository,
+                    path,
+                    revision_object_id,
+                    content_object_id,
+                    ..
+                },
+            ..
+        } = &node.content
+        else {
+            panic!("{source_id} was not a Git blob")
+        };
+        assert_eq!(content, expected_content);
+        assert_eq!(repository, owner);
+        assert_eq!(path, &format!("{owner}/src/value.txt"));
+        assert_eq!(revision_object_id.len(), 40);
+        assert_eq!(content_object_id.len(), 40);
+    }
+
+    for (source_id, owner) in [("repo-a-change", "repo-a"), ("repo-b-change", "repo-b")] {
+        let node = artifact
+            .presentation
+            .nodes
+            .iter()
+            .find(|node| node.source_id == source_id)
+            .unwrap();
+        let CompiledNodeContent::Diff {
+            diff,
+            provenance:
+                ResourceProvenance::GitDiff {
+                    repository,
+                    files,
+                    base_object_id,
+                    sha256,
+                    ..
+                },
+        } = &node.content
+        else {
+            panic!("{source_id} was not a Git diff")
+        };
+        let expected_path = format!("{owner}/src/value.txt");
+        assert_eq!(repository, owner);
+        assert_eq!(files, std::slice::from_ref(&expected_path));
+        assert_eq!(diff.files.len(), 1);
+        assert_eq!(diff.files[0].display_path(), Some(expected_path.as_str()));
+        assert_eq!(base_object_id.len(), 40);
+        assert_eq!(sha256.len(), 64);
+    }
+}
+
+#[test]
+fn one_git_diff_rejects_files_from_sibling_repositories() {
+    let root = sibling_repository_root("mixed-sibling-repositories");
+    let lesson = root.path().join("mixed.json");
+    let source = serde_json::json!({
+        "schema_version": "1.0.0",
+        "title": "Invalid mixed repository diff",
+        "blocks": [{
+            "type": "diff",
+            "id": "mixed-change",
+            "source": {
+                "kind": "git",
+                "base": "HEAD",
+                "target": { "kind": "worktree" },
+                "files": [
+                    { "path": "repo-a/src/value.txt" },
+                    { "path": "repo-b/src/value.txt" }
+                ],
+                "context_lines": 1
+            }
+        }]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+
+    let output = Command::new(learnc())
+        .arg("check")
+        .arg("--root")
+        .arg(root.path())
+        .arg(&lesson)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostic = report["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["code"] == "repository.mixed_owners")
+        .expect("mixed-owner diagnostic");
+    assert_eq!(diagnostic["pointer"], "/blocks/0/source");
+    let message = diagnostic["message"].as_str().unwrap();
+    assert!(message.contains("repo-a: repo-a/src/value.txt"));
+    assert!(message.contains("repo-b: repo-b/src/value.txt"));
 }
 
 #[test]
@@ -267,7 +535,7 @@ fn compiler_diff_range_excludes_a_nearby_unselected_change_region() {
     output_success(
         Command::new(learnc())
             .arg("build")
-            .arg("--repo")
+            .arg("--root")
             .arg(repository.path())
             .arg(&lesson),
     );
@@ -346,7 +614,7 @@ fn compiler_rejects_a_symbolic_ref_that_moves_during_resolution() {
 
     let output = Command::new(learnc())
         .arg("build")
-        .arg("--repo")
+        .arg("--root")
         .arg(repository.path())
         .arg(&lesson)
         .env("PATH", path)
@@ -478,6 +746,88 @@ fn production_frontend_bundle_is_present_and_self_contained() {
             "index references a missing bundled asset"
         );
     }
+
+    let directory = TempDir::new("frontend-assets");
+    let lesson = directory.path().join("lesson.json");
+    fs::copy(
+        manifest_dir().join("tests/fixtures/smoke-lesson.json"),
+        &lesson,
+    )
+    .unwrap();
+    output_success(Command::new(learnc()).arg("build").arg(&lesson));
+    let mut server = ChildGuard::spawn(&directory.path().join("lesson.learn"));
+    let startup = server.startup();
+    assert_eq!(
+        startup["status"], "serving",
+        "learn failed to start: {startup}"
+    );
+    let address = startup["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("http://")
+        .unwrap()
+        .trim_end_matches('/')
+        .to_owned();
+
+    let served_index = request_bytes(&address, "/");
+    assert_eq!(served_index, index.as_bytes());
+
+    let mut pending = referenced_assets(&index)
+        .into_iter()
+        .filter(|path| path.ends_with(".js"))
+        .map(str::to_owned)
+        .collect::<VecDeque<_>>();
+    let mut visited = HashSet::new();
+    let mut saw_dynamic_mermaid_import = false;
+    while let Some(path) = pending.pop_front() {
+        if !visited.insert(path.clone()) {
+            continue;
+        }
+
+        let bundled_path = dist.join(&path);
+        let bundled = fs::read(&bundled_path)
+            .unwrap_or_else(|error| panic!("missing bundled JavaScript asset {path}: {error}"));
+        let served = request_bytes(&address, &format!("/{path}"));
+        assert_eq!(
+            served, bundled,
+            "learn did not serve the packaged JavaScript asset {path}"
+        );
+
+        let source = std::str::from_utf8(&bundled).unwrap_or_else(|error| {
+            panic!("bundled JavaScript asset {path} is not UTF-8: {error}")
+        });
+        for dynamic_path in dynamic_javascript_imports(source, &path) {
+            if dynamic_path
+                .rsplit('/')
+                .next()
+                .is_some_and(|name| name.starts_with("mermaid.core-") && name.ends_with(".js"))
+            {
+                saw_dynamic_mermaid_import = true;
+            }
+            pending.push_back(dynamic_path);
+        }
+        for reference in referenced_javascript_assets(source, &path) {
+            if reference.dynamic
+                && reference
+                    .path
+                    .rsplit('/')
+                    .next()
+                    .is_some_and(|name| name.starts_with("mermaid.core-") && name.ends_with(".js"))
+            {
+                saw_dynamic_mermaid_import = true;
+            }
+            pending.push_back(reference.path);
+        }
+    }
+    assert!(
+        saw_dynamic_mermaid_import,
+        "the production entrypoint did not dynamically import the hashed Mermaid bundle"
+    );
+    assert!(
+        visited.len() > 1,
+        "the production JavaScript module graph did not include any chunks"
+    );
+    server.stop();
 }
 
 /// Slow release hook: verifies `cargo install` produces both usable binaries
@@ -525,6 +875,23 @@ fn repository_example() -> TempDir {
         directory.path().to_string_lossy()
     );
     directory
+}
+
+fn sibling_repository_root(label: &str) -> TempDir {
+    let root = TempDir::new(label);
+    for (name, before, after) in [
+        ("repo-a", "a-before\n", "a-after\n"),
+        ("repo-b", "b-before\n", "b-after\n"),
+    ] {
+        let repository = root.path().join(name);
+        fs::create_dir_all(repository.join("src")).unwrap();
+        configure_repository(&repository);
+        fs::write(repository.join("src/value.txt"), before).unwrap();
+        git(&repository, &["add", "src/value.txt"]);
+        git(&repository, &["commit", "-qm", "base"]);
+        fs::write(repository.join("src/value.txt"), after).unwrap();
+    }
+    root
 }
 
 fn configure_repository(directory: &Path) {
@@ -614,6 +981,15 @@ impl Drop for ChildGuard {
 
 fn request_json(address: &str, method: &str, path: &str, body: Option<&str>) -> serde_json::Value {
     let body = body.unwrap_or("");
+    let response = request(address, method, path, body);
+    serde_json::from_slice(&response).unwrap()
+}
+
+fn request_bytes(address: &str, path: &str) -> Vec<u8> {
+    request(address, "GET", path, "")
+}
+
+fn request(address: &str, method: &str, path: &str, body: &str) -> Vec<u8> {
     let mut stream = TcpStream::connect(address).expect("connect to local lesson server");
     write!(
         stream,
@@ -633,7 +1009,7 @@ fn request_json(address: &str, method: &str, path: &str, body: Option<&str>) -> 
         headers.starts_with("HTTP/1.1 200"),
         "unexpected response: {headers}"
     );
-    serde_json::from_slice(&response[split + 4..]).unwrap()
+    response[split + 4..].to_vec()
 }
 
 fn referenced_assets(index: &str) -> Vec<&str> {
@@ -653,6 +1029,110 @@ fn referenced_assets(index: &str) -> Vec<&str> {
         }
     }
     assets
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct JavaScriptAssetReference {
+    path: String,
+    dynamic: bool,
+}
+
+fn referenced_javascript_assets(source: &str, current_path: &str) -> Vec<JavaScriptAssetReference> {
+    let bytes = source.as_bytes();
+    let mut references = Vec::new();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let delimiter = bytes[cursor];
+        if !matches!(delimiter, b'\'' | b'"' | b'`') {
+            cursor += 1;
+            continue;
+        }
+
+        let start = cursor;
+        cursor += 1;
+        let content_start = cursor;
+        while cursor < bytes.len() {
+            if bytes[cursor] == b'\\' {
+                cursor = (cursor + 2).min(bytes.len());
+                continue;
+            }
+            if bytes[cursor] == delimiter {
+                break;
+            }
+            cursor += 1;
+        }
+        if cursor == bytes.len() {
+            break;
+        }
+
+        let value = &source[content_start..cursor];
+        if let Some(path) = resolve_javascript_asset(current_path, value) {
+            references.push(JavaScriptAssetReference {
+                path,
+                dynamic: is_dynamic_import(source, start),
+            });
+        }
+        cursor += 1;
+    }
+    references
+}
+
+fn resolve_javascript_asset(current_path: &str, reference: &str) -> Option<String> {
+    if !reference.ends_with(".js") {
+        return None;
+    }
+
+    let candidate = if reference.starts_with("assets/") {
+        PathBuf::from(reference)
+    } else if let Some(reference) = reference.strip_prefix('/') {
+        PathBuf::from(reference)
+    } else if reference.starts_with("./") || reference.starts_with("../") {
+        Path::new(current_path).parent()?.join(reference)
+    } else {
+        return None;
+    };
+
+    let mut normalized = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(component) => normalized.push(component),
+            Component::ParentDir if normalized.pop() => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    (normalized.starts_with("assets")
+        && normalized.extension().and_then(|value| value.to_str()) == Some("js"))
+    .then(|| normalized.to_string_lossy().replace('\\', "/"))
+}
+
+fn dynamic_javascript_imports(source: &str, current_path: &str) -> Vec<String> {
+    let mut imports = Vec::new();
+    let mut remainder = source;
+    while let Some(import_start) = remainder.find("import(") {
+        remainder = &remainder[import_start + "import(".len()..];
+        let argument = remainder.trim_start();
+        let Some(delimiter @ ('\'' | '"' | '`')) = argument.chars().next() else {
+            continue;
+        };
+        let value = &argument[delimiter.len_utf8()..];
+        let Some(end) = value.find(delimiter) else {
+            continue;
+        };
+        if let Some(path) = resolve_javascript_asset(current_path, &value[..end]) {
+            imports.push(path);
+        }
+        remainder = &value[end + delimiter.len_utf8()..];
+    }
+    imports
+}
+
+fn is_dynamic_import(source: &str, quote_start: usize) -> bool {
+    let prefix = source[..quote_start].trim_end();
+    let Some(prefix) = prefix.strip_suffix('(') else {
+        return false;
+    };
+    prefix.trim_end().ends_with("import")
 }
 
 fn assert_schema_objects_are_closed(schema: &serde_json::Value, expected_fields: &[&str]) {
@@ -695,5 +1175,23 @@ fn assert_schema_objects_are_closed(schema: &serde_json::Value, expected_fields:
             object["additionalProperties"], false,
             "schema object with fields {expected_fields:?} was open: {object}"
         );
+    }
+}
+
+fn schema_code_block_has_language(schema: &serde_json::Value) -> bool {
+    match schema {
+        serde_json::Value::Object(object) => {
+            let is_code = object
+                .get("properties")
+                .and_then(|properties| properties.get("type"))
+                .and_then(|kind| kind.get("const"))
+                .is_some_and(|kind| kind == "code");
+            if is_code {
+                return object["properties"].get("language").is_some();
+            }
+            object.values().any(schema_code_block_has_language)
+        }
+        serde_json::Value::Array(values) => values.iter().any(schema_code_block_has_language),
+        _ => false,
     }
 }

@@ -9,7 +9,7 @@ use agent_teacher::compiler::{
     CompileOptions, compile_file, default_artifact_path, write_artifact_atomic,
 };
 use agent_teacher::diagnostics::Diagnostic;
-use agent_teacher::source::{SchemaVersion, source_json_schema};
+use agent_teacher::source::{SchemaVersion, source_json_schema_for};
 use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
 use serde_json::{Value, json};
 
@@ -34,9 +34,9 @@ enum Command {
     Check {
         /// Authored JSON lesson document.
         lesson: PathBuf,
-        /// Directory inside the Git worktree to use as the selected repository.
+        /// Filesystem root used to resolve relative lesson paths.
         #[arg(long)]
-        repo: Option<PathBuf>,
+        root: Option<PathBuf>,
     },
     /// Compile an authored JSON lesson into a self-contained `.learn` artifact.
     Build {
@@ -45,14 +45,14 @@ enum Command {
         /// Artifact path; defaults to the source name with a `.learn` extension.
         #[arg(short, long)]
         output: Option<PathBuf>,
-        /// Directory inside the Git worktree to use as the selected repository.
+        /// Filesystem root used to resolve relative lesson paths.
         #[arg(long)]
-        repo: Option<PathBuf>,
+        root: Option<PathBuf>,
     },
     /// Emit the exact authored-document JSON Schema.
     Schema {
         /// Source schema version to emit.
-        #[arg(long, default_value = "1.0.0")]
+        #[arg(long, default_value = "1.1.0")]
         version: String,
     },
 }
@@ -136,8 +136,8 @@ fn main() -> ExitCode {
 
 fn execute(command: Command, current_dir: &Path) -> Result<Success, Vec<Diagnostic>> {
     match command {
-        Command::Check { lesson, repo } => {
-            let options = compile_options(current_dir, repo);
+        Command::Check { lesson, root } => {
+            let options = compile_options(current_dir, root);
             let artifact = compile_file(&lesson, &options)?;
             Ok(Success::Json(json!({
                 "ok": true,
@@ -151,9 +151,9 @@ fn execute(command: Command, current_dir: &Path) -> Result<Success, Vec<Diagnost
         Command::Build {
             lesson,
             output,
-            repo,
+            root,
         } => {
-            let options = compile_options(current_dir, repo);
+            let options = compile_options(current_dir, root);
             let artifact = compile_file(&lesson, &options)?;
             let output = output.unwrap_or_else(|| default_artifact_path(&lesson));
             write_artifact_atomic(&output, &artifact).map_err(|error| vec![error])?;
@@ -169,28 +169,35 @@ fn execute(command: Command, current_dir: &Path) -> Result<Success, Vec<Diagnost
             })))
         }
         Command::Schema { version } => {
-            if version != SchemaVersion::CURRENT.as_str() {
-                return Err(vec![
-                    Diagnostic::error(
-                        "schema.version.unsupported",
-                        "",
-                        format!("source schema version {version:?} is not supported"),
-                    )
-                    .with_suggestion(format!(
-                        "Use `--version {}` with this compiler.",
-                        SchemaVersion::CURRENT.as_str()
-                    )),
-                ]);
-            }
-            Ok(Success::Schema(source_json_schema()))
+            let version = SchemaVersion::SUPPORTED
+                .into_iter()
+                .find(|candidate| candidate.as_str() == version)
+                .ok_or_else(|| {
+                    vec![
+                        Diagnostic::error(
+                            "schema.version.unsupported",
+                            "",
+                            format!("source schema version {version:?} is not supported"),
+                        )
+                        .with_suggestion(format!(
+                            "Use one of: {}.",
+                            SchemaVersion::SUPPORTED
+                                .iter()
+                                .map(|version| version.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )),
+                    ]
+                })?;
+            Ok(Success::Schema(source_json_schema_for(version)))
         }
     }
 }
 
-fn compile_options(current_dir: &Path, repo: Option<PathBuf>) -> CompileOptions {
+fn compile_options(current_dir: &Path, root: Option<PathBuf>) -> CompileOptions {
     let mut options = CompileOptions::new(current_dir);
-    if let Some(repo) = repo {
-        options = options.with_repo(repo);
+    if let Some(root) = root {
+        options = options.with_root(root);
     }
     options
 }
@@ -308,6 +315,19 @@ mod tests {
     }
 
     #[test]
+    fn root_option_selects_the_filesystem_anchor() {
+        let cli =
+            Cli::try_parse_from(["learnc", "check", "lesson.json", "--root", "workspace"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Check { root: Some(root), .. } if root == Path::new("workspace")
+        ));
+        assert!(
+            Cli::try_parse_from(["learnc", "check", "lesson.json", "--repo", "workspace"]).is_err()
+        );
+    }
+
+    #[test]
     fn check_runs_full_compile_without_writing() {
         let directory = test_directory();
         let source = directory.join("lesson.json");
@@ -315,7 +335,7 @@ mod tests {
         let success = execute(
             Command::Check {
                 lesson: source.clone(),
-                repo: None,
+                root: None,
             },
             &directory,
         )
@@ -335,7 +355,7 @@ mod tests {
             Command::Build {
                 lesson: source.clone(),
                 output: None,
-                repo: None,
+                root: None,
             },
             &directory,
         )

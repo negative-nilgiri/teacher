@@ -170,8 +170,11 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                         content: content.clone(),
                     }
                 }
-                CompiledNodeContent::Code { content, .. } => PublicLessonNodeContent::Code {
+                CompiledNodeContent::Code {
+                    content, language, ..
+                } => PublicLessonNodeContent::Code {
                     content: content.clone(),
+                    language: *language,
                 },
                 CompiledNodeContent::Diff { diff, .. } => PublicLessonNodeContent::Diff {
                     files: project_diff(diff),
@@ -217,6 +220,7 @@ fn project_diff(diff: &ResolvedDiff) -> Vec<PublicDiffFile> {
         .map(|file| PublicDiffFile {
             old_path: file.old_path.clone(),
             new_path: file.new_path.clone(),
+            language: file.language,
             hunks: file
                 .hunks
                 .iter()
@@ -261,6 +265,7 @@ pub enum PublicLessonNodeContent {
     },
     Code {
         content: String,
+        language: crate::language::Language,
     },
     Diff {
         files: Vec<PublicDiffFile>,
@@ -276,6 +281,7 @@ pub enum PublicLessonNodeContent {
 pub struct PublicDiffFile {
     pub old_path: Option<String>,
     pub new_path: Option<String>,
+    pub language: crate::language::Language,
     pub hunks: Vec<PublicDiffHunk>,
 }
 
@@ -411,5 +417,16 @@ pub(crate) mod tests {
             decode_artifact(&serde_json::to_vec(&invalid).unwrap()),
             Err(ArtifactLoadError::InvalidStructure { .. })
         ));
+    }
+
+    #[test]
+    fn runtime_loads_legacy_v1_artifacts_without_language_fields() {
+        let artifact = decode_artifact(include_bytes!(
+            "../../tests/fixtures/artifact/v1.0.0-without-language-fields.learn.json"
+        ))
+        .expect("legacy v1 artifact remains readable");
+        let public = serde_json::to_value(project_artifact(&artifact)).unwrap();
+        assert_eq!(public["nodes"][1]["language"], "text");
+        assert_eq!(public["nodes"][2]["files"][0]["language"], "text");
     }
 }

@@ -11,14 +11,19 @@ pub enum SchemaVersion {
     #[serde(rename = "1.0.0")]
     #[schemars(rename = "1.0.0")]
     V1_0_0,
+    #[serde(rename = "1.1.0")]
+    #[schemars(rename = "1.1.0")]
+    V1_1_0,
 }
 
 impl SchemaVersion {
-    pub const CURRENT: Self = Self::V1_0_0;
+    pub const CURRENT: Self = Self::V1_1_0;
+    pub const SUPPORTED: [Self; 2] = [Self::V1_0_0, Self::V1_1_0];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::V1_0_0 => "1.0.0",
+            Self::V1_1_0 => "1.1.0",
         }
     }
 }
@@ -38,6 +43,107 @@ pub struct LessonSource {
     pub title: String,
     /// Ordered lesson blocks. Every block source ID must be document-unique.
     pub blocks: Vec<Block>,
+}
+
+/// Exact decoder/schema model for the original source format.
+///
+/// `language` was introduced in source schema 1.1.0, so the 1.0.0 code block
+/// intentionally remains a separate closed shape. Both versioned wire models
+/// lower into the same internal [`LessonSource`] representation.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(title = "LessonSource")]
+pub(crate) struct LessonSourceV1_0_0 {
+    schema_version: SchemaVersionV1_0_0,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    title: String,
+    blocks: Vec<BlockV1_0_0>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+enum SchemaVersionV1_0_0 {
+    #[serde(rename = "1.0.0")]
+    #[schemars(rename = "1.0.0")]
+    V1_0_0,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum BlockV1_0_0 {
+    Markdown(MarkdownBlock),
+    Code(CodeBlockV1_0_0),
+    Diff(DiffBlock),
+    MultipleChoice(MultipleChoiceBlock),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CodeBlockV1_0_0 {
+    id: SourceId,
+    source: CodeSource,
+}
+
+impl From<LessonSourceV1_0_0> for LessonSource {
+    fn from(source: LessonSourceV1_0_0) -> Self {
+        let LessonSourceV1_0_0 {
+            schema_version: _,
+            title,
+            blocks,
+        } = source;
+        Self {
+            schema_version: SchemaVersion::V1_0_0,
+            title,
+            blocks: blocks.into_iter().map(Block::from).collect(),
+        }
+    }
+}
+
+impl From<BlockV1_0_0> for Block {
+    fn from(block: BlockV1_0_0) -> Self {
+        match block {
+            BlockV1_0_0::Markdown(block) => Self::Markdown(block),
+            BlockV1_0_0::Code(block) => Self::Code(CodeBlock {
+                id: block.id,
+                language: None,
+                source: block.source,
+            }),
+            BlockV1_0_0::Diff(block) => Self::Diff(block),
+            BlockV1_0_0::MultipleChoice(block) => Self::MultipleChoice(block),
+        }
+    }
+}
+
+/// Exact decoder/schema model for source schema 1.1.0.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(title = "LessonSource")]
+pub(crate) struct LessonSourceV1_1_0 {
+    schema_version: SchemaVersionV1_1_0,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    title: String,
+    blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+enum SchemaVersionV1_1_0 {
+    #[serde(rename = "1.1.0")]
+    #[schemars(rename = "1.1.0")]
+    V1_1_0,
+}
+
+impl From<LessonSourceV1_1_0> for LessonSource {
+    fn from(source: LessonSourceV1_1_0) -> Self {
+        let LessonSourceV1_1_0 {
+            schema_version: _,
+            title,
+            blocks,
+        } = source;
+        Self {
+            schema_version: SchemaVersion::V1_1_0,
+            title,
+            blocks,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -71,6 +177,10 @@ pub struct MarkdownBlock {
 #[serde(deny_unknown_fields)]
 pub struct CodeBlock {
     pub id: SourceId,
+    /// Optional language name or common alias. Unknown values safely render as text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub language: Option<String>,
     pub source: CodeSource,
 }
 
@@ -216,7 +326,7 @@ pub struct LineRange {
     pub end: u32,
 }
 
-/// A repository-relative path in the platform-neutral source language.
+/// A selected-root-relative path in the platform-neutral source language.
 ///
 /// Constraints are checked by the semantic validation pass so failures can be
 /// reported alongside a precise JSON Pointer.
@@ -253,7 +363,7 @@ fn validate_repo_path(path: &str) -> Result<(), &'static str> {
         return Err("must not be empty");
     }
     if path.starts_with('/') {
-        return Err("must be relative to the selected repository root");
+        return Err("must be relative to the selected filesystem root");
     }
     if path.contains('\\') {
         return Err("must use forward slashes as separators");
@@ -324,7 +434,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paths_are_platform_neutral_and_repo_relative() {
+    fn paths_are_platform_neutral_and_root_relative() {
         assert!(RepoPath::new("src/queue.rs").is_ok());
         assert!(RepoPath::new("../secret").is_err());
         assert!(RepoPath::new("/etc/passwd").is_err());

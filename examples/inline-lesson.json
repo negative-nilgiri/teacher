@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "title": "Why the queue now removes the oldest item",
   "blocks": [
     {
@@ -13,6 +13,7 @@
     {
       "type": "code",
       "id": "new-code",
+      "language": "rust",
       "source": {
         "kind": "inline",
         "content": "pub fn take_next(queue: &mut VecDeque<Job>) -> Option<Job> {\n    queue.pop_front()\n}"

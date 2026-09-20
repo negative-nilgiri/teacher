@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::language::Language;
+
 use super::{RepoPath, RepositoryError, RepositoryErrorKind};
 
 /// A one-based, inclusive range used to select changed lines.
@@ -57,6 +59,9 @@ pub struct ResolvedDiff {
 pub struct ResolvedDiffFile {
     pub old_path: Option<String>,
     pub new_path: Option<String>,
+    /// Language inferred from the displayed path and frozen for rendering.
+    #[serde(default)]
+    pub language: Language,
     pub old_object_id: Option<String>,
     pub new_object_id: Option<String>,
     pub is_new: bool,
@@ -112,7 +117,11 @@ pub fn parse_unified_diff(patch: &str) -> Result<ResolvedDiff, RepositoryError> 
         }
     };
     let flush_file = |files: &mut Vec<ResolvedDiffFile>, file: &mut Option<ResolvedDiffFile>| {
-        if let Some(file) = file.take() {
+        if let Some(mut file) = file.take() {
+            file.language = file
+                .display_path()
+                .map(Language::from_path)
+                .unwrap_or_default();
             files.push(file);
         }
     };
@@ -127,6 +136,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<ResolvedDiff, RepositoryError> 
             current_file = Some(ResolvedDiffFile {
                 old_path: Some(old_path),
                 new_path: Some(new_path),
+                language: Language::Text,
                 old_object_id: None,
                 new_object_id: None,
                 is_new: false,
@@ -170,6 +180,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<ResolvedDiff, RepositoryError> 
             let file = current_file.get_or_insert_with(|| ResolvedDiffFile {
                 old_path: None,
                 new_path: None,
+                language: Language::Text,
                 old_object_id: None,
                 new_object_id: None,
                 is_new: false,
@@ -449,6 +460,7 @@ pub(crate) fn complete_addition(path: &RepoPath, content: &str) -> ResolvedDiffF
     ResolvedDiffFile {
         old_path: None,
         new_path: Some(path.as_str().to_owned()),
+        language: Language::from_path(path.as_str()),
         old_object_id: None,
         new_object_id: None,
         is_new: true,
@@ -617,6 +629,7 @@ mod tests {
     fn parses_paths_hunks_kinds_and_line_numbers() {
         let parsed = parse_unified_diff(PATCH).unwrap();
         let file = &parsed.files[0];
+        assert_eq!(file.language, Language::Rust);
         assert_eq!(file.old_path.as_deref(), Some("src/lib.rs"));
         assert_eq!(file.new_object_id.as_deref(), Some("2222222"));
         assert_eq!(file.hunks[0].heading, "fn main() {");
@@ -718,7 +731,15 @@ mod tests {
         assert_eq!(parsed.files.len(), 1);
         assert_eq!(parsed.files[0].old_path.as_deref(), Some("src/old.rs"));
         assert_eq!(parsed.files[0].new_path.as_deref(), Some("src/new.rs"));
+        assert_eq!(parsed.files[0].language, Language::Rust);
         assert_eq!(parsed.files[0].hunks[0].lines.len(), 2);
+    }
+
+    #[test]
+    fn infers_diff_language_from_the_displayed_path() {
+        let patch = "--- diagram.txt\n+++ diagram.mmd\n@@ -1 +1 @@\n-old\n+flowchart LR\n";
+        let parsed = parse_unified_diff(patch).unwrap();
+        assert_eq!(parsed.files[0].language, Language::Mermaid);
     }
 
     #[test]

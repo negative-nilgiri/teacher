@@ -8,7 +8,7 @@ for a learner to understand one change at a time.
 Use the compiler as the source of truth:
 
 ```console
-learnc schema --version 1.0.0
+learnc schema --version 1.1.0
 learnc check lesson.json
 learnc build lesson.json
 learn serve lesson.learn
@@ -31,7 +31,7 @@ Do not author numeric node IDs or choice IDs—the compiler generates those.
 flowchart LR
     L["LessonSource<br/>schema_version · title · blocks"]:::envelope
     L --> M["markdown<br/>inline | file"]:::content
-    L --> C["code<br/>inline | file | git_blob"]:::content
+    L --> C["code<br/>language? · inline | file | git_blob"]:::content
     L --> D["diff<br/>inline | file | git"]:::repository
     L --> Q["multiple_choice<br/>prompt · choices · hints · explanation"]:::quiz
 
@@ -50,7 +50,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -59,6 +59,9 @@ flowchart LR
 ### What the JSON Schema can and cannot prove
 
 `learnc schema` is the exact structural schema for the selected source version.
+Source schema `1.1.0` adds the optional code-block `language` field. The
+compiler still accepts `1.0.0` documents, but that older closed schema rejects
+`language`; use `1.1.0` for language-aware lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -74,8 +77,8 @@ therefore enforced only by `learnc check` and `learnc build`. These include:
 - inclusive range ordering (`end >= start`) and ranges fitting resolved content;
 - unique and non-empty Git file selections and range/change intersection;
 - path ownership, file existence and UTF-8 decoding;
-- Git revision resolution, submodule boundaries, ignored-file rules, and stable
-  repository snapshots;
+- Git revision resolution, owning-repository boundaries, ignored-file rules,
+  and stable repository snapshots;
 - parsing inline, file, and generated patches into valid structured diffs.
 
 Passing generic JSON Schema validation is useful but not sufficient. Always run
@@ -91,8 +94,14 @@ learnc check examples/inline-lesson.json
 
 ## Markdown and code
 
-Markdown supports inline text or a UTF-8 file below the selected repository
-root. Raw HTML is not part of the rendering contract.
+Markdown supports inline text or a UTF-8 file below the selected filesystem
+root. Raw HTML is not part of the rendering contract. Use Markdown blocks for
+all prose that should render as Markdown, including headings, lists, emphasis,
+and explanations. Do not put ordinary Markdown prose in a code block: code
+blocks intentionally display literal text. A code block should use language
+`markdown` only when the lesson is explicitly teaching Markdown syntax, and
+then it should contain the smallest useful literal fragment rather than an
+entire prose section.
 
 ```json
 {
@@ -102,13 +111,15 @@ root. Raw HTML is not part of the rendering contract.
 }
 ```
 
-Code supports inline text, a worktree file, or a blob at a Git revision. Line
-ranges are optional, one-based, inclusive, and must exist in the resolved text.
+Code supports inline text, a worktree file, or a blob at a Git revision. Its
+optional `language` controls syntax presentation. Line ranges are optional,
+one-based, inclusive, and must exist in the resolved text.
 
 ```json
 {
   "type": "code",
   "id": "implementation-at-head",
+  "language": "rust",
   "source": {
     "kind": "git_blob",
     "revision": "HEAD~2",
@@ -118,11 +129,73 @@ ranges are optional, one-based, inclusive, and must exist in the resolved text.
 }
 ```
 
-Paths always use forward slashes and are relative to the selected repository.
-Do not use absolute paths, `.` components, or `..`. Agents do not provide
+The canonical language names are `rust`, `python`, `javascript`, `typescript`,
+`c`, `cpp`, `go`, `java`, `shell`, `json`, `yaml`, `toml`, `html`, `css`,
+`xml`, `sql`, `markdown`, `mermaid`, and `text`. The accepted aliases normalize
+as follows:
+
+| Canonical | Accepted aliases |
+| --- | --- |
+| `rust` | `rs` |
+| `python` | `py` |
+| `javascript` | `js`, `jsx`, `mjs`, `cjs` |
+| `typescript` | `ts`, `tsx`, `mts`, `cts` |
+| `c` | `h` |
+| `cpp` | `c++`, `cxx`, `cc`, `hpp`, `hxx`, `hh` |
+| `go` | `golang` |
+| `shell` | `sh`, `bash`, `zsh`, `fish` |
+| `json` | `jsonc` |
+| `yaml` | `yml` |
+| `html` | `htm` |
+| `xml` | `xsl`, `xslt`, `svg` |
+| `css` | `scss`, `sass` |
+| `markdown` | `md`, `mdx` |
+| `mermaid` | `mmd` |
+| `text` | `txt`, `plain`, `plaintext` |
+
+`java`, `toml`, and `sql` need no aliases. When `language` is omitted from
+a file or Git-blob source, the compiler infers it from the path extension.
+Extensionless names such as `Makefile` and `Dockerfile`, and any other
+unrecognized path, fall back to plain text. Inline sources have no filename to
+inspect, so set `language`
+explicitly when highlighting or special rendering matters. An unknown explicit
+language also normalizes to `text` instead of making the lesson invalid.
+
+Mermaid is the one code language with semantic rendering: a code block that
+resolves to `mermaid` is rendered as a diagram. Author the diagram as an inline
+code source rather than a Mermaid fence inside Markdown:
+
+```json
+{
+  "type": "code",
+  "id": "compiler-flow",
+  "language": "mermaid",
+  "source": {
+    "kind": "inline",
+    "content": "flowchart LR\n  Source --> Compiler --> Artifact"
+  }
+}
+```
+
+Use `language: "text"` when Mermaid source should be shown literally instead
+of rendered as a diagram. If a Mermaid diagram is invalid, the runtime shows
+its escaped source instead of injecting a partial rendering.
+
+Paths always use forward slashes and are relative to the selected filesystem
+root. Do not use absolute paths, `.` components, or `..`. Agents do not provide
 content hashes: the compiler computes them after resolution.
 
 ## Diffs
+
+Keep each diff next to the explanation and code it belongs to. A useful local
+narrative unit introduces one concept, shows the relevant code when needed,
+presents its diff, explains the effect, and optionally asks a follow-up
+question. Repeat that shape in authored order rather than stacking unrelated
+diffs at the end of the lesson. A final aggregate diff belongs only in a lesson
+that explicitly needs one as a recap. The compiler infers each structured diff
+file's language from its displayed path and the runtime applies the same syntax
+highlighting used for code blocks; diff blocks do not take a separate authored
+`language` field.
 
 Use an inline or file source when a patch already exists. Put long patches in a
 file instead of reproducing them in lesson JSON.
@@ -163,10 +236,11 @@ range selects deletions by base-side line number; `after_lines` selects addition
 or modifications by target-side line number. A selected range that intersects no
 change is an error.
 
-One Git diff block may cover files owned by only one Git repository. If selected
-paths cross into a submodule, split them into separate diff blocks. Explicitly
-selected untracked worktree files become complete additions; ignored files are
-rejected.
+One Git diff block may cover files owned by only one Git repository. Git finds
+the nearest owning repository independently for every selected path, so sibling
+repositories and submodules are both supported beneath one root. Split paths
+with different owners into separate diff blocks. Explicitly selected untracked
+worktree files become complete additions; ignored files are rejected.
 
 The compiler invokes Git directly from structured fields. Never place shell
 commands or Git argument arrays in the lesson.
@@ -194,21 +268,25 @@ Hints are public. The correct generated choice ID and explanation are stored in
 the artifact's server-owned answer table. An incorrect attempt does not reveal
 them; a correct attempt or explicit reveal does.
 
-## Repository selection and freezing
+## Filesystem root, repositories, and freezing
 
-The repository root defaults to the current Git worktree. Override it when the
-lesson or agent runs elsewhere:
+Every authored path is relative to one filesystem root. The root defaults to
+the compiler's current working directory and does not itself need to be a Git
+repository. Override it when the lesson inputs live elsewhere:
 
 ```console
-learnc check --repo /path/inside/worktree lesson.json
-learnc build --repo /path/inside/worktree lesson.json -o queue.learn
+learnc check --root /path/to/workspace lesson.json
+learnc build --root /path/to/workspace lesson.json -o queue.learn
 ```
 
+For Git-backed sources, the compiler asks Git for the nearest owner of each
+referenced path. A single lesson can therefore use unrelated repositories such
+as `repo-a/src/a.rs` and `repo-b/src/b.rs` under the same selected root.
 `HEAD`, branch names, and expressions such as `HEAD~2` are valid source
 revisions. A successful build records concrete object IDs, embeds resolved
-content and structured diffs, keeps only repository-relative provenance, and
-writes resource hashes. If selected inputs change during compilation, the build
-fails instead of emitting a mixed snapshot.
+content and structured diffs, keeps only root-relative paths and owning-repository
+provenance, and writes resource hashes. If selected inputs change during
+compilation, the build fails instead of emitting a mixed snapshot.
 
 The complete
 [`repository-lesson.json`](../examples/repository-lesson.json) demonstrates file,
@@ -218,8 +296,8 @@ complete disposable repository before compiling it:
 
 ```console
 repository=$(examples/create-repository-lesson.sh)
-learnc check --repo "$repository" "$repository/lesson.json"
-learnc build --repo "$repository" "$repository/lesson.json"
+learnc check --root "$repository" "$repository/lesson.json"
+learnc build --root "$repository" "$repository/lesson.json"
 learn serve "$repository/lesson.learn"
 ```
 

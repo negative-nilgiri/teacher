@@ -1,0 +1,104 @@
+{
+  "artifact_version": "1.0.0",
+  "presentation": {
+    "title": "Why the queue now removes the oldest item",
+    "nodes": [
+      {
+        "node_id": 0,
+        "source_id": "context",
+        "type": "markdown",
+        "content": "# The behavior change\n\nThe queue now follows **FIFO** ordering.",
+        "provenance": {
+          "kind": "inline",
+          "sha256": "943040927ff8c3055aae454da3f0e3d4ee2ea7ba77c61ed90bcc08cd0e8b09e2"
+        }
+      },
+      {
+        "node_id": 1,
+        "source_id": "new-code",
+        "type": "code",
+        "content": "pub fn take_next(queue: &mut VecDeque<Job>) -> Option<Job> {\n    queue.pop_front()\n}",
+        "provenance": {
+          "kind": "inline",
+          "sha256": "c73284e23ecca252e9e64d798cbf5bea097ee8fbb292326c92d6af1c53e9361f"
+        }
+      },
+      {
+        "node_id": 2,
+        "source_id": "focused-diff",
+        "type": "diff",
+        "diff": {
+          "files": [
+            {
+              "old_path": "src/queue.rs",
+              "new_path": "src/queue.rs",
+              "old_object_id": "1111111",
+              "new_object_id": "2222222",
+              "is_new": false,
+              "is_deleted": false,
+              "hunks": [
+                {
+                  "old_start": 2,
+                  "old_lines": 1,
+                  "new_start": 2,
+                  "new_lines": 1,
+                  "heading": "",
+                  "lines": [
+                    {
+                      "kind": "deletion",
+                      "content": "    queue.pop_back()",
+                      "old_line": 2,
+                      "new_line": null
+                    },
+                    {
+                      "kind": "addition",
+                      "content": "    queue.pop_front()",
+                      "old_line": null,
+                      "new_line": 2
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "provenance": {
+          "kind": "inline",
+          "sha256": "c92dca42f51ec546ca3b1c8ea53937eb2e9b200171e7d0ec74a6ef69a87bacbe"
+        }
+      },
+      {
+        "node_id": 3,
+        "source_id": "verify-order",
+        "type": "multiple_choice",
+        "prompt": "After jobs A then B are queued, which job leaves first?",
+        "choices": [
+          {
+            "choice_id": 0,
+            "content": "Job A"
+          },
+          {
+            "choice_id": 1,
+            "content": "Job B"
+          }
+        ],
+        "hints": [
+          "FIFO expands to first in, first out."
+        ]
+      }
+    ]
+  },
+  "private": {
+    "answers": [
+      {
+        "node_id": 3,
+        "correct_choice_id": 0,
+        "explanation": "Job A entered first, and `pop_front` removes it first."
+      }
+    ]
+  },
+  "provenance": {
+    "compiler_version": "0.1.0",
+    "source_schema_version": "1.0.0"
+  }
+}

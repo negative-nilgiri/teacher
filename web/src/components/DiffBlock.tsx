@@ -1,4 +1,5 @@
 import type { DiffLine, DiffNode } from "../types";
+import { SyntaxCode } from "./SyntaxCode";
 
 function lineMarker(line: DiffLine): string {
   if (line.kind === "addition") return "+";
@@ -39,7 +40,7 @@ export function DiffBlock({ node }: { node: DiffNode }) {
                         {lineMarker(line)}
                       </td>
                       <td className="diff-content">
-                        <code>{line.content}</code>
+                        <SyntaxCode language={file.language}>{line.content}</SyntaxCode>
                       </td>
                     </tr>
                   ))}

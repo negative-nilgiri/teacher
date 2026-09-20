@@ -11,7 +11,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 cd "$project_root"
-cargo run --quiet --bin learnc -- check --repo "$example_root" "$example_root/lesson.json"
-cargo run --quiet --bin learnc -- build --repo "$example_root" \
+cargo run --quiet --bin learnc -- check --root "$example_root" "$example_root/lesson.json"
+cargo run --quiet --bin learnc -- build --root "$example_root" \
     "$example_root/lesson.json" --output "$artifact"
 cargo run --quiet --bin learn -- serve "$artifact"

@@ -17,6 +17,7 @@ use crate::artifact::{
     QuizAnswer, ResourceProvenance,
 };
 use crate::diagnostics::Diagnostic;
+use crate::language::Language;
 use crate::repository::{
     self, DiffFileRequest, DiffRequest, DiffTarget, Repository, RepositoryError,
     ResourceProvenance as RepositoryResourceProvenance, SnapshotGuard,
@@ -29,22 +30,22 @@ static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
 pub struct CompileOptions {
-    /// Directory used for default Git worktree discovery.
+    /// Directory used when no explicit filesystem root is selected.
     pub current_dir: PathBuf,
-    /// Optional directory inside the worktree selected by `--repo`.
-    pub repo: Option<PathBuf>,
+    /// Optional filesystem anchor selected by `--root`.
+    pub root: Option<PathBuf>,
 }
 
 impl CompileOptions {
     pub fn new(current_dir: impl Into<PathBuf>) -> Self {
         Self {
             current_dir: current_dir.into(),
-            repo: None,
+            root: None,
         }
     }
 
-    pub fn with_repo(mut self, repo: impl Into<PathBuf>) -> Self {
-        self.repo = Some(repo.into());
+    pub fn with_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.root = Some(root.into());
         self
     }
 }
@@ -55,20 +56,27 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
     let validated = source::parse_and_validate(input)?;
     let (source, symbols) = validated.into_parts();
     let repository_paths = repository_paths(&source)?;
-    let repository = if repository_paths.is_empty() {
+    let repository = if repository_paths.all.is_empty() {
         None
     } else {
         Some(
-            Repository::discover(&options.current_dir, options.repo.as_deref())
+            Repository::at_root(&options.current_dir, options.root.as_deref())
                 .map_err(|error| vec![repository_diagnostic("", error)])?,
         )
     };
     let snapshot = match &repository {
         Some(repository) => Some(
-            SnapshotGuard::start(repository, &repository_paths)
+            SnapshotGuard::start_filesystem(repository, &repository_paths.all)
                 .map_err(|error| vec![repository_diagnostic("", error)])?,
         ),
         None => None,
+    };
+    let git_snapshot = match &repository {
+        Some(repository) if !repository_paths.git.is_empty() => Some(
+            SnapshotGuard::start(repository, &repository_paths.git)
+                .map_err(|error| vec![repository_diagnostic("", error)])?,
+        ),
+        _ => None,
     };
 
     let schema_version = source.schema_version;
@@ -86,7 +94,12 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
 
         let result = match block {
             Block::Markdown(block) => resolve_markdown(block.source, repository.as_ref(), &pointer),
-            Block::Code(block) => resolve_code(block.source, repository.as_ref(), &pointer),
+            Block::Code(block) => resolve_code(
+                block.source,
+                block.language.as_deref(),
+                repository.as_ref(),
+                &pointer,
+            ),
             Block::Diff(block) => resolve_diff(block.source, repository.as_ref(), &pointer),
             Block::MultipleChoice(block) => {
                 let choice_start = next_choice_id;
@@ -150,6 +163,11 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
             diagnostics.push(repository_diagnostic("", error));
         }
         if let Some(snapshot) = snapshot
+            && let Err(error) = snapshot.verify(repository)
+        {
+            diagnostics.push(repository_diagnostic("", error));
+        }
+        if let Some(snapshot) = git_snapshot
             && let Err(error) = snapshot.verify(repository)
         {
             diagnostics.push(repository_diagnostic("", error));
@@ -285,15 +303,22 @@ fn resolve_markdown(
 
 fn resolve_code(
     source: CodeSource,
+    authored_language: Option<&str>,
     repository: Option<&Repository>,
     pointer: &str,
 ) -> Result<CompiledNodeContent, Diagnostic> {
     match source {
         CodeSource::Inline { content } => Ok(CompiledNodeContent::Code {
             provenance: inline_provenance(content.as_bytes()),
+            language: authored_language
+                .map(Language::from_authored)
+                .unwrap_or_default(),
             content,
         }),
         CodeSource::File { path, lines } => {
+            let language = authored_language
+                .map(Language::from_authored)
+                .unwrap_or_else(|| Language::from_path(path.as_str()));
             let repository = require_repository(repository, pointer)?;
             let path = repository_path(&path, pointer)?;
             let resource = repository
@@ -307,6 +332,7 @@ fn resolve_code(
                 .map_err(|error| repository_diagnostic(pointer, error))?;
             Ok(CompiledNodeContent::Code {
                 content: resource.content,
+                language,
                 provenance: resource_provenance(resource.provenance),
             })
         }
@@ -315,6 +341,9 @@ fn resolve_code(
             path,
             lines,
         } => {
+            let language = authored_language
+                .map(Language::from_authored)
+                .unwrap_or_else(|| Language::from_path(path.as_str()));
             let repository = require_repository(repository, pointer)?;
             let path = repository_path(&path, pointer)?;
             let resource = repository
@@ -329,6 +358,7 @@ fn resolve_code(
                 .map_err(|error| repository_diagnostic(pointer, error))?;
             Ok(CompiledNodeContent::Code {
                 content: resource.content,
+                language,
                 provenance: resource_provenance(resource.provenance),
             })
         }
@@ -419,36 +449,50 @@ fn resolve_diff(
     }
 }
 
-fn repository_paths(source: &LessonSource) -> Result<Vec<repository::RepoPath>, Vec<Diagnostic>> {
-    let mut paths = Vec::new();
+struct RepositoryPaths {
+    all: Vec<repository::RepoPath>,
+    git: Vec<repository::RepoPath>,
+}
+
+fn repository_paths(source: &LessonSource) -> Result<RepositoryPaths, Vec<Diagnostic>> {
+    let mut all = Vec::new();
+    let mut git = Vec::new();
     let mut diagnostics = Vec::new();
     for (index, block) in source.blocks.iter().enumerate() {
         let pointer = format!("/blocks/{index}/source/path");
-        let values: Vec<&crate::source::RepoPath> = match block {
+        let values: Vec<(&crate::source::RepoPath, bool)> = match block {
             Block::Markdown(block) => match &block.source {
-                MarkdownSource::File { path } => vec![path],
+                MarkdownSource::File { path } => vec![(path, false)],
                 MarkdownSource::Inline { .. } => vec![],
             },
             Block::Code(block) => match &block.source {
-                CodeSource::File { path, .. } | CodeSource::GitBlob { path, .. } => vec![path],
+                CodeSource::File { path, .. } => vec![(path, false)],
+                CodeSource::GitBlob { path, .. } => vec![(path, true)],
                 CodeSource::Inline { .. } => vec![],
             },
             Block::Diff(block) => match &block.source {
-                DiffSource::File { path } => vec![path],
-                DiffSource::Git { files, .. } => files.iter().map(|file| &file.path).collect(),
+                DiffSource::File { path } => vec![(path, false)],
+                DiffSource::Git { files, .. } => {
+                    files.iter().map(|file| (&file.path, true)).collect()
+                }
                 DiffSource::Inline { .. } => vec![],
             },
             Block::MultipleChoice(_) => vec![],
         };
-        for value in values {
+        for (value, is_git) in values {
             match repository_path(value, &pointer) {
-                Ok(path) => paths.push(path),
+                Ok(path) => {
+                    if is_git {
+                        git.push(path.clone());
+                    }
+                    all.push(path);
+                }
                 Err(error) => diagnostics.push(error),
             }
         }
     }
     if diagnostics.is_empty() {
-        Ok(paths)
+        Ok(RepositoryPaths { all, git })
     } else {
         Err(diagnostics)
     }
@@ -508,7 +552,9 @@ fn resource_provenance(value: RepositoryResourceProvenance) -> ResourceProvenanc
     match (value.revision, value.object_id, value.content_object_id) {
         (Some(revision), Some(revision_object_id), Some(content_object_id)) => {
             ResourceProvenance::GitBlob {
-                repository: value.repository,
+                repository: value
+                    .repository
+                    .expect("Git blob provenance has an owning repository"),
                 path: value.path,
                 revision,
                 revision_object_id: revision_object_id.as_str().to_owned(),
@@ -517,7 +563,6 @@ fn resource_provenance(value: RepositoryResourceProvenance) -> ResourceProvenanc
             }
         }
         _ => ResourceProvenance::File {
-            repository: value.repository,
             path: value.path,
             sha256: value.sha256,
         },
@@ -564,6 +609,44 @@ mod tests {
         let question_json = serde_json::to_value(&artifact.presentation.nodes[2]).unwrap();
         assert!(question_json.get("correct_choice_id").is_none());
         assert!(question_json.get("explanation").is_none());
+    }
+
+    #[test]
+    fn resolves_authored_and_default_inline_code_languages() {
+        let lesson = r#"{
+            "schema_version":"1.1.0",
+            "title":"Languages",
+            "blocks":[
+                {"type":"code","id":"alias","language":"RS","source":{"kind":"inline","content":"fn main() {}"}},
+                {"type":"code","id":"diagram","language":"mermaid","source":{"kind":"inline","content":"flowchart LR\n  A --> B"}},
+                {"type":"code","id":"unknown","language":"future-language","source":{"kind":"inline","content":"content"}},
+                {"type":"code","id":"omitted","source":{"kind":"inline","content":"content"}}
+            ]
+        }"#;
+        let artifact = compile(lesson, &CompileOptions::new(".")).unwrap();
+        let languages = artifact
+            .presentation
+            .nodes
+            .iter()
+            .map(|node| match &node.content {
+                CompiledNodeContent::Code { language, .. } => *language,
+                _ => panic!("expected code node"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            languages,
+            [
+                Language::Rust,
+                Language::Mermaid,
+                Language::Text,
+                Language::Text,
+            ]
+        );
+
+        let encoded = serde_json::to_value(&artifact).unwrap();
+        assert_eq!(encoded["presentation"]["nodes"][0]["language"], "rust");
+        assert_eq!(encoded["presentation"]["nodes"][1]["language"], "mermaid");
+        assert_eq!(encoded["presentation"]["nodes"][2]["language"], "text");
     }
 
     #[test]
@@ -647,6 +730,7 @@ mod tests {
             CompiledNodeContent::Code {
                 content,
                 provenance,
+                ..
             } => {
                 assert_eq!(content, "before\n");
                 let ResourceProvenance::GitBlob {
@@ -668,6 +752,7 @@ mod tests {
             CompiledNodeContent::Code {
                 content,
                 provenance,
+                ..
             } => {
                 assert_eq!(content, "after\n");
                 assert!(
@@ -687,6 +772,77 @@ mod tests {
         }
 
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn compiles_plain_files_and_git_blobs_from_sibling_repositories() {
+        let unique = format!(
+            "agent-teacher-compiler-root-test-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let root = std::env::temp_dir().join(unique);
+        let first = root.join("first");
+        let second = root.join("second");
+        fs::create_dir_all(&first).unwrap();
+        fs::create_dir_all(&second).unwrap();
+        fs::write(root.join("notes.md"), "# Outside Git\n").unwrap();
+        for repository in [&first, &second] {
+            git(repository, &["init", "-q"]);
+            git(
+                repository,
+                &["config", "user.email", "tests@example.invalid"],
+            );
+            git(repository, &["config", "user.name", "Tests"]);
+            git(repository, &["config", "commit.gpgsign", "false"]);
+            fs::write(
+                repository.join("code.rs"),
+                format!("// {}\n", repository.file_name().unwrap().to_string_lossy()),
+            )
+            .unwrap();
+            git(repository, &["add", "code.rs"]);
+            git(repository, &["commit", "-qm", "base"]);
+        }
+
+        let lesson = r#"{
+            "schema_version":"1.0.0",
+            "title":"Sibling repositories",
+            "blocks":[
+                {"type":"markdown","id":"notes","source":{"kind":"file","path":"notes.md"}},
+                {"type":"code","id":"first","source":{"kind":"git_blob","revision":"HEAD","path":"first/code.rs"}},
+                {"type":"code","id":"second","source":{"kind":"git_blob","revision":"HEAD","path":"second/code.rs"}}
+            ]
+        }"#;
+        let artifact = compile(lesson, &CompileOptions::new(&root)).unwrap();
+        let encoded = serde_json::to_value(&artifact).unwrap();
+        let file_provenance = &encoded["presentation"]["nodes"][0]["provenance"];
+        assert_eq!(file_provenance["kind"], "file");
+        assert_eq!(file_provenance["path"], "notes.md");
+        assert!(file_provenance.get("repository").is_none());
+        assert_eq!(
+            encoded["presentation"]["nodes"][1]["provenance"]["repository"],
+            "first"
+        );
+
+        assert!(matches!(
+            &artifact.presentation.nodes[0].content,
+            CompiledNodeContent::Markdown {
+                provenance: ResourceProvenance::File { path, .. },
+                ..
+            } if path == "notes.md"
+        ));
+        for (index, expected) in [(1, "first"), (2, "second")] {
+            assert!(matches!(
+                &artifact.presentation.nodes[index].content,
+                CompiledNodeContent::Code {
+                    language: Language::Rust,
+                    provenance: ResourceProvenance::GitBlob { repository, path, .. },
+                    ..
+                } if repository == expected && path == &format!("{expected}/code.rs")
+            ));
+        }
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn git(directory: &Path, args: &[&str]) {

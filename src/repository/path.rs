@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{RepositoryError, RepositoryErrorKind};
 
-/// A non-empty, normalized, repository-relative path.
+/// A non-empty, normalized path relative to the selected filesystem root.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct RepoPath(String);

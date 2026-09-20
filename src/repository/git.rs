@@ -27,7 +27,8 @@ impl GitObjectId {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ResourceProvenance {
     /// Owning repository relative to the selected root (`.` for the root).
-    pub repository: String,
+    /// Plain filesystem resources do not have an owning repository.
+    pub repository: Option<String>,
     /// Source path relative to the selected root.
     pub path: String,
     pub revision: Option<String>,
@@ -77,7 +78,10 @@ pub struct RepositoryGroup {
     pub files: Vec<RepoPath>,
 }
 
-/// A selected Git worktree used to resolve compiler resources.
+/// A filesystem root used to resolve compiler resources.
+///
+/// Git ownership is discovered independently for each Git-backed path. The
+/// root itself does not need to be a repository.
 #[derive(Clone, Debug)]
 pub struct Repository {
     root: PathBuf,
@@ -85,34 +89,32 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// Discover the selected repository. An override is interpreted as a
-    /// directory within the desired worktree, matching `git -C` behavior.
-    pub fn discover(
+    /// Select and canonicalize the filesystem root. Relative overrides are
+    /// resolved from `current_dir`.
+    pub fn at_root(
         current_dir: impl AsRef<Path>,
-        repo_override: Option<&Path>,
+        root_override: Option<&Path>,
     ) -> Result<Self, RepositoryError> {
-        let start = repo_override.unwrap_or_else(|| current_dir.as_ref());
-        let start = if start.is_file() {
-            start.parent().unwrap_or(start)
-        } else {
-            start
+        let current_dir = current_dir.as_ref();
+        let selected = match root_override {
+            Some(path) if path.is_absolute() => path.to_path_buf(),
+            Some(path) => current_dir.join(path),
+            None => current_dir.to_path_buf(),
         };
-        let output = run_git_raw(start, ["rev-parse", "--show-toplevel"])?;
-        if !output.status.success() {
-            return Err(RepositoryError::at_path(
-                RepositoryErrorKind::NotRepository,
-                "selected path is not inside a Git worktree",
-                start,
-            ));
-        }
-        let root = output_path(&output, "repository root")?;
-        let root = fs::canonicalize(&root).map_err(|error| {
+        let root = fs::canonicalize(&selected).map_err(|error| {
             RepositoryError::at_path(
                 RepositoryErrorKind::Io,
-                format!("could not canonicalize repository root: {error}"),
-                &root,
+                format!("could not canonicalize selected root: {error}"),
+                &selected,
             )
         })?;
+        if !root.is_dir() {
+            return Err(RepositoryError::at_path(
+                RepositoryErrorKind::InvalidPath,
+                "selected root must be a directory",
+                root,
+            ));
+        }
         Ok(Self {
             root,
             revisions: Arc::new(Mutex::new(BTreeMap::new())),
@@ -125,6 +127,30 @@ impl Repository {
 
     pub fn resolve_path(&self, path: &RepoPath) -> PathBuf {
         path.join_to(&self.root)
+    }
+
+    fn contained_existing_path(&self, path: &RepoPath) -> Result<PathBuf, RepositoryError> {
+        let absolute = self.resolve_path(path);
+        let canonical = fs::canonicalize(&absolute).map_err(|error| {
+            let kind = if error.kind() == std::io::ErrorKind::NotFound {
+                RepositoryErrorKind::MissingFile
+            } else {
+                RepositoryErrorKind::Io
+            };
+            RepositoryError::at_path(
+                kind,
+                format!("could not resolve source path: {error}"),
+                path.to_path_buf(),
+            )
+        })?;
+        if !canonical.starts_with(&self.root) {
+            return Err(RepositoryError::at_path(
+                RepositoryErrorKind::InvalidPath,
+                "path resolves outside the selected root",
+                path.to_path_buf(),
+            ));
+        }
+        Ok(canonical)
     }
 
     /// Find nearest owning repositories. More than one returned group means a
@@ -229,7 +255,26 @@ impl Repository {
         path: &RepoPath,
         lines: Option<LineRange>,
     ) -> Result<ResolvedResource, RepositoryError> {
-        let absolute = self.resolve_path(path);
+        let metadata = fs::symlink_metadata(self.resolve_path(path)).map_err(|error| {
+            let kind = if error.kind() == std::io::ErrorKind::NotFound {
+                RepositoryErrorKind::MissingFile
+            } else {
+                RepositoryErrorKind::Io
+            };
+            RepositoryError::at_path(
+                kind,
+                format!("could not inspect source file: {error}"),
+                path.to_path_buf(),
+            )
+        })?;
+        if !metadata.file_type().is_file() {
+            return Err(RepositoryError::at_path(
+                RepositoryErrorKind::InvalidPath,
+                "plain file sources must be regular files",
+                path.to_path_buf(),
+            ));
+        }
+        let absolute = self.contained_existing_path(path)?;
         let bytes = fs::read(&absolute).map_err(|error| {
             let kind = if error.kind() == std::io::ErrorKind::NotFound {
                 RepositoryErrorKind::MissingFile
@@ -250,10 +295,9 @@ impl Repository {
             )
         })?;
         let content = select_lines(&content, lines)?;
-        let owner = self.owner_for_path(path)?;
         Ok(ResolvedResource {
             provenance: ResourceProvenance {
-                repository: relative_repository(&self.root, &owner)?,
+                repository: None,
                 path: path.as_str().to_owned(),
                 revision: None,
                 object_id: None,
@@ -318,7 +362,7 @@ impl Repository {
         let content = select_lines(&content, lines)?;
         Ok(ResolvedResource {
             provenance: ResourceProvenance {
-                repository: relative_repository(&self.root, &owner)?,
+                repository: Some(relative_repository(&self.root, &owner)?),
                 path: path.as_str().to_owned(),
                 revision: Some(revision.to_owned()),
                 object_id: Some(commit_id),
@@ -346,6 +390,10 @@ impl Repository {
             ));
         }
         let paths: Vec<_> = request.files.iter().map(|file| file.path.clone()).collect();
+        // Observe ownership before selecting the group used by the diff. If a
+        // nested repository appears or disappears after this point, final
+        // verification detects the ownership-boundary change.
+        let guard = SnapshotGuard::start(self, &paths)?;
         let groups = self.group_by_owner(&paths)?;
         if groups.len() != 1 {
             let summary = groups
@@ -372,7 +420,6 @@ impl Repository {
             ));
         }
         let group = &groups[0];
-        let guard = SnapshotGuard::start(self, &paths)?;
         let base = self.resolve_revision(&group.owning_root, &request.base)?;
         let target = match &request.target {
             DiffTarget::Revision(revision) => Some((
@@ -422,6 +469,7 @@ impl Repository {
                     ));
                 }
                 if self.is_untracked(&group.owning_root, owner_path)? {
+                    self.require_regular_untracked_file(source_path)?;
                     let resource = self.read_file(source_path, None)?;
                     diff.files
                         .push(complete_addition(source_path, &resource.content));
@@ -477,47 +525,41 @@ impl Repository {
     pub(crate) fn capture_snapshot(
         &self,
         paths: &[RepoPath],
+        include_repository_state: bool,
     ) -> Result<RepositorySnapshot, RepositoryError> {
-        let head = self.git(
-            &self.root,
-            [
-                OsStr::new("rev-parse"),
-                OsStr::new("--verify"),
-                OsStr::new("HEAD"),
-            ],
-        )?;
-        let mut material = if head.status.success() {
-            head.stdout
-        } else {
-            Vec::new()
-        };
-        material.push(0);
-
-        let mut args = vec![
-            OsString::from("status"),
-            OsString::from("--porcelain=v2"),
-            OsString::from("-z"),
-            OsString::from("--untracked-files=all"),
-            OsString::from("--ignored=no"),
-            OsString::from("--"),
-        ];
-        args.extend(paths.iter().map(|path| OsString::from(path.as_str())));
-        let status = self.git(&self.root, args.iter().map(OsString::as_os_str))?;
-        if !status.status.success() {
-            return Err(git_failure(
-                "could not inspect repository snapshot",
-                &status,
-            ));
-        }
-        material.extend_from_slice(&status.stdout);
+        let mut material = Vec::new();
+        let mut owners: BTreeMap<PathBuf, Vec<RepoPath>> = BTreeMap::new();
 
         for path in paths {
             material.push(0);
             material.extend_from_slice(path.as_str().as_bytes());
-            match fs::read(self.resolve_path(path)) {
-                Ok(bytes) => material.extend_from_slice(sha256(&bytes).as_bytes()),
+            let absolute = self.resolve_path(path);
+            match fs::symlink_metadata(&absolute) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    let target = fs::read_link(&absolute).map_err(|error| {
+                        RepositoryError::at_path(
+                            RepositoryErrorKind::Io,
+                            format!("could not snapshot selected symlink: {error}"),
+                            path.to_path_buf(),
+                        )
+                    })?;
+                    material.extend_from_slice(b"<symlink>");
+                    material.extend_from_slice(target.to_string_lossy().as_bytes());
+                }
+                Ok(metadata) if metadata.file_type().is_file() => {
+                    let value = self.contained_existing_path(path)?;
+                    let bytes = fs::read(value).map_err(|error| {
+                        RepositoryError::at_path(
+                            RepositoryErrorKind::Io,
+                            format!("could not snapshot selected path: {error}"),
+                            path.to_path_buf(),
+                        )
+                    })?;
+                    material.extend_from_slice(sha256(&bytes).as_bytes());
+                }
+                Ok(_) => material.extend_from_slice(b"<non-regular>"),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    material.extend_from_slice(b"<missing>")
+                    material.extend_from_slice(b"<missing>");
                 }
                 Err(error) => {
                     return Err(RepositoryError::at_path(
@@ -527,6 +569,47 @@ impl Repository {
                     ));
                 }
             }
+            if include_repository_state {
+                let owner = self.owner_for_path(path)?;
+                owners
+                    .entry(owner.clone())
+                    .or_default()
+                    .push(self.path_relative_to_owner(path, &owner)?);
+            }
+        }
+
+        for (owner, owner_paths) in owners {
+            material.push(0);
+            material.extend_from_slice(relative_repository(&self.root, &owner)?.as_bytes());
+            let head = self.git(
+                &owner,
+                [
+                    OsStr::new("rev-parse"),
+                    OsStr::new("--verify"),
+                    OsStr::new("HEAD"),
+                ],
+            )?;
+            if head.status.success() {
+                material.extend_from_slice(&head.stdout);
+            }
+
+            let mut args = vec![
+                OsString::from("status"),
+                OsString::from("--porcelain=v2"),
+                OsString::from("-z"),
+                OsString::from("--untracked-files=all"),
+                OsString::from("--ignored=no"),
+                OsString::from("--"),
+            ];
+            args.extend(owner_paths.iter().map(|path| OsString::from(path.as_str())));
+            let status = self.git(&owner, args.iter().map(OsString::as_os_str))?;
+            if !status.status.success() {
+                return Err(git_failure(
+                    "could not inspect repository snapshot",
+                    &status,
+                ));
+            }
+            material.extend_from_slice(&status.stdout);
         }
         Ok(RepositorySnapshot::new(sha256(&material)))
     }
@@ -566,7 +649,7 @@ impl Repository {
         if !owner.starts_with(&self.root) {
             return Err(RepositoryError::at_path(
                 RepositoryErrorKind::InvalidPath,
-                "path resolves outside the selected repository",
+                "path resolves outside the selected root",
                 path.to_path_buf(),
             ));
         }
@@ -629,6 +712,29 @@ impl Repository {
         }
     }
 
+    fn require_regular_untracked_file(&self, path: &RepoPath) -> Result<(), RepositoryError> {
+        let metadata = fs::symlink_metadata(self.resolve_path(path)).map_err(|error| {
+            let kind = if error.kind() == std::io::ErrorKind::NotFound {
+                RepositoryErrorKind::MissingFile
+            } else {
+                RepositoryErrorKind::Io
+            };
+            RepositoryError::at_path(
+                kind,
+                format!("could not inspect untracked diff selection: {error}"),
+                path.to_path_buf(),
+            )
+        })?;
+        if !metadata.file_type().is_file() {
+            return Err(RepositoryError::at_path(
+                RepositoryErrorKind::InvalidPath,
+                "untracked worktree diff selections must be regular files",
+                path.to_path_buf(),
+            ));
+        }
+        Ok(())
+    }
+
     fn git<I, S>(&self, directory: &Path, args: I) -> Result<Output, RepositoryError>
     where
         I: IntoIterator<Item = S>,
@@ -637,7 +743,7 @@ impl Repository {
         if !directory.starts_with(&self.root) {
             return Err(RepositoryError::at_path(
                 RepositoryErrorKind::InvalidPath,
-                "refusing to invoke Git outside the selected repository",
+                "refusing to invoke Git outside the selected root",
                 directory,
             ));
         }

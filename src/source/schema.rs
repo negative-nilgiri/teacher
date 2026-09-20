@@ -1,13 +1,28 @@
-use super::LessonSource;
+use super::{
+    SchemaVersion,
+    model::{LessonSourceV1_0_0, LessonSourceV1_1_0},
+};
 
-/// Exact JSON Schema for source documents accepted by this decoder.
+/// Exact JSON Schema for the current authored-document version.
 pub fn source_json_schema() -> serde_json::Value {
-    serde_json::to_value(schemars::schema_for!(LessonSource))
-        .expect("generated lesson source schema must serialize")
+    source_json_schema_for(SchemaVersion::CURRENT)
+}
+
+/// Exact JSON Schema for one supported authored-document version.
+pub fn source_json_schema_for(version: SchemaVersion) -> serde_json::Value {
+    match version {
+        SchemaVersion::V1_0_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV1_0_0)),
+        SchemaVersion::V1_1_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV1_1_0)),
+    }
+    .expect("generated lesson source schema must serialize")
 }
 
 pub fn source_json_schema_pretty() -> String {
-    serde_json::to_string_pretty(&source_json_schema())
+    source_json_schema_pretty_for(SchemaVersion::CURRENT)
+}
+
+pub fn source_json_schema_pretty_for(version: SchemaVersion) -> String {
+    serde_json::to_string_pretty(&source_json_schema_for(version))
         .expect("generated lesson source schema must serialize")
 }
 
@@ -35,9 +50,27 @@ mod tests {
     #[test]
     fn schema_names_all_four_block_types_and_current_version() {
         let schema = source_json_schema_pretty();
-        for expected in ["markdown", "code", "diff", "multiple_choice", "1.0.0"] {
+        for expected in ["markdown", "code", "diff", "multiple_choice", "1.1.0"] {
             assert!(schema.contains(expected), "schema omitted {expected}");
         }
+    }
+
+    #[test]
+    fn schemas_are_exact_for_each_supported_version() {
+        let v1_0 = source_json_schema_for(SchemaVersion::V1_0_0);
+        let v1_1 = source_json_schema_for(SchemaVersion::V1_1_0);
+        let v1_0_code = variant(&v1_0, "BlockV1_0_0", "code");
+        let v1_1_code = variant(&v1_1, "Block", "code");
+        assert!(v1_0_code["properties"].get("language").is_none());
+        assert!(v1_1_code["properties"].get("language").is_some());
+        assert_eq!(
+            v1_0["properties"]["schema_version"]["$ref"],
+            "#/$defs/SchemaVersionV1_0_0"
+        );
+        assert_eq!(
+            v1_1["properties"]["schema_version"]["$ref"],
+            "#/$defs/SchemaVersionV1_1_0"
+        );
     }
 
     #[test]
@@ -86,6 +119,17 @@ mod tests {
         let markdown_inline = variant(&schema, "MarkdownSource", "inline");
         assert_eq!(markdown_inline["properties"]["content"]["minLength"], 1);
         assert_eq!(markdown_inline["properties"]["content"]["pattern"], r"\S");
+
+        let code_block = variant(&schema, "Block", "code");
+        assert_eq!(code_block["properties"]["language"]["minLength"], 1);
+        assert_eq!(code_block["properties"]["language"]["pattern"], r"\S");
+        assert!(
+            !code_block["required"]
+                .as_array()
+                .expect("code block has required fields")
+                .iter()
+                .any(|field| field == "language")
+        );
 
         let question = variant(&schema, "Block", "multiple_choice");
         assert_eq!(question["properties"]["choices"]["minItems"], 2);

@@ -5,6 +5,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::language::Language;
 use crate::repository::ResolvedDiff;
 use crate::source::{NodeId, SchemaVersion};
 
@@ -68,6 +69,8 @@ pub enum CompiledNodeContent {
     },
     Code {
         content: String,
+        #[serde(default)]
+        language: Language,
         provenance: ResourceProvenance,
     },
     Diff {
@@ -142,7 +145,6 @@ pub enum ResourceProvenance {
         sha256: String,
     },
     File {
-        repository: String,
         path: String,
         sha256: String,
     },
@@ -335,6 +337,26 @@ mod tests {
         let decoded: CompiledLesson = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, artifact);
         validate_artifact(&decoded).unwrap();
+    }
+
+    #[test]
+    fn legacy_v1_code_and_diff_languages_default_to_text() {
+        let artifact: CompiledLesson = serde_json::from_str(include_str!(
+            "../../tests/fixtures/artifact/v1.0.0-without-language-fields.learn.json"
+        ))
+        .unwrap();
+        validate_artifact(&artifact).unwrap();
+
+        let CompiledNodeContent::Code { language, .. } = &artifact.presentation.nodes[1].content
+        else {
+            panic!("expected legacy code node")
+        };
+        assert_eq!(*language, Language::Text);
+
+        let CompiledNodeContent::Diff { diff, .. } = &artifact.presentation.nodes[2].content else {
+            panic!("expected legacy diff node")
+        };
+        assert_eq!(diff.files[0].language, Language::Text);
     }
 
     #[test]
