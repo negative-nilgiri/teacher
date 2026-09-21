@@ -110,6 +110,18 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                 resolve_diff(block.source, block.caption, repository.as_ref(), &pointer)
             }
             Block::MultipleChoice(block) => {
+                let prompt_pointer = format!("/blocks/{index}/prompt");
+                let prompt = match resolve_markdown_source(
+                    block.prompt,
+                    repository.as_ref(),
+                    &prompt_pointer,
+                ) {
+                    Ok(prompt) => prompt.content,
+                    Err(error) => {
+                        diagnostics.push(error);
+                        continue;
+                    }
+                };
                 let choice_start = next_choice_id;
                 let mut choices = Vec::with_capacity(block.choices.len());
                 let mut correct = None;
@@ -151,7 +163,7 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                         explanation: block.explanation,
                     });
                     Ok(CompiledNodeContent::MultipleChoice {
-                        prompt: block.prompt,
+                        prompt,
                         choices,
                         hints: block.hints,
                     })
@@ -293,8 +305,25 @@ fn resolve_markdown(
     repository: Option<&Repository>,
     pointer: &str,
 ) -> Result<CompiledNodeContent, Diagnostic> {
+    let resolved = resolve_markdown_source(source, repository, pointer)?;
+    Ok(CompiledNodeContent::Markdown {
+        content: resolved.content,
+        provenance: resolved.provenance,
+    })
+}
+
+struct ResolvedMarkdown {
+    content: String,
+    provenance: ResourceProvenance,
+}
+
+fn resolve_markdown_source(
+    source: MarkdownSource,
+    repository: Option<&Repository>,
+    pointer: &str,
+) -> Result<ResolvedMarkdown, Diagnostic> {
     match source {
-        MarkdownSource::Inline { content } => Ok(CompiledNodeContent::Markdown {
+        MarkdownSource::Inline { content } => Ok(ResolvedMarkdown {
             provenance: inline_provenance(content.as_bytes()),
             content,
         }),
@@ -304,7 +333,7 @@ fn resolve_markdown(
             let resource = repository
                 .read_file(&path, None)
                 .map_err(|error| repository_diagnostic(pointer, error))?;
-            Ok(CompiledNodeContent::Markdown {
+            Ok(ResolvedMarkdown {
                 content: resource.content,
                 provenance: resource_provenance(resource.provenance),
             })
@@ -591,27 +620,33 @@ fn repository_paths(source: &LessonSource) -> Result<RepositoryPaths, Vec<Diagno
     let mut git = Vec::new();
     let mut diagnostics = Vec::new();
     for (index, block) in source.blocks.iter().enumerate() {
-        let pointer = format!("/blocks/{index}/source/path");
-        let values: Vec<(&crate::source::RepoPath, bool)> = match block {
+        let source_pointer = format!("/blocks/{index}/source/path");
+        let values: Vec<(&crate::source::RepoPath, bool, String)> = match block {
             Block::Markdown(block) => match &block.source {
-                MarkdownSource::File { path } => vec![(path, false)],
+                MarkdownSource::File { path } => vec![(path, false, source_pointer)],
                 MarkdownSource::Inline { .. } => vec![],
             },
             Block::Code(block) => match &block.source {
-                CodeSource::File { path, .. } => vec![(path, false)],
-                CodeSource::GitBlob { path, .. } => vec![(path, true)],
+                CodeSource::File { path, .. } => vec![(path, false, source_pointer)],
+                CodeSource::GitBlob { path, .. } => vec![(path, true, source_pointer)],
                 CodeSource::Inline { .. } => vec![],
             },
             Block::Diff(block) => match &block.source {
-                DiffSource::File { path } => vec![(path, false)],
-                DiffSource::Git { files, .. } => {
-                    files.iter().map(|file| (&file.path, true)).collect()
-                }
+                DiffSource::File { path } => vec![(path, false, source_pointer)],
+                DiffSource::Git { files, .. } => files
+                    .iter()
+                    .map(|file| (&file.path, true, source_pointer.clone()))
+                    .collect(),
                 DiffSource::Inline { .. } => vec![],
             },
-            Block::MultipleChoice(_) => vec![],
+            Block::MultipleChoice(block) => match &block.prompt {
+                MarkdownSource::File { path } => {
+                    vec![(path, false, format!("/blocks/{index}/prompt/path"))]
+                }
+                MarkdownSource::Inline { .. } => vec![],
+            },
         };
-        for (value, is_git) in values {
+        for (value, is_git, pointer) in values {
             match repository_path(value, &pointer) {
                 Ok(path) => {
                     if is_git {
@@ -759,6 +794,56 @@ mod tests {
             .collect::<Vec<_>>();
         contents.sort_unstable();
         assert_eq!(contents, ["Newest", "Oldest"]);
+    }
+
+    #[test]
+    fn resolves_and_freezes_file_backed_question_prompts() {
+        let unique = format!(
+            "agent-teacher-prompt-test-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let directory = std::env::temp_dir().join(unique);
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("question.md"),
+            "## Queue check\n\nWhich operation preserves $FIFO$?\n",
+        )
+        .unwrap();
+        let lesson = r#"{
+            "schema_version":"2.0.0",
+            "title":"File prompt",
+            "blocks":[{
+                "type":"multiple_choice",
+                "id":"question",
+                "prompt":{"kind":"file","path":"question.md"},
+                "choices":[
+                    {"content":"`pop_front`","correct":true},
+                    {"content":"`pop_back`"}
+                ],
+                "explanation":"The front contains the oldest value."
+            }]
+        }"#;
+
+        let artifact = compile(lesson, &CompileOptions::new(&directory)).unwrap();
+        fs::write(directory.join("question.md"), "changed after compilation\n").unwrap();
+
+        let CompiledNodeContent::MultipleChoice { prompt, .. } =
+            &artifact.presentation.nodes[0].content
+        else {
+            panic!("expected compiled question")
+        };
+        assert_eq!(
+            prompt,
+            "## Queue check\n\nWhich operation preserves $FIFO$?\n"
+        );
+        assert_eq!(
+            artifact.provenance.source_schema_version,
+            crate::source::SchemaVersion::V2_0_0
+        );
+        assert_eq!(artifact.provenance.compiler_version, "1.8.0");
+
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

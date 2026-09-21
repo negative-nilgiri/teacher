@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.2.0",
+  "schema_version": "2.0.0",
   "title": "Why the queue now removes the oldest item",
   "blocks": [
     {
@@ -84,7 +84,10 @@
     {
       "type": "multiple_choice",
       "id": "verify-order",
-      "prompt": "After jobs A then B are queued, which job leaves first?\n$$\na_i\n$$",
+      "prompt": {
+        "kind": "inline",
+        "content": "After jobs A then B are queued, which job leaves first?\n$$\na_i\n$$"
+      },
       "choices": [
         { "content": "Job A", "correct": true },
         { "content": "Job B" }

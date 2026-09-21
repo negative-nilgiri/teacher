@@ -52,7 +52,7 @@ enum Command {
     /// Emit the exact authored-document JSON Schema.
     Schema {
         /// Source schema version to emit.
-        #[arg(long, default_value = "1.3.0")]
+        #[arg(long, default_value = "2.0.0")]
         version: String,
     },
 }
@@ -373,7 +373,7 @@ mod tests {
     fn schema_rejects_unknown_versions_with_stable_diagnostic() {
         let diagnostics = execute(
             Command::Schema {
-                version: "2.0.0".into(),
+                version: "3.0.0".into(),
             },
             Path::new("."),
         )

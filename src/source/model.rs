@@ -20,11 +20,20 @@ pub enum SchemaVersion {
     #[serde(rename = "1.3.0")]
     #[schemars(rename = "1.3.0")]
     V1_3_0,
+    #[serde(rename = "2.0.0")]
+    #[schemars(rename = "2.0.0")]
+    V2_0_0,
 }
 
 impl SchemaVersion {
-    pub const CURRENT: Self = Self::V1_3_0;
-    pub const SUPPORTED: [Self; 4] = [Self::V1_0_0, Self::V1_1_0, Self::V1_2_0, Self::V1_3_0];
+    pub const CURRENT: Self = Self::V2_0_0;
+    pub const SUPPORTED: [Self; 5] = [
+        Self::V1_0_0,
+        Self::V1_1_0,
+        Self::V1_2_0,
+        Self::V1_3_0,
+        Self::V2_0_0,
+    ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -32,6 +41,7 @@ impl SchemaVersion {
             Self::V1_1_0 => "1.1.0",
             Self::V1_2_0 => "1.2.0",
             Self::V1_3_0 => "1.3.0",
+            Self::V2_0_0 => "2.0.0",
         }
     }
 }
@@ -56,9 +66,9 @@ pub struct LessonSource {
 /// Exact decoder/schema model for the original source format.
 ///
 /// `language` was introduced in source schema 1.1.0, `caption` in 1.2.0, and
-/// `highlights` in 1.3.0, so older blocks intentionally remain separate closed
-/// shapes. Every versioned wire model lowers into the same internal
-/// [`LessonSource`] representation.
+/// `highlights` in 1.3.0, and file-backed quiz prompts in 2.0.0, so older blocks
+/// intentionally remain separate closed shapes. Every versioned wire model
+/// lowers into the same internal [`LessonSource`] representation.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(title = "LessonSource")]
@@ -82,7 +92,7 @@ enum BlockV1_0_0 {
     Markdown(MarkdownBlock),
     Code(CodeBlockV1_0_0),
     Diff(DiffBlockBeforeV1_2_0),
-    MultipleChoice(MultipleChoiceBlock),
+    MultipleChoice(MultipleChoiceBlockBeforeV2_0_0),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -119,7 +129,7 @@ impl From<BlockV1_0_0> for Block {
                 source: block.source,
             }),
             BlockV1_0_0::Diff(block) => Self::Diff(block.into()),
-            BlockV1_0_0::MultipleChoice(block) => Self::MultipleChoice(block),
+            BlockV1_0_0::MultipleChoice(block) => Self::MultipleChoice(block.into()),
         }
     }
 }
@@ -148,7 +158,7 @@ enum BlockV1_1_0 {
     Markdown(MarkdownBlock),
     Code(CodeBlockV1_1_0),
     Diff(DiffBlockBeforeV1_2_0),
-    MultipleChoice(MultipleChoiceBlock),
+    MultipleChoice(MultipleChoiceBlockBeforeV2_0_0),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -195,7 +205,7 @@ impl From<BlockV1_1_0> for Block {
                 source: block.source,
             }),
             BlockV1_1_0::Diff(block) => Self::Diff(block.into()),
-            BlockV1_1_0::MultipleChoice(block) => Self::MultipleChoice(block),
+            BlockV1_1_0::MultipleChoice(block) => Self::MultipleChoice(block.into()),
         }
     }
 }
@@ -244,7 +254,7 @@ enum BlockV1_2_0 {
     Markdown(MarkdownBlock),
     Code(CodeBlockV1_2_0),
     Diff(DiffBlock),
-    MultipleChoice(MultipleChoiceBlock),
+    MultipleChoice(MultipleChoiceBlockBeforeV2_0_0),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -272,7 +282,7 @@ impl From<BlockV1_2_0> for Block {
                 source: block.source,
             }),
             BlockV1_2_0::Diff(block) => Self::Diff(block),
-            BlockV1_2_0::MultipleChoice(block) => Self::MultipleChoice(block),
+            BlockV1_2_0::MultipleChoice(block) => Self::MultipleChoice(block.into()),
         }
     }
 }
@@ -285,7 +295,7 @@ pub(crate) struct LessonSourceV1_3_0 {
     schema_version: SchemaVersionV1_3_0,
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     title: String,
-    blocks: Vec<Block>,
+    blocks: Vec<BlockV1_3_0>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -299,6 +309,54 @@ impl From<LessonSourceV1_3_0> for LessonSource {
     fn from(source: LessonSourceV1_3_0) -> Self {
         Self {
             schema_version: SchemaVersion::V1_3_0,
+            title: source.title,
+            blocks: source.blocks.into_iter().map(Block::from).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum BlockV1_3_0 {
+    Markdown(MarkdownBlock),
+    Code(CodeBlock),
+    Diff(DiffBlock),
+    MultipleChoice(MultipleChoiceBlockBeforeV2_0_0),
+}
+
+impl From<BlockV1_3_0> for Block {
+    fn from(block: BlockV1_3_0) -> Self {
+        match block {
+            BlockV1_3_0::Markdown(block) => Self::Markdown(block),
+            BlockV1_3_0::Code(block) => Self::Code(block),
+            BlockV1_3_0::Diff(block) => Self::Diff(block),
+            BlockV1_3_0::MultipleChoice(block) => Self::MultipleChoice(block.into()),
+        }
+    }
+}
+
+/// Exact decoder/schema model for source schema 2.0.0.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(title = "LessonSource")]
+pub(crate) struct LessonSourceV2_0_0 {
+    schema_version: SchemaVersionV2_0_0,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    title: String,
+    blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+enum SchemaVersionV2_0_0 {
+    #[serde(rename = "2.0.0")]
+    #[schemars(rename = "2.0.0")]
+    V2_0_0,
+}
+
+impl From<LessonSourceV2_0_0> for LessonSource {
+    fn from(source: LessonSourceV2_0_0) -> Self {
+        Self {
+            schema_version: SchemaVersion::V2_0_0,
             title: source.title,
             blocks: source.blocks,
         }
@@ -393,8 +451,7 @@ pub struct DiffBlock {
 pub struct MultipleChoiceBlock {
     pub id: SourceId,
     /// Markdown prompt shown before the choices.
-    #[schemars(length(min = 1), regex(pattern = r"\S"))]
-    pub prompt: String,
+    pub prompt: MarkdownSource,
     /// At least two Markdown choices, exactly one of which must set `correct`.
     #[schemars(length(min = 2))]
     pub choices: Vec<Choice>,
@@ -405,6 +462,35 @@ pub struct MultipleChoiceBlock {
     /// Markdown shown only after a correct answer or explicit reveal.
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     pub explanation: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct MultipleChoiceBlockBeforeV2_0_0 {
+    id: SourceId,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    prompt: String,
+    #[schemars(length(min = 2))]
+    choices: Vec<Choice>,
+    #[serde(default)]
+    #[schemars(inner(length(min = 1), regex(pattern = r"\S")))]
+    hints: Vec<String>,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    explanation: String,
+}
+
+impl From<MultipleChoiceBlockBeforeV2_0_0> for MultipleChoiceBlock {
+    fn from(block: MultipleChoiceBlockBeforeV2_0_0) -> Self {
+        Self {
+            id: block.id,
+            prompt: MarkdownSource::Inline {
+                content: block.prompt,
+            },
+            choices: block.choices,
+            hints: block.hints,
+            explanation: block.explanation,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

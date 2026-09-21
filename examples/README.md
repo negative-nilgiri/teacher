@@ -13,10 +13,10 @@ learn serve examples/inline-lesson.learn
 ## Repository-backed lesson
 
 [`repository-lesson.json`](repository-lesson.json) demonstrates highlighted
-worktree and Git-blob code, patch files, and a generated worktree diff. Those
-sources require a specific commit and a deliberate uncommitted change, so the
-companion script creates that state instead of assuming it already exists in
-this checkout.
+worktree and Git-blob code, patch files, a file-backed multiple-choice prompt,
+and a generated worktree diff. Those sources require a specific commit and a
+deliberate uncommitted change, so the companion script creates that state
+instead of assuming it already exists in this checkout.
 
 From a source checkout, run the whole example with:
 

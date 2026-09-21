@@ -1,13 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
 
 use super::{
     Block, CodeHighlight, CodeSource, DiffSource, GitDiffTarget, GitRevision, LessonSource,
     LineRange, MarkdownSource, RepoPath, SourceId, SymbolTable,
-    model::{LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0},
+    model::{
+        LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
+        LessonSourceV2_0_0,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,7 +35,8 @@ impl ValidatedLesson {
 
 /// Parses one JSON source document and runs all non-I/O semantic checks.
 pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic>> {
-    let version = serde_json::from_str::<serde_json::Value>(input)
+    let mut version_deserializer = serde_json::Deserializer::from_str(input);
+    let version = serde_json::Value::deserialize(&mut version_deserializer)
         .ok()
         .and_then(|value| value.get("schema_version")?.as_str().map(str::to_owned));
     let source = match version.as_deref() {
@@ -40,6 +44,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
         Some("1.1.0") => deserialize_source::<LessonSourceV1_1_0>(input).map(Into::into),
         Some("1.2.0") => deserialize_source::<LessonSourceV1_2_0>(input).map(Into::into),
         Some("1.3.0") => deserialize_source::<LessonSourceV1_3_0>(input).map(Into::into),
+        Some("2.0.0") => deserialize_source::<LessonSourceV2_0_0>(input).map(Into::into),
         _ => deserialize_source::<LessonSource>(input),
     }?;
     validate(source)
@@ -143,7 +148,12 @@ pub fn validate(source: LessonSource) -> Result<ValidatedLesson, Vec<Diagnostic>
         }
 
         match block {
-            Block::Markdown(block) => validate_markdown(&block.source, &base, &mut diagnostics),
+            Block::Markdown(block) => validate_markdown_source(
+                &block.source,
+                &format!("{base}/source"),
+                "Markdown",
+                &mut diagnostics,
+            ),
             Block::Code(block) => {
                 if let Some(language) = &block.language {
                     nonempty(
@@ -188,17 +198,17 @@ pub fn validate(source: LessonSource) -> Result<ValidatedLesson, Vec<Diagnostic>
     }
 }
 
-fn validate_markdown(source: &MarkdownSource, base: &str, diagnostics: &mut DiagnosticBag) {
+fn validate_markdown_source(
+    source: &MarkdownSource,
+    pointer: &str,
+    label: &str,
+    diagnostics: &mut DiagnosticBag,
+) {
     match source {
-        MarkdownSource::Inline { content } => nonempty(
-            content,
-            &format!("{base}/source/content"),
-            "Markdown",
-            diagnostics,
-        ),
-        MarkdownSource::File { path } => {
-            repo_path(path, &format!("{base}/source/path"), diagnostics)
+        MarkdownSource::Inline { content } => {
+            nonempty(content, &format!("{pointer}/content"), label, diagnostics)
         }
+        MarkdownSource::File { path } => repo_path(path, &format!("{pointer}/path"), diagnostics),
     }
 }
 
@@ -392,7 +402,7 @@ fn validate_multiple_choice(
     base: &str,
     diagnostics: &mut DiagnosticBag,
 ) {
-    nonempty(
+    validate_markdown_source(
         &block.prompt,
         &format!("{base}/prompt"),
         "question prompt",
@@ -761,6 +771,67 @@ mod tests {
                 .message
                 .contains("unknown field `highlights`")
         );
+    }
+
+    #[test]
+    fn source_1_3_rejects_prompt_sources_added_in_2_0() {
+        let json = r#"{
+            "schema_version":"1.3.0",
+            "title":"Legacy prompt",
+            "blocks":[{
+                "type":"multiple_choice",
+                "id":"question",
+                "prompt":{"kind":"inline","content":"Which answer is correct?"},
+                "choices":[
+                    {"content":"First","correct":true},
+                    {"content":"Second"}
+                ],
+                "explanation":"The first answer is correct."
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(json).expect_err("1.3 keeps string prompts");
+        assert_eq!(diagnostics[0].code, "source.deserialize");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0");
+        assert!(diagnostics[0].message.contains("expected a string"));
+    }
+
+    #[test]
+    fn source_2_0_requires_prompt_sources_and_validates_them() {
+        let legacy = r#"{
+            "schema_version":"2.0.0",
+            "title":"New prompt contract",
+            "blocks":[{
+                "type":"multiple_choice",
+                "id":"legacy",
+                "prompt":"This shape is no longer current.",
+                "choices":[
+                    {"content":"First","correct":true},
+                    {"content":"Second"}
+                ],
+                "explanation":"The first answer is correct."
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(legacy).expect_err("2.0 rejects string prompts");
+        assert_eq!(diagnostics[0].code, "source.deserialize");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0");
+
+        let invalid_source = r#"{
+            "schema_version":"2.0.0",
+            "title":"New prompt contract",
+            "blocks":[{
+                "type":"multiple_choice",
+                "id":"question",
+                "prompt":{"kind":"file","path":"../outside.md"},
+                "choices":[
+                    {"content":"First","correct":true},
+                    {"content":"Second"}
+                ],
+                "explanation":"The first answer is correct."
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(invalid_source).expect_err("prompt path escapes root");
+        assert_eq!(diagnostics[0].code, "source.path.invalid");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0/prompt/path");
     }
 
     #[test]
