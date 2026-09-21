@@ -102,6 +102,7 @@ never reopens the lesson source or worktree.
 | [`src/bin/learn.rs`](../src/bin/learn.rs) | Runtime CLI and startup/error output. |
 | [`src/runtime/`](../src/runtime) | Artifact loading, public projection, session state, API, and embedded asset serving. |
 | [`web/src/`](../web/src) | React application and the TypeScript mirror of the public API. |
+| [`web/src/languages.ts`](../web/src/languages.ts) | Frontend language display names and statically imported Highlight.js grammars. |
 | [`web/dist/`](../web/dist) | Generated production bundle embedded into `learn`; this is a build input. |
 | [`tests/v1_contract.rs`](../tests/v1_contract.rs) | Cross-layer tests using real binaries, Git repositories, and HTTP requests. |
 | [`tests/fixtures/`](../tests/fixtures) | Valid/invalid source documents and artifact/package fixtures. |
@@ -381,7 +382,10 @@ compact label and falls back to `Code` when no specific language is known:
   legend from semantic `classDef` declarations.
 - [`DiffBlock`](../web/src/components/DiffBlock.tsx) renders structured lines and
   old/new line numbers, showing and using the language frozen for each compiled
-  diff file to syntax-highlight its content.
+  diff file to syntax-highlight its content. Git-generated diffs also show the
+  safe root-relative owning repository projected from artifact provenance when
+  it identifies a nested or sibling repository. The uninformative root owner
+  (`.`), inline diffs, and patch-file diffs have no repository label.
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
 
@@ -513,6 +517,36 @@ Tests are layered so failures identify the responsible boundary:
   consumer workflow from crate assembly through installed server responses.
 
 ## Extension checklists
+
+### Add a syntax-highlighted language
+
+Language support crosses the compiler/runtime boundary, so keep its canonical
+identifier and browser grammar aligned rather than registering a Highlight.js
+asset in isolation:
+
+1. Add the Rust variant to [`Language`](../src/language.rs), including `ALL`,
+   `as_str`, authored aliases, and path-extension inference. Extend its
+   normalization, inference, and serialization tests.
+2. Statically import the Highlight.js grammar and add its display name plus
+   highlighter to the single frontend registry in
+   [`web/src/languages.ts`](../web/src/languages.ts). Static imports preserve the
+   intentional tree-shaken `highlight.js/lib/core` build. Reuse an existing
+   grammar only when its syntax is genuinely compatible.
+3. If the language needs semantic rendering rather than token coloring, omit a
+   highlighter and route it explicitly in
+   [`CodeBlock`](../web/src/components/CodeBlock.tsx), as Mermaid does. Preserve
+   escaped plain-text fallback for unsupported values.
+4. Update the canonical language and alias table in
+   [`docs/AUTHORING.md`](../docs/AUTHORING.md) and the agent-facing
+   [`SKILL.md`](../SKILL.md).
+5. Add compiler coverage proving authored aliases and inferred extensions freeze
+   the expected language, plus React coverage for the visible label and actual
+   highlighted token classes in code and diff blocks.
+6. A new serialized language value changes the artifact contract for older
+   runtimes. Follow [Change a versioned contract](#change-a-versioned-contract)
+   and make the compatibility/version decision explicitly.
+7. Run `just web-build` and `just verify`, then commit the refreshed `web/dist`
+   assets with the source changes. Use `just release-check` before publishing.
 
 ### Add a display-only block
 

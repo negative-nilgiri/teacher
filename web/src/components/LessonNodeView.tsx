@@ -1,8 +1,8 @@
 import type { ChoiceId, LessonNode, QuestionState } from "../types";
+import { specificLanguageDisplayName } from "../languages";
 import { CodeBlock } from "./CodeBlock";
 import { CollapsibleLessonBlock } from "./CollapsibleLessonBlock";
 import { DiffBlock } from "./DiffBlock";
-import { specificLanguageDisplayName } from "./LanguageLabel";
 import { Markdown } from "./Markdown";
 import { MultipleChoiceBlock } from "./MultipleChoiceBlock";
 
