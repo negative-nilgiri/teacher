@@ -73,6 +73,7 @@ describe("semantic source rendering", () => {
               old_path: null,
             },
           ],
+          caption: "The **addition** establishes the new default.",
           node_id: 2,
           source_id: "answer-diff",
           type: "diff",
@@ -81,6 +82,8 @@ describe("semantic source rendering", () => {
     );
 
     expect(screen.getByLabelText("Language: JavaScript")).toHaveTextContent("JavaScript");
+    expect(screen.getByText("addition")).toHaveTextContent("addition");
+    expect(screen.getByText("addition").tagName).toBe("STRONG");
     expect(container.querySelector("code.language-javascript .hljs-keyword")).toHaveTextContent("const");
   });
 
@@ -105,6 +108,7 @@ describe("semantic source rendering", () => {
       <CodeBlock
         node={{
           content: source,
+          caption: "The shared queue is the serialization point; producers never hand jobs directly to the consumer.",
           language: "mermaid",
           node_id: 4,
           source_id: "flow",
@@ -117,6 +121,7 @@ describe("semantic source rendering", () => {
       screen.getByTestId("rendered-mermaid"),
     );
     expect(screen.getByLabelText("Language: Mermaid")).toHaveTextContent("Mermaid");
+    expect(screen.getByText(/shared queue is the serialization point/)).toBeInTheDocument();
     expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^mermaid-/), source);
     expect(mermaidMocks.initialize).toHaveBeenCalledWith(
       expect.objectContaining({ securityLevel: "strict", startOnLoad: false }),

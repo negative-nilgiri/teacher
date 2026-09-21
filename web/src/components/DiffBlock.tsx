@@ -1,5 +1,6 @@
 import type { DiffLine, DiffNode } from "../types";
 import { LanguageLabel } from "./LanguageLabel";
+import { Markdown } from "./Markdown";
 import { SyntaxCode } from "./SyntaxCode";
 
 function lineMarker(line: DiffLine): string {
@@ -17,6 +18,7 @@ function fileLabel(oldPath: string | null, newPath: string | null): string {
 export function DiffBlock({ node }: { node: DiffNode }) {
   return (
     <section className="diff-block" aria-label={`Diff: ${node.source_id}`}>
+      {node.caption ? <Markdown className="source-caption">{node.caption}</Markdown> : null}
       {node.files.map((file, fileIndex) => (
         <article className="diff-file" key={`${file.old_path}:${file.new_path}:${fileIndex}`}>
           <header className="diff-file-header">

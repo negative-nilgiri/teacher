@@ -97,10 +97,13 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
             Block::Code(block) => resolve_code(
                 block.source,
                 block.language.as_deref(),
+                block.caption,
                 repository.as_ref(),
                 &pointer,
             ),
-            Block::Diff(block) => resolve_diff(block.source, repository.as_ref(), &pointer),
+            Block::Diff(block) => {
+                resolve_diff(block.source, block.caption, repository.as_ref(), &pointer)
+            }
             Block::MultipleChoice(block) => {
                 let choice_start = next_choice_id;
                 let mut choices = Vec::with_capacity(block.choices.len());
@@ -304,6 +307,7 @@ fn resolve_markdown(
 fn resolve_code(
     source: CodeSource,
     authored_language: Option<&str>,
+    caption: Option<String>,
     repository: Option<&Repository>,
     pointer: &str,
 ) -> Result<CompiledNodeContent, Diagnostic> {
@@ -313,6 +317,7 @@ fn resolve_code(
             language: authored_language
                 .map(Language::from_authored)
                 .unwrap_or_default(),
+            caption,
             content,
         }),
         CodeSource::File { path, lines } => {
@@ -333,6 +338,7 @@ fn resolve_code(
             Ok(CompiledNodeContent::Code {
                 content: resource.content,
                 language,
+                caption,
                 provenance: resource_provenance(resource.provenance),
             })
         }
@@ -359,6 +365,7 @@ fn resolve_code(
             Ok(CompiledNodeContent::Code {
                 content: resource.content,
                 language,
+                caption,
                 provenance: resource_provenance(resource.provenance),
             })
         }
@@ -367,6 +374,7 @@ fn resolve_code(
 
 fn resolve_diff(
     source: DiffSource,
+    caption: Option<String>,
     repository: Option<&Repository>,
     pointer: &str,
 ) -> Result<CompiledNodeContent, Diagnostic> {
@@ -376,6 +384,7 @@ fn resolve_diff(
                 .map_err(|error| repository_diagnostic(pointer, error))?;
             Ok(CompiledNodeContent::Diff {
                 provenance: inline_provenance(content.as_bytes()),
+                caption,
                 diff,
             })
         }
@@ -389,6 +398,7 @@ fn resolve_diff(
                 .map_err(|error| repository_diagnostic(pointer, error))?;
             Ok(CompiledNodeContent::Diff {
                 diff,
+                caption,
                 provenance: resource_provenance(resource.provenance),
             })
         }
@@ -436,6 +446,7 @@ fn resolve_diff(
             };
             Ok(CompiledNodeContent::Diff {
                 diff: resolved.diff,
+                caption,
                 provenance: ResourceProvenance::GitDiff {
                     repository: resolved.provenance.repository,
                     base_revision: resolved.provenance.base_revision,
@@ -650,6 +661,46 @@ mod tests {
     }
 
     #[test]
+    fn preserves_optional_code_and_diff_captions() {
+        let lesson = r#"{
+            "schema_version":"1.2.0",
+            "title":"Captions",
+            "blocks":[
+                {
+                    "type":"code",
+                    "id":"diagram",
+                    "language":"mermaid",
+                    "caption":"The queue is the **serialization point**.",
+                    "source":{"kind":"inline","content":"flowchart LR\nA --> Q --> B"}
+                },
+                {
+                    "type":"diff",
+                    "id":"change",
+                    "caption":"This change preserves arrival order.",
+                    "source":{"kind":"inline","content":"diff --git a/src/queue.rs b/src/queue.rs\n--- a/src/queue.rs\n+++ b/src/queue.rs\n@@ -1 +1 @@\n-pop_back()\n+pop_front()\n"}
+                }
+            ]
+        }"#;
+        let artifact = compile(lesson, &CompileOptions::new(".")).unwrap();
+
+        assert!(matches!(
+            &artifact.presentation.nodes[0].content,
+            CompiledNodeContent::Code { caption: Some(caption), .. }
+                if caption == "The queue is the **serialization point**."
+        ));
+        assert!(matches!(
+            &artifact.presentation.nodes[1].content,
+            CompiledNodeContent::Diff { caption: Some(caption), .. }
+                if caption == "This change preserves arrival order."
+        ));
+        let encoded = serde_json::to_value(&artifact).unwrap();
+        assert_eq!(
+            encoded["presentation"]["nodes"][0]["caption"],
+            "The queue is the **serialization point**."
+        );
+    }
+
+    #[test]
     fn invalid_inline_patch_has_source_pointer_and_stable_code() {
         let lesson = r#"{
             "schema_version":"1.0.0",
@@ -762,7 +813,9 @@ mod tests {
             _ => panic!("expected code node"),
         }
         match &artifact.presentation.nodes[2].content {
-            CompiledNodeContent::Diff { diff, provenance } => {
+            CompiledNodeContent::Diff {
+                diff, provenance, ..
+            } => {
                 assert_eq!(diff.files.len(), 1);
                 assert!(
                     matches!(provenance, ResourceProvenance::GitDiff { repository, base_object_id, target: FrozenDiffTarget::Worktree, .. } if repository == "." && base_object_id.len() == 40)

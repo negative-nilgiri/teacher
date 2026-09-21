@@ -15,6 +15,7 @@ export interface CodeNode extends LessonNodeBase {
   type: "code";
   content: string;
   language: string;
+  caption?: string;
 }
 
 export type DiffLineKind = "context" | "addition" | "deletion";
@@ -41,6 +42,7 @@ export interface DiffFile {
 export interface DiffNode extends LessonNodeBase {
   type: "diff";
   files: DiffFile[];
+  caption?: string;
 }
 
 export interface MultipleChoice {

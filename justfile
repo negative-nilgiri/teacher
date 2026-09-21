@@ -41,11 +41,11 @@ web-build:
 web-test:
     npm --prefix web test
 
-# Build both Rust binaries after refreshing embedded frontend assets.
+# Build all three Rust binaries after refreshing embedded frontend assets.
 build: web-build
     cargo build
 
-# Install the learnc and learn binaries from this checkout.
+# Install learnc, learn, and the optional learnpick adviser from this checkout.
 install: web-build
     cargo install --path . --locked --force
 
@@ -56,6 +56,10 @@ learnc *args:
 # Pass arbitrary arguments directly to the runtime binary.
 learn *args:
     cargo run --quiet --bin learn -- "$@"
+
+# Pass arbitrary arguments directly to the optional block-picker binary.
+learnpick *args:
+    cargo run --quiet --bin learnpick -- "$@"
 
 # Validate an authored lesson, forwarding every argument after `check`.
 lesson-check *args:
@@ -85,7 +89,7 @@ verify: fmt-check lint test web-test
 package-list:
     cargo package --list --allow-dirty
 
-# Package, install, and exercise both binaries without allowing Node.js to run.
+# Package, install, and exercise all three binaries without allowing Node.js to run.
 package-smoke:
     bash scripts/package-smoke.sh
 

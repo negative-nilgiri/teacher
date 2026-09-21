@@ -14,16 +14,20 @@ pub enum SchemaVersion {
     #[serde(rename = "1.1.0")]
     #[schemars(rename = "1.1.0")]
     V1_1_0,
+    #[serde(rename = "1.2.0")]
+    #[schemars(rename = "1.2.0")]
+    V1_2_0,
 }
 
 impl SchemaVersion {
-    pub const CURRENT: Self = Self::V1_1_0;
-    pub const SUPPORTED: [Self; 2] = [Self::V1_0_0, Self::V1_1_0];
+    pub const CURRENT: Self = Self::V1_2_0;
+    pub const SUPPORTED: [Self; 3] = [Self::V1_0_0, Self::V1_1_0, Self::V1_2_0];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::V1_0_0 => "1.0.0",
             Self::V1_1_0 => "1.1.0",
+            Self::V1_2_0 => "1.2.0",
         }
     }
 }
@@ -47,9 +51,9 @@ pub struct LessonSource {
 
 /// Exact decoder/schema model for the original source format.
 ///
-/// `language` was introduced in source schema 1.1.0, so the 1.0.0 code block
-/// intentionally remains a separate closed shape. Both versioned wire models
-/// lower into the same internal [`LessonSource`] representation.
+/// `language` was introduced in source schema 1.1.0 and `caption` in 1.2.0, so
+/// older blocks intentionally remain separate closed shapes. Every versioned
+/// wire model lowers into the same internal [`LessonSource`] representation.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(title = "LessonSource")]
@@ -72,7 +76,7 @@ enum SchemaVersionV1_0_0 {
 enum BlockV1_0_0 {
     Markdown(MarkdownBlock),
     Code(CodeBlockV1_0_0),
-    Diff(DiffBlock),
+    Diff(DiffBlockBeforeV1_2_0),
     MultipleChoice(MultipleChoiceBlock),
 }
 
@@ -105,9 +109,10 @@ impl From<BlockV1_0_0> for Block {
             BlockV1_0_0::Code(block) => Self::Code(CodeBlock {
                 id: block.id,
                 language: None,
+                caption: None,
                 source: block.source,
             }),
-            BlockV1_0_0::Diff(block) => Self::Diff(block),
+            BlockV1_0_0::Diff(block) => Self::Diff(block.into()),
             BlockV1_0_0::MultipleChoice(block) => Self::MultipleChoice(block),
         }
     }
@@ -121,7 +126,7 @@ pub(crate) struct LessonSourceV1_1_0 {
     schema_version: SchemaVersionV1_1_0,
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     title: String,
-    blocks: Vec<Block>,
+    blocks: Vec<BlockV1_1_0>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -129,6 +134,32 @@ enum SchemaVersionV1_1_0 {
     #[serde(rename = "1.1.0")]
     #[schemars(rename = "1.1.0")]
     V1_1_0,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum BlockV1_1_0 {
+    Markdown(MarkdownBlock),
+    Code(CodeBlockV1_1_0),
+    Diff(DiffBlockBeforeV1_2_0),
+    MultipleChoice(MultipleChoiceBlock),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CodeBlockV1_1_0 {
+    id: SourceId,
+    #[serde(default)]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    language: Option<String>,
+    source: CodeSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DiffBlockBeforeV1_2_0 {
+    id: SourceId,
+    source: DiffSource,
 }
 
 impl From<LessonSourceV1_1_0> for LessonSource {
@@ -141,7 +172,61 @@ impl From<LessonSourceV1_1_0> for LessonSource {
         Self {
             schema_version: SchemaVersion::V1_1_0,
             title,
-            blocks,
+            blocks: blocks.into_iter().map(Block::from).collect(),
+        }
+    }
+}
+
+impl From<BlockV1_1_0> for Block {
+    fn from(block: BlockV1_1_0) -> Self {
+        match block {
+            BlockV1_1_0::Markdown(block) => Self::Markdown(block),
+            BlockV1_1_0::Code(block) => Self::Code(CodeBlock {
+                id: block.id,
+                language: block.language,
+                caption: None,
+                source: block.source,
+            }),
+            BlockV1_1_0::Diff(block) => Self::Diff(block.into()),
+            BlockV1_1_0::MultipleChoice(block) => Self::MultipleChoice(block),
+        }
+    }
+}
+
+impl From<DiffBlockBeforeV1_2_0> for DiffBlock {
+    fn from(block: DiffBlockBeforeV1_2_0) -> Self {
+        Self {
+            id: block.id,
+            caption: None,
+            source: block.source,
+        }
+    }
+}
+
+/// Exact decoder/schema model for source schema 1.2.0.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(title = "LessonSource")]
+pub(crate) struct LessonSourceV1_2_0 {
+    schema_version: SchemaVersionV1_2_0,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    title: String,
+    blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+enum SchemaVersionV1_2_0 {
+    #[serde(rename = "1.2.0")]
+    #[schemars(rename = "1.2.0")]
+    V1_2_0,
+}
+
+impl From<LessonSourceV1_2_0> for LessonSource {
+    fn from(source: LessonSourceV1_2_0) -> Self {
+        Self {
+            schema_version: SchemaVersion::V1_2_0,
+            title: source.title,
+            blocks: source.blocks,
         }
     }
 }
@@ -181,6 +266,10 @@ pub struct CodeBlock {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     pub language: Option<String>,
+    /// Optional Markdown for non-obvious, block-specific explanation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub caption: Option<String>,
     pub source: CodeSource,
 }
 
@@ -188,6 +277,10 @@ pub struct CodeBlock {
 #[serde(deny_unknown_fields)]
 pub struct DiffBlock {
     pub id: SourceId,
+    /// Optional Markdown for non-obvious, block-specific explanation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub caption: Option<String>,
     pub source: DiffSource,
 }
 

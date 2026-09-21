@@ -10,12 +10,15 @@ for people changing the compiler, artifact, server, or frontend.
 
 ## Start here
 
-The project is one Cargo package with two binaries:
+The project is one Cargo package with three binaries:
 
 - [`learnc`](../src/bin/learnc.rs) reads authored JSON and repository state,
   validates and freezes everything, and optionally writes a `.learn` artifact.
 - [`learn`](../src/bin/learn.rs) reads only a compiled artifact, owns the learner
   session, and serves the embedded React application on loopback.
+- [`learnpick`](../src/bin/learnpick.rs) is an optional network-backed adviser
+  that recommends one block type. Its library module is isolated from the core
+  binaries and subsystems; see [`docs/LEARNPICK.md`](LEARNPICK.md).
 
 For a first pass through the implementation, read these files in order:
 
@@ -57,9 +60,12 @@ flowchart LR
     Runtime["learn<br/>artifact loader + session"]
     Api["Loopback HTTP API<br/>shared truth"]
     Browser["Embedded React UI<br/>drafts + presentation"]
+    Picker["learnpick<br/>optional block advice"]
+    Jev["TypeSafe Jev API"]
 
     Agent --> Source
     Agent --> Repo
+    Agent --> Picker --> Jev --> Picker
     Source --> Compiler
     Repo --> Compiler
     Compiler --> Artifact
@@ -74,6 +80,7 @@ flowchart LR
     classDef artifact fill:#fef3c7,stroke:#d97706,color:#451a03
     classDef runtime fill:#ede9fe,stroke:#8b5cf6,color:#2e1065
     classDef browser fill:#ffe4e6,stroke:#f43f5e,color:#4c0519
+    classDef optional fill:#f3e8ff,stroke:#9333ea,color:#3b0764
 
     class Agent,Learner actor
     class Source,Repo input
@@ -81,11 +88,18 @@ flowchart LR
     class Artifact artifact
     class Runtime,Api runtime
     class Browser browser
+    class Picker,Jev optional
 ```
 
 The boundary between `learnc` and `learn` is deliberate. Only the compiler
 reads repositories or invokes Git. The runtime receives resolved content and
 never reopens the lesson source or worktree.
+
+The `learnpick` path is deliberately one-way and optional. `src/lib.rs` exposes
+the module and `src/bin/learnpick.rs` calls it, but `learnc`, `learn`, and all
+compiler, runtime, source, artifact, and repository modules have no dependency
+on it. A picker or API failure therefore cannot affect validation, compilation,
+artifacts, or study sessions.
 
 ## Repository map
 
@@ -100,6 +114,9 @@ never reopens the lesson source or worktree.
 | [`src/compiler/mod.rs`](../src/compiler/mod.rs) | Adapts source types to repository requests and lowers resolved blocks into an artifact. |
 | [`src/artifact/mod.rs`](../src/artifact/mod.rs) | Versioned serialized contract shared by compiler and runtime. |
 | [`src/bin/learn.rs`](../src/bin/learn.rs) | Runtime CLI and startup/error output. |
+| [`src/bin/learnpick.rs`](../src/bin/learnpick.rs) | Optional adviser CLI and JSON/text result projection. |
+| [`src/learnpick.rs`](../src/learnpick.rs) | Optional block-choice request/response semantics exposed by the library and used by its binary. |
+| [`src/learnpick/`](../src/learnpick) | Private synchronous TypeSafe HTTP client. |
 | [`src/runtime/`](../src/runtime) | Artifact loading, public projection, session state, API, and embedded asset serving. |
 | [`web/src/`](../web/src) | React application and the TypeScript mirror of the public API. |
 | [`web/src/languages.ts`](../web/src/languages.ts) | Frontend language display names and statically imported Highlight.js grammars. |
@@ -234,7 +251,7 @@ Three SemVer values evolve independently:
 | Version | Current value | Defined by |
 | --- | --- | --- |
 | Cargo package | `0.1.0` | [`Cargo.toml`](../Cargo.toml) |
-| Authored schema | `1.1.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
+| Authored schema | `1.2.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
 | Artifact schema | `1.0.0` | [`ArtifactVersion`](../src/artifact/mod.rs#L15) |
 
 ## Repository and diff resolution
@@ -378,11 +395,13 @@ compact label and falls back to `Code` when no specific language is known:
 - [`CodeBlock`](../web/src/components/CodeBlock.tsx) syntax-highlights known
   languages beneath a visible normalized-language header, renders `mermaid` as
   a diagram, and safely falls back to literal text for unknown languages or an
-  invalid diagram. Mermaid runs in strict security mode and derives an optional
+  invalid diagram. An authored caption renders as Markdown immediately above
+  the content. Mermaid runs in strict security mode and derives an optional
   legend from semantic `classDef` declarations.
 - [`DiffBlock`](../web/src/components/DiffBlock.tsx) renders structured lines and
   old/new line numbers, showing and using the language frozen for each compiled
-  diff file to syntax-highlight its content. Git-generated diffs also show the
+  diff file to syntax-highlight its content. Optional captions render once above
+  the complete diff. Git-generated diffs also show the
   safe root-relative owning repository projected from artifact provenance when
   it identifies a nested or sibling repository. The uninformative root owner
   (`.`), inline diffs, and patch-file diffs have no repository label.
@@ -403,7 +422,7 @@ flowchart LR
     Vite["TypeScript + Vite build"]
     Dist["web/dist<br/>production assets"]
     Embed["rust-embed<br/>compile-time bytes"]
-    Crate["Cargo package<br/>two binaries + assets"]
+    Crate["Cargo package<br/>three binaries + assets"]
     Install["cargo install --locked"]
     Learn["learn<br/>API + SPA on loopback"]
 
@@ -435,7 +454,7 @@ Asset routing serves exact files with inferred MIME types, falls back to
 
 ## Diagnostics and command output
 
-Both CLIs are agent-centric:
+All three CLIs are agent-centric:
 
 - machine-readable JSON is the default;
 - `--text`/`-t` opts into concise human output;
@@ -466,10 +485,11 @@ line to discover the random URL before waiting on the long-running server.
 | `just web-test` | Runs the Vitest frontend suite. |
 | `just verify` | Checks formatting, strict Clippy, Rust tests, and frontend tests. |
 | `just web-build` | Rebuilds the production bundle in `web/dist`. |
-| `just build` | Rebuilds `web/dist`, then builds both Rust binaries. |
-| `just install` | Rebuilds `web/dist`, then installs both binaries from this checkout. |
+| `just build` | Rebuilds `web/dist`, then builds all three Rust binaries. |
+| `just install` | Rebuilds `web/dist`, then installs all three binaries from this checkout. |
 | `just learnc [args...]` | Passes arbitrary arguments directly to the compiler binary. |
 | `just learn [args...]` | Passes arbitrary arguments directly to the runtime binary. |
+| `just learnpick [args...]` | Passes arbitrary arguments directly to the optional adviser. |
 | `just lesson-check [args...]` | Runs `learnc check` with untouched arguments and options. |
 | `just lesson-build [args...]` | Runs `learnc build` with untouched arguments and options. |
 | `just serve [args...]` | Runs `learn serve` with untouched arguments and options. |
@@ -512,7 +532,8 @@ Tests are layered so failures identify the responsible boundary:
   [`web/src/test/App.test.tsx`](../web/src/test/App.test.tsx).
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
   schema fixtures, repository builds, selected diffs, moved refs, live HTTP quiz
-  state, private-data projection, and production assets.
+  state, private-data projection, production assets, picker CLI output, and the
+  picker isolation invariant.
 - [`scripts/package-smoke.sh`](../scripts/package-smoke.sh) verifies the final
   consumer workflow from crate assembly through installed server responses.
 
@@ -588,9 +609,10 @@ change may require a new `SchemaVersion` decoder while leaving artifacts stable;
 an artifact change requires explicit runtime compatibility handling. Never infer
 compatibility from the Cargo package version.
 
-The compiler currently decodes source schemas `1.0.0` and `1.1.0`; `1.1.0`
-adds the optional code-block `language` field. Each schema command emits the
-exact closed shape for the requested version, and `SchemaVersion::CURRENT`
+The compiler currently decodes source schemas `1.0.0`, `1.1.0`, and `1.2.0`;
+`1.1.0` adds the optional code-block `language` field, while `1.2.0` adds
+optional Markdown captions to code and diff blocks. Each schema command emits
+the exact closed shape for the requested version, and `SchemaVersion::CURRENT`
 selects the default for new documents.
 
 ### Change package contents

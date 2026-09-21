@@ -7,7 +7,7 @@ use crate::diagnostics::{Diagnostic, DiagnosticBag};
 use super::{
     Block, CodeSource, DiffSource, GitDiffTarget, GitRevision, LessonSource, LineRange,
     MarkdownSource, RepoPath, SourceId, SymbolTable,
-    model::{LessonSourceV1_0_0, LessonSourceV1_1_0},
+    model::{LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,6 +38,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
     let source = match version.as_deref() {
         Some("1.0.0") => deserialize_source::<LessonSourceV1_0_0>(input).map(Into::into),
         Some("1.1.0") => deserialize_source::<LessonSourceV1_1_0>(input).map(Into::into),
+        Some("1.2.0") => deserialize_source::<LessonSourceV1_2_0>(input).map(Into::into),
         _ => deserialize_source::<LessonSource>(input),
     }?;
     validate(source)
@@ -151,9 +152,27 @@ pub fn validate(source: LessonSource) -> Result<ValidatedLesson, Vec<Diagnostic>
                         &mut diagnostics,
                     );
                 }
+                if let Some(caption) = &block.caption {
+                    nonempty(
+                        caption,
+                        &format!("{base}/caption"),
+                        "caption",
+                        &mut diagnostics,
+                    );
+                }
                 validate_code(&block.source, &base, &mut diagnostics);
             }
-            Block::Diff(block) => validate_diff(&block.source, &base, &mut diagnostics),
+            Block::Diff(block) => {
+                if let Some(caption) = &block.caption {
+                    nonempty(
+                        caption,
+                        &format!("{base}/caption"),
+                        "caption",
+                        &mut diagnostics,
+                    );
+                }
+                validate_diff(&block.source, &base, &mut diagnostics);
+            }
             Block::MultipleChoice(block) => {
                 validate_multiple_choice(block, &base, &mut diagnostics)
             }
@@ -575,6 +594,51 @@ mod tests {
         assert_eq!(diagnostics[0].code, "source.deserialize");
         assert_eq!(diagnostics[0].pointer, "/blocks/0");
         assert!(diagnostics[0].message.contains("unknown field `language`"));
+    }
+
+    #[test]
+    fn source_1_1_rejects_the_caption_field_added_in_1_2() {
+        let json = r#"{
+            "schema_version":"1.1.0",
+            "title":"Legacy contract",
+            "blocks":[{
+                "type":"code",
+                "id":"diagram",
+                "language":"mermaid",
+                "caption":"A hidden assumption.",
+                "source":{"kind":"inline","content":"flowchart LR\nA --> B"}
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(json).expect_err("1.1 must remain a closed shape");
+        assert_eq!(diagnostics[0].code, "source.deserialize");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0");
+        assert!(diagnostics[0].message.contains("unknown field `caption`"));
+    }
+
+    #[test]
+    fn source_1_2_rejects_blank_code_and_diff_captions() {
+        let json = r#"{
+            "schema_version":"1.2.0",
+            "title":"Captions",
+            "blocks":[
+                {
+                    "type":"code",
+                    "id":"diagram",
+                    "caption":"   ",
+                    "source":{"kind":"inline","content":"flowchart LR\nA --> B"}
+                },
+                {
+                    "type":"diff",
+                    "id":"change",
+                    "caption":"\n",
+                    "source":{"kind":"inline","content":"diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n"}
+                }
+            ]
+        }"#;
+        let diagnostics = parse_and_validate(json).expect_err("blank captions are invalid");
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].pointer, "/blocks/0/caption");
+        assert_eq!(diagnostics[1].pointer, "/blocks/1/caption");
     }
 
     #[test]

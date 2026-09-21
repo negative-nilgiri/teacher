@@ -171,13 +171,18 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                     }
                 }
                 CompiledNodeContent::Code {
-                    content, language, ..
+                    content,
+                    language,
+                    caption,
+                    ..
                 } => PublicLessonNodeContent::Code {
                     content: content.clone(),
                     language: *language,
+                    caption: caption.clone(),
                 },
-                CompiledNodeContent::Diff { diff, .. } => PublicLessonNodeContent::Diff {
+                CompiledNodeContent::Diff { diff, caption, .. } => PublicLessonNodeContent::Diff {
                     files: project_diff(diff),
+                    caption: caption.clone(),
                 },
                 CompiledNodeContent::MultipleChoice {
                     prompt,
@@ -266,9 +271,13 @@ pub enum PublicLessonNodeContent {
     Code {
         content: String,
         language: crate::language::Language,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
     },
     Diff {
         files: Vec<PublicDiffFile>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
     },
     MultipleChoice {
         prompt: String,
@@ -393,6 +402,30 @@ pub(crate) mod tests {
         assert!(!serialized.contains("explanation"));
         assert!(!serialized.contains("private"));
         assert_eq!(value["nodes"][0]["choices"][1]["choice_id"], 1);
+    }
+
+    #[test]
+    fn public_projection_preserves_code_captions() {
+        let mut artifact = quiz_artifact();
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "diagram".into(),
+            content: CompiledNodeContent::Code {
+                content: "flowchart LR\nA --> B".into(),
+                language: crate::language::Language::Mermaid,
+                caption: Some("The edge represents an asynchronous handoff.".into()),
+                provenance: crate::artifact::ResourceProvenance::Inline {
+                    sha256: "0".repeat(64),
+                },
+            },
+        });
+
+        let projection = project_artifact(&artifact);
+        let value = serde_json::to_value(projection).unwrap();
+        assert_eq!(
+            value["nodes"][1]["caption"],
+            "The edge represents an asynchronous handoff."
+        );
     }
 
     #[test]

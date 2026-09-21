@@ -3,10 +3,11 @@
 Agent Teacher compiles agent-authored JSON lessons into self-contained `.learn`
 artifacts and serves them as a local interactive experience.
 
-The project ships two Rust binaries from one Cargo package:
+The project ships three Rust binaries from one Cargo package:
 
 - `learnc` validates and compiles lesson sources.
 - `learn` serves a compiled artifact and owns learner-session state.
+- `learnpick` optionally recommends one block type for one teaching unit.
 
 The accepted v1 behavior is specified in [`DESIGN_REVIEW.md`](DESIGN_REVIEW.md).
 Agents generating lessons should start with the concise
@@ -19,7 +20,7 @@ Run `just` (or `just --list`) to see the documented development commands.
 ## Install and use
 
 The only runtime prerequisite is `git`; Node.js is needed only when changing the
-React frontend. Install both Rust binaries from the package root and run a
+React frontend. Install all three Rust binaries from the package root and run a
 lesson with the convenience recipes:
 
 ```sh
@@ -34,7 +35,8 @@ For local development, `just run --open --text` rebuilds the UI, compiles
 forwarding every supplied option to `learn serve`.
 All `lesson-check`, `lesson-build`, and `serve` arguments are forwarded without
 interpretation. `just learnc ...` and `just learn ...` expose completely raw
-passthroughs to either binary.
+passthroughs to either core binary. `just learnpick ...` does the same for the
+optional adviser; see [`docs/LEARNPICK.md`](docs/LEARNPICK.md).
 The repository-backed example has real committed and dirty-worktree inputs;
 `just repository-example` creates that disposable Git fixture, compiles it, and
 serves it. See the [`examples` guide](examples/README.md) for the manual flow.
@@ -59,7 +61,7 @@ lesson JSON with a compatible `learnc` instead of migrating it.
 
 Run `just release-check` before tagging a package release. It rebuilds the web
 bundle, runs the normal Rust checks, verifies the Cargo package contents, installs
-both binaries into an isolated temporary Cargo root with failing Node/npm shims,
+all three binaries into an isolated temporary Cargo root with failing Node/npm shims,
 compiles and serves a smoke lesson, fetches its embedded UI and API, and checks
 that incompatible artifacts return actionable rebuild guidance.
 

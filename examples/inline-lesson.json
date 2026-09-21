@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "title": "Why the queue now removes the oldest item",
   "blocks": [
     {
@@ -23,6 +23,7 @@
       "type": "code",
       "id": "queue-flow",
       "language": "mermaid",
+      "caption": "The diagram assumes Job A arrived before Job B. The queue does not prioritize A; it preserves arrival order.",
       "source": {
         "kind": "inline",
         "content": "flowchart LR\n  A[Job A enters] --> Q[Queue]\n  B[Job B enters] --> Q\n  Q --> O[Job A leaves first]\n\n  classDef producer fill:#dbeafe,stroke:#3b82f6,color:#172554\n  classDef queue fill:#fef3c7,stroke:#d97706,color:#451a03\n  classDef result fill:#dcfce7,stroke:#16a34a,color:#052e16\n\n  class A,B producer\n  class Q queue\n  class O result"

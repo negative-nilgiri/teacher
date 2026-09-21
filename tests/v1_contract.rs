@@ -24,6 +24,10 @@ fn learn() -> &'static str {
     env!("CARGO_BIN_EXE_learn")
 }
 
+fn learnpick() -> &'static str {
+    env!("CARGO_BIN_EXE_learnpick")
+}
+
 struct TempDir(PathBuf);
 
 impl TempDir {
@@ -50,7 +54,7 @@ impl Drop for TempDir {
 
 #[test]
 fn emitted_schema_and_valid_fixtures_match_the_decoder() {
-    let output = output_success(Command::new(learnc()).args(["schema", "--version", "1.1.0"]));
+    let output = output_success(Command::new(learnc()).args(["schema", "--version", "1.2.0"]));
     let emitted: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(emitted, agent_teacher::source::source_json_schema());
     let default_output = output_success(Command::new(learnc()).arg("schema"));
@@ -79,6 +83,13 @@ fn emitted_schema_and_valid_fixtures_match_the_decoder() {
         "source schema 1.0.0 must not advertise the 1.1.0 language field"
     );
     assert!(schema_code_block_has_language(&emitted));
+    let previous = output_success(Command::new(learnc()).args(["schema", "--version", "1.1.0"]));
+    let previous: serde_json::Value = serde_json::from_slice(&previous.stdout).unwrap();
+    assert!(schema_code_block_has_language(&previous));
+    assert!(!schema_block_has_property(&previous, "code", "caption"));
+    assert!(!schema_block_has_property(&previous, "diff", "caption"));
+    assert!(schema_block_has_property(&emitted, "code", "caption"));
+    assert!(schema_block_has_property(&emitted, "diff", "caption"));
 
     let valid = manifest_dir().join("tests/fixtures/source/valid");
     for entry in fs::read_dir(valid).unwrap() {
@@ -212,7 +223,11 @@ fn invalid_fixtures_return_stable_agent_diagnostics() {
 
 #[test]
 fn cli_help_version_and_usage_errors_follow_the_output_mode() {
-    for (binary, name) in [(learnc(), "learnc"), (learn(), "learn")] {
+    for (binary, name) in [
+        (learnc(), "learnc"),
+        (learn(), "learn"),
+        (learnpick(), "learnpick"),
+    ] {
         let help = output_success(Command::new(binary).arg("--help"));
         let help: serde_json::Value = serde_json::from_slice(&help.stdout).unwrap();
         assert_eq!(help["ok"], true);
@@ -259,6 +274,57 @@ fn cli_help_version_and_usage_errors_follow_the_output_mode() {
     assert_eq!(invalid.status.code(), Some(2));
     let invalid = String::from_utf8(invalid.stdout).unwrap();
     assert!(invalid.starts_with("error[cli.arguments.invalid]"));
+}
+
+#[test]
+fn learnpick_is_optional_agent_readable_and_source_isolated() {
+    let missing_credential = Command::new(learnpick())
+        .arg("Explain the final implementation of the parser")
+        .env_remove("TYPESAFE_API_KEY")
+        .output()
+        .unwrap();
+    assert!(!missing_credential.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&missing_credential.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(
+        report["diagnostics"][0]["code"],
+        "learnpick.credentials.missing"
+    );
+
+    let empty = Command::new(learnpick()).arg("   ").output().unwrap();
+    assert!(!empty.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&empty.stdout).unwrap();
+    assert_eq!(report["diagnostics"][0]["code"], "learnpick.unit.empty");
+
+    let source_root = manifest_dir().join("src");
+    let allowed_file = source_root.join("bin/learnpick.rs");
+    let allowed_library_root = source_root.join("lib.rs");
+    let allowed_module = source_root.join("learnpick.rs");
+    let allowed_directory = source_root.join("learnpick");
+    let mut pending = vec![source_root];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if path.extension().and_then(|extension| extension.to_str()) != Some("rs")
+                || path == allowed_file
+                || path == allowed_library_root
+                || path == allowed_module
+                || path.starts_with(&allowed_directory)
+            {
+                continue;
+            }
+            let source = fs::read_to_string(&path).unwrap();
+            assert!(
+                !source.contains("learnpick"),
+                "{} references the isolated learnpick module",
+                path.display()
+            );
+        }
+    }
 }
 
 #[test]
@@ -435,6 +501,7 @@ fn filesystem_root_resolves_two_unrelated_sibling_repositories() {
                     sha256,
                     ..
                 },
+            ..
         } = &node.content
         else {
             panic!("{source_id} was not a Git diff")
@@ -830,7 +897,7 @@ fn production_frontend_bundle_is_present_and_self_contained() {
     server.stop();
 }
 
-/// Slow release hook: verifies `cargo install` produces both usable binaries
+/// Slow release hook: verifies `cargo install` produces all three usable binaries
 /// from the Rust package and needs no frontend toolchain at install time.
 #[test]
 #[ignore = "slow cargo-install smoke; run explicitly before release"]
@@ -856,8 +923,13 @@ fn cargo_install_smoke() {
         .path()
         .join("bin")
         .join(format!("learn{suffix}"));
+    let installed_learnpick = installation
+        .path()
+        .join("bin")
+        .join(format!("learnpick{suffix}"));
     assert!(installed_learnc.is_file());
     assert!(installed_learn.is_file());
+    assert!(installed_learnpick.is_file());
     let schema = output_success(Command::new(installed_learnc).arg("schema"));
     let value: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
     assert_eq!(value["title"], "LessonSource");
@@ -1179,19 +1251,27 @@ fn assert_schema_objects_are_closed(schema: &serde_json::Value, expected_fields:
 }
 
 fn schema_code_block_has_language(schema: &serde_json::Value) -> bool {
+    schema_block_has_property(schema, "code", "language")
+}
+
+fn schema_block_has_property(schema: &serde_json::Value, block_type: &str, property: &str) -> bool {
     match schema {
         serde_json::Value::Object(object) => {
-            let is_code = object
+            let is_requested_block = object
                 .get("properties")
                 .and_then(|properties| properties.get("type"))
                 .and_then(|kind| kind.get("const"))
-                .is_some_and(|kind| kind == "code");
-            if is_code {
-                return object["properties"].get("language").is_some();
+                .is_some_and(|kind| kind == block_type);
+            if is_requested_block {
+                return object["properties"].get(property).is_some();
             }
-            object.values().any(schema_code_block_has_language)
+            object
+                .values()
+                .any(|value| schema_block_has_property(value, block_type, property))
         }
-        serde_json::Value::Array(values) => values.iter().any(schema_code_block_has_language),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|value| schema_block_has_property(value, block_type, property)),
         _ => false,
     }
 }

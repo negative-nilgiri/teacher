@@ -30,6 +30,10 @@ for required in \
     examples/run-repository-lesson.sh \
     src/bin/learn.rs \
     src/bin/learnc.rs \
+    src/bin/learnpick.rs \
+    src/learnpick.rs \
+    src/learnpick/client.rs \
+    docs/LEARNPICK.md \
     web/dist/index.html \
     tests/fixtures/smoke-lesson.json
 do
@@ -68,10 +72,24 @@ PATH="$smoke_root/no-node:$PATH" cargo install \
 
 learn_bin="$smoke_root/cargo-root/bin/learn"
 learnc_bin="$smoke_root/cargo-root/bin/learnc"
+learnpick_bin="$smoke_root/cargo-root/bin/learnpick"
 test -x "$learn_bin"
 test -x "$learnc_bin"
+test -x "$learnpick_bin"
 "$learn_bin" --version >/dev/null
 "$learnc_bin" --version >/dev/null
+"$learnpick_bin" --version >/dev/null
+
+set +e
+picker_output=$(env -u TYPESAFE_API_KEY "$learnpick_bin" \
+    "Explain why this source change matters" 2>/dev/null)
+picker_status=$?
+set -e
+if [[ "$picker_status" -eq 0 ]] \
+    || [[ "$picker_output" != *'"code":"learnpick.credentials.missing"'* ]]; then
+    echo "package smoke: learnpick did not report its missing credential structurally" >&2
+    exit 1
+fi
 
 artifact="$smoke_root/smoke.learn"
 PATH="$smoke_root/no-node:$PATH" "$learnc_bin" build \
@@ -129,4 +147,4 @@ kill "$server_pid"
 wait "$server_pid" 2>/dev/null || true
 server_pid=
 
-echo "package smoke: packaged assets, Node-free install, both binaries, server, and version gate passed"
+echo "package smoke: packaged assets, Node-free install, all three binaries, server, and version gate passed"

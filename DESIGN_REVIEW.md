@@ -68,7 +68,7 @@ V1 session state is in memory and is lost when `learn` exits. The compiled
 
 ```json
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "title": "Understanding the queue changes",
   "blocks": []
 }
@@ -161,11 +161,15 @@ may use language `markdown` when the syntax itself is the subject, but it should
 contain only the relevant fragment. `code` and `diff` remain distinct semantic
 blocks.
 
-Presentation controls such as captions, colors, layout, line highlights,
-collapsing, and copy-button configuration are excluded from v1. Adjacent Markdown
-can introduce or explain another block. Lessons should form local narrative
-units by interleaving an explanation, its relevant code or diff, and any
-follow-up instead of collecting unrelated diffs at the end.
+Code and diff blocks may have an optional Markdown `caption` for block-local
+information that a learner cannot infer from the rendered content. Its primary
+use is explaining a non-self-explanatory Mermaid diagram; intricate code or
+diffs may use it exceptionally. Captions must not narrate obvious syntax,
+visible arrows, labels, or reading direction, and should not duplicate adjacent
+Markdown. Other presentation controls such as authored colors, layout, line
+highlights, and copy-button configuration are excluded from v1. Lessons should
+form local narrative units by interleaving an explanation, its relevant code or
+diff, and any follow-up instead of collecting unrelated diffs at the end.
 
 ### Compiled lesson output
 
@@ -256,9 +260,10 @@ path extension. Extensionless names such as `Makefile` and `Dockerfile`, inline
 sources, and unknown paths fall back to plain text, as do unknown explicit
 language values.
 
-This field is introduced by source schema `1.1.0`. The compiler continues to
-decode closed `1.0.0` documents without the field and can emit either version's
-exact JSON Schema; new language-aware documents use `1.1.0`.
+The language field is introduced by source schema `1.1.0`. Source schema `1.2.0`
+adds optional captions to code and diff blocks. The compiler continues to decode
+the older closed formats and can emit each version's exact JSON Schema; new
+captioned documents use `1.2.0`.
 
 `mermaid` is rendered as a diagram rather than highlighted source. Mermaid uses
 the ordinary code block with an inline source and `language: "mermaid"`; fenced
@@ -459,7 +464,7 @@ local artifact.
 ```text
 learnc check [OPTIONS] lesson.json
 learnc build [OPTIONS] lesson.json [-o|--output lesson.learn]
-learnc schema [--version 1.1.0]
+learnc schema [--version 1.2.0]
 learn serve [OPTIONS] lesson.learn
 ```
 

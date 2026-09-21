@@ -71,10 +71,14 @@ pub enum CompiledNodeContent {
         content: String,
         #[serde(default)]
         language: Language,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
         provenance: ResourceProvenance,
     },
     Diff {
         diff: ResolvedDiff,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
         provenance: ResourceProvenance,
     },
     MultipleChoice {
@@ -347,16 +351,22 @@ mod tests {
         .unwrap();
         validate_artifact(&artifact).unwrap();
 
-        let CompiledNodeContent::Code { language, .. } = &artifact.presentation.nodes[1].content
+        let CompiledNodeContent::Code {
+            language, caption, ..
+        } = &artifact.presentation.nodes[1].content
         else {
             panic!("expected legacy code node")
         };
         assert_eq!(*language, Language::Text);
+        assert_eq!(caption, &None);
 
-        let CompiledNodeContent::Diff { diff, .. } = &artifact.presentation.nodes[2].content else {
+        let CompiledNodeContent::Diff { diff, caption, .. } =
+            &artifact.presentation.nodes[2].content
+        else {
             panic!("expected legacy diff node")
         };
         assert_eq!(diff.files[0].language, Language::Text);
+        assert_eq!(caption, &None);
     }
 
     #[test]

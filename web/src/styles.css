@@ -65,6 +65,7 @@ pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberatio
 .code-block { overflow: hidden; border: 1px solid var(--line); border-radius: .55rem; background: var(--paper); }
 .source-block-header { display: flex; align-items: center; min-height: 2.25rem; padding: .45rem .75rem; border-bottom: 1px solid var(--line); background: #ece7de; }
 .language-label { color: var(--muted); font-size: .7rem; font-weight: 750; letter-spacing: .08em; line-height: 1; text-transform: uppercase; }
+.source-caption { padding: .75rem 1rem; border-bottom: 1px solid var(--line); background: #f7f3eb; color: var(--muted); font-size: .9rem; }
 .code-block > pre { border-radius: 0; }
 
 .mermaid-loading, .mermaid-error { margin: 0; background: var(--paper); padding: 1rem; color: var(--muted); }
@@ -138,6 +139,7 @@ progress { width: 100%; accent-color: var(--accent); }
   }
   .markdown :not(pre) > code { background: #353834; }
   .lesson-block-toolbar, .source-block-header, .diff-file-header { background: #353834; }
+  .source-caption { background: #2e302d; }
   .diff-hunk-header { background: #263943; color: #a9c5d2; }
   button.primary { color: #16251e; }
 }

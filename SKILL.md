@@ -1,6 +1,6 @@
 ---
 name: learnc
-description: Author and compile interactive lesson DSL documents with the installed `learnc` binary. Apply when an agent should turn code, diffs, explanations, or quiz material into a validated `.learn` artifact for the user to study later with `learn`; do not run the lesson runtime.
+description: Author and compile interactive lesson DSL documents with the installed `learnc` binary, optionally using `learnpick` to choose a presentation block. Apply when an agent should turn code, diffs, explanations, or quiz material into a validated `.learn` artifact for the user to study later with `learn`; do not run the lesson runtime.
 ---
 
 # Learn Compiler
@@ -13,6 +13,22 @@ The user runs `learn` later when they are ready to study. Do not invoke `learn`,
 start the lesson server, or open a browser as part of this skill. For lesson
 tooling, use the installed `learnc` binary rather than `cargo run` or a
 hand-written substitute.
+
+If one teaching unit could plausibly use several block types, you may ask the
+installed `learnpick` adviser before authoring it:
+
+```sh
+learnpick "Explain why this patch fixes the race"
+```
+
+Pass one concise unit at a time. Its JSON result recommends `markdown`, `code`,
+`diff`, or `multiple_choice` and includes probabilities and confidence. Treat
+that result only as semantic advice: `learnpick` does not generate DSL, inspect
+the repository, validate a source kind, or replace `learnc schema` and
+`learnc check`. If credentials, the network, or the adviser fail—or if the
+probabilities are ambiguous—choose the block manually and continue. Use
+`learnpick --help` for its current agent-readable contract. Never invoke it
+merely to approve an already-obvious block.
 
 ## Discover the contract
 
@@ -86,12 +102,35 @@ Use each block for its presentation semantics:
   named `classDef` declarations and compact `class A,B category` assignments.
   The lesson UI derives its legend from those definitions. Do not add
   decorative subgraphs solely to group similarly styled nodes.
+- Source schema `1.2.0` lets code and diff blocks carry an optional Markdown
+  `caption`. Use it only for block-specific information the learner cannot infer
+  from the rendered content. It is primarily for a Mermaid diagram whose
+  important assumption, omission, or relationship is not self-explanatory;
+  intricate code or diffs may use it exceptionally. Do not caption routine
+  blocks, say "read from left to right," narrate visible arrows, restate labels
+  or syntax, or duplicate nearby Markdown. Omit `caption` when it adds no
+  substantive explanation.
+- Make multiple-choice questions challenging through plausible alternatives,
+  not ambiguity or trick wording. Derive incorrect choices from realistic
+  misconceptions, nearby APIs, or believable consequences. Keep every choice
+  comparable in length, specificity, tone, and grammatical form so the correct
+  answer is not exposed by being substantially more detailed or carefully
+  qualified. Put the fuller teaching explanation in the answer explanation,
+  and ensure exactly one choice remains defensibly correct.
 
 Order blocks as local teaching units. Introduce a concept, show the relevant
 code or diff near that explanation, explain the change, and add any follow-up
 question before moving to the next concept. Do not collect all diffs at the end
 when they explain different parts of the lesson; preserve authored order to
 interleave explanations, code, diffs, and questions.
+
+A source file is not limited to one block per lesson. Include it as many times
+as necessary, using small ranges focused on the concept currently being
+explained. Prefer repeating a relevant fragment near its explanation over
+referring back to a distant block. Optimize for local readability, not
+deduplication. Apply the same proximity rule to diffs, while avoiding casual
+duplication of large patches: keep each diff near its explanation and narrow it
+to the relevant files whenever possible.
 
 Use `learnc check` while authoring. It runs the complete validation and source
 resolution pipeline without writing an artifact. Read every structured

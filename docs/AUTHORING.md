@@ -8,11 +8,23 @@ for a learner to understand one change at a time.
 Use the compiler as the source of truth:
 
 ```console
-learnc schema --version 1.1.0
+learnc schema --version 1.2.0
 learnc check lesson.json
 learnc build lesson.json
 learn serve lesson.learn
 ```
+
+When the best presentation block is genuinely unclear, `learnpick` can advise
+on one teaching unit before authoring it:
+
+```console
+learnpick "Explain why this patch fixes the race"
+```
+
+Its `markdown`, `code`, `diff`, or `multiple_choice` result is optional guidance,
+not schema validation. If it is unavailable or uncertain, choose from the
+semantics below and continue; only `learnc schema` and `learnc check` are
+authoritative. See [`docs/LEARNPICK.md`](LEARNPICK.md) for its exact contract.
 
 Commands emit JSON by default, including `--help`, `--version`, and invalid
 usage. Add `--text` or `-t` for human-readable output; use `learnc -t --help`
@@ -31,8 +43,8 @@ Do not author numeric node IDs or choice IDs—the compiler generates those.
 flowchart LR
     L["LessonSource<br/>schema_version · title · blocks"]:::envelope
     L --> M["markdown<br/>inline | file"]:::content
-    L --> C["code<br/>language? · inline | file | git_blob"]:::content
-    L --> D["diff<br/>inline | file | git"]:::repository
+    L --> C["code<br/>language? · caption? · inline | file | git_blob"]:::content
+    L --> D["diff<br/>caption? · inline | file | git"]:::repository
     L --> Q["multiple_choice<br/>prompt · choices · hints · explanation"]:::quiz
 
     subgraph Legend
@@ -50,7 +62,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "1.1.0",
+  "schema_version": "1.2.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -59,9 +71,10 @@ flowchart LR
 ### What the JSON Schema can and cannot prove
 
 `learnc schema` is the exact structural schema for the selected source version.
-Source schema `1.1.0` adds the optional code-block `language` field. The
-compiler still accepts `1.0.0` documents, but that older closed schema rejects
-`language`; use `1.1.0` for language-aware lessons.
+Source schema `1.1.0` adds the optional code-block `language` field, and `1.2.0`
+adds optional Markdown `caption` fields to code and diff blocks. The compiler
+still accepts older documents, but their closed schemas reject fields introduced
+later; use `1.2.0` for captioned lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -71,7 +84,7 @@ ranges.
 Some rules depend on relationships between values or on external state and are
 therefore enforced only by `learnc check` and `learnc build`. These include:
 
-- non-blank titles, IDs, Markdown, code, prompts, choices, hints, and explanations;
+- non-blank titles, IDs, Markdown, code, captions, prompts, choices, hints, and explanations;
 - document-wide source-ID uniqueness;
 - exactly one correct choice per question;
 - inclusive range ordering (`end >= start`) and ranges fitting resolved content;
@@ -114,6 +127,13 @@ entire prose section.
 Code supports inline text, a worktree file, or a blob at a Git revision. Its
 optional `language` controls syntax presentation. Line ranges are optional,
 one-based, inclusive, and must exist in the resolved text.
+
+Code and diff blocks also accept an optional Markdown `caption`. Use it only for
+block-local information the learner cannot infer from the rendered content. It
+is most useful for a Mermaid diagram whose important assumption, omission, or
+relationship is not self-explanatory. Do not caption routine code, restate
+visible labels or syntax, or narrate diagram arrows and reading direction.
+General teaching prose still belongs in surrounding Markdown blocks.
 
 ```json
 {
@@ -170,6 +190,7 @@ code source rather than a Mermaid fence inside Markdown:
   "type": "code",
   "id": "compiler-flow",
   "language": "mermaid",
+  "caption": "The artifact is the freeze boundary: `learn` reads compiled content and does not revisit the source repository.",
   "source": {
     "kind": "inline",
     "content": "flowchart LR\n  Source --> Compiler --> Artifact"

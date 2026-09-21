@@ -1,15 +1,18 @@
-//! Shared implementation for the `learnc` compiler and `learn` runtime.
+//! Shared implementation for the `learnc` compiler, `learn` runtime, and
+//! optional `learnpick` adviser.
 //!
 //! The binaries deliberately expose separate trust boundaries: source and
 //! repository access belongs to [`compiler`] and [`repository`], while
 //! artifact loading and learner state belong to [`runtime`]. The serialized
-//! contract between them belongs to [`artifact`].
+//! contract between them belongs to [`artifact`]. The adviser remains a leaf:
+//! none of those core modules depends on [`learnpick`].
 
 pub mod artifact;
 pub mod cli;
 pub mod compiler;
 pub mod diagnostics;
 pub mod language;
+pub mod learnpick;
 pub mod repository;
 pub mod runtime;
 pub mod source;
