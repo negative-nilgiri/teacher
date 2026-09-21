@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodeBlock } from "../components/CodeBlock";
 import { DiffBlock } from "../components/DiffBlock";
 import { LessonNodeView } from "../components/LessonNodeView";
+import { Markdown } from "../components/Markdown";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -18,6 +19,36 @@ beforeEach(() => {
 });
 
 describe("semantic source rendering", () => {
+  it("renders inline and display mathematics with accessible MathML", () => {
+    const { container } = render(
+      <Markdown>
+        {"Euler's identity is $e^{i\\pi} + 1 = 0$.\n\n$$\n\\sum_{k=1}^{n} k = \\frac{n(n+1)}{2}\n$$"}
+      </Markdown>,
+    );
+
+    expect(container.querySelectorAll(".katex")).toHaveLength(2);
+    expect(container.querySelector(".katex-display")).toBeInTheDocument();
+    expect(container.querySelectorAll("math")).toHaveLength(2);
+  });
+
+  it("keeps malformed mathematics visible without aborting Markdown rendering", () => {
+    const { container } = render(
+      <Markdown>{"Before $\\definitelyUnknown{x}$ after."}</Markdown>,
+    );
+
+    expect(screen.getByText("Before", { exact: false })).toHaveTextContent("after.");
+    expect(container).toHaveTextContent("\\definitelyUnknown{x}");
+  });
+
+  it("does not enable trusted KaTeX commands or raw Markdown HTML", () => {
+    const { container } = render(
+      <Markdown>{'$\\href{https://example.com}{link}$ <img src="x" alt="raw">'}</Markdown>,
+    );
+
+    expect(container.querySelector("a")).not.toBeInTheDocument();
+    expect(container.querySelector("img")).not.toBeInTheDocument();
+  });
+
   it("falls back to a generic fold label for an unknown code language", () => {
     render(
       <LessonNodeView
@@ -155,7 +186,7 @@ describe("semantic source rendering", () => {
               old_path: null,
             },
           ],
-          caption: "The **addition** establishes the new default.",
+          caption: "The **addition** establishes the new default for $x_1$.",
           node_id: 2,
           source_id: "answer-diff",
           type: "diff",
@@ -167,6 +198,7 @@ describe("semantic source rendering", () => {
     expect(screen.queryByRole("button", { name: /diff file/ })).not.toBeInTheDocument();
     expect(screen.getByText("addition")).toHaveTextContent("addition");
     expect(screen.getByText("addition").tagName).toBe("STRONG");
+    expect(container.querySelector(".source-caption .katex")).toBeInTheDocument();
     expect(container.querySelector("code.language-javascript .hljs-keyword")).toHaveTextContent("const");
   });
 

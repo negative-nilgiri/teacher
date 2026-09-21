@@ -11,10 +11,13 @@
   },
   "dependencies": {
     "highlight.js": "^11.12.0",
+    "katex": "^0.16.47",
     "mermaid": "^11.17.2",
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "latest",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
     "remark-gfm": "latest"
   },
   "devDependencies": {

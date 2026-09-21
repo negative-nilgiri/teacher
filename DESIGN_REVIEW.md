@@ -161,7 +161,9 @@ required authored source IDs. Markdown handles rendered prose; ordinary prose
 must not be placed in code blocks, where Markdown remains literal. A code block
 may use language `markdown` when the syntax itself is the subject, but it should
 contain only the relevant fragment. `code` and `diff` remain distinct semantic
-blocks.
+blocks. All Markdown-bearing fields accept KaTeX math through `$...$` inline
+and `$$...$$` display syntax. This is renderer behavior and does not change the
+source or artifact schema.
 
 Code and diff blocks may have an optional Markdown `caption` for block-local
 information that a learner cannot infer from the rendered content. Its primary
@@ -291,7 +293,8 @@ when a diagram cannot be rendered.
 - The compiler resolves file sources and includes their contents in
   `CompiledLesson`; the browser never reads source files.
 - The precise Markdown parser crate is an implementation decision. The protocol
-  defines the supported Markdown semantics, with raw HTML disabled.
+  defines the supported Markdown semantics, including KaTeX-compatible inline
+  and display math, with raw HTML disabled and trusted KaTeX commands disabled.
 
 ### Git-generated diffs
 

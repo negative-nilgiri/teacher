@@ -119,6 +119,22 @@ blocks intentionally display literal text. A code block should use language
 then it should contain the smallest useful literal fragment rather than an
 entire prose section.
 
+Markdown fields support KaTeX mathematics. Use `$...$` for inline notation and
+put `$$` delimiters on their own lines for display notation. This works in
+standalone Markdown blocks and every other Markdown-bearing field, including
+quiz prompts, choices, hints, explanations, and code or diff captions. KaTeX
+implements a mathematical subset of LaTeX rather than a complete LaTeX
+document processor. Keep formulas out of code fences unless the literal LaTeX
+source is itself the subject of the lesson.
+
+```markdown
+The invariant is $0 \leq i < n$.
+
+$$
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+$$
+```
+
 ```json
 {
   "type": "markdown",

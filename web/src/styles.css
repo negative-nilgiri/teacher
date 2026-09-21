@@ -51,6 +51,7 @@ button, input { font: inherit; }
 .markdown blockquote { margin-inline: 0; padding-left: 1rem; border-left: 3px solid var(--accent); color: var(--muted); }
 .markdown table { border-collapse: collapse; max-width: 100%; }
 .markdown th, .markdown td { padding: .4rem .6rem; border: 1px solid var(--line); }
+.markdown .katex-display { overflow-x: auto; overflow-y: hidden; padding-block: .15rem; }
 
 pre { margin: 0; overflow-x: auto; border-radius: .55rem; background: var(--code); color: #f4f1eb; padding: 1rem 1.1rem; line-height: 1.55; tab-size: 4; }
 pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .86rem; }

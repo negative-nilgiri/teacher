@@ -391,8 +391,10 @@ collapsed state does not unmount the node, so unfinished quiz input survives a
 fold-and-expand cycle. A code disclosure uses its normalized language as its
 compact label and falls back to `Code` when no specific language is known:
 
-- [`Markdown`](../web/src/components/Markdown.tsx) uses GFM without enabling raw
-  HTML.
+- [`Markdown`](../web/src/components/Markdown.tsx) uses GFM plus `remark-math`
+  and `rehype-katex` without enabling raw HTML. KaTeX trust is disabled, invalid
+  formulas remain visible as errors instead of aborting the lesson, and its CSS
+  and fonts are bundled into the frontend artifact.
 - [`CodeBlock`](../web/src/components/CodeBlock.tsx) syntax-highlights known
   languages beneath a visible normalized-language header. File and Git-blob
   code sources also show the basename derived from their frozen provenance;

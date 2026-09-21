@@ -65,6 +65,12 @@ Use each block for its presentation semantics:
 - Use a code block with language `markdown` only when the literal Markdown
   syntax is itself being taught, and include only the smallest fragment needed
   for that example.
+- Markdown fields render KaTeX math. Write inline notation as `$...$` and put
+  `$$` delimiters on their own lines for display notation. This applies to
+  Markdown blocks, quiz text, hints, explanations, and code or diff captions.
+  Use math only where it clarifies the material, keep delimiters balanced, and
+  stay within KaTeX's supported LaTeX subset. Put a formula in a code block only
+  when the literal LaTeX source is what the learner needs to inspect.
 - Use a code block when the lesson is presenting what a file contains, including
   a newly added or untracked file. Do not use a diff merely to select interesting
   lines or because the file is new. Both `file` and `git_blob` code sources

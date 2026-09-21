@@ -7,7 +7,7 @@
       "id": "context",
       "source": {
         "kind": "inline",
-        "content": "# The behavior change\n\nThe queue now follows **FIFO** ordering."
+        "content": "# The behavior change\n\nThe queue now follows **FIFO** ordering. If $a_i$ is the arrival time of job $i$, then the queue preserves $a_1 < a_2 < \\cdots < a_n$.\n\nThe number of jobs processed after $n$ batches is\n\n$$\nT = \\sum_{i=1}^{n} b_i.\n$$"
       }
     },
     {
@@ -84,7 +84,7 @@
     {
       "type": "multiple_choice",
       "id": "verify-order",
-      "prompt": "After jobs A then B are queued, which job leaves first?",
+      "prompt": "After jobs A then B are queued, which job leaves first?\n$$\na_i\n$$",
       "choices": [
         { "content": "Job A", "correct": true },
         { "content": "Job B" }
