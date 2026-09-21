@@ -59,6 +59,38 @@ describe("semantic source rendering", () => {
     expect(container.querySelector(".hljs-keyword")).toHaveTextContent("fn");
   });
 
+  it("renders normalized multi-color line highlights without breaking multiline syntax", () => {
+    const { container } = render(
+      <CodeBlock
+        node={{
+          content: "/* first\nsecond */\nfn main() {}\nlet answer = 42;\nanswer\n",
+          highlights: [
+            { color: "yellow", end: 2, start: 1 },
+            { color: "blue", end: 4, start: 4 },
+            { color: "green", end: 3, start: 3 },
+            { color: "red", end: 5, start: 5 },
+          ],
+          language: "rust",
+          node_id: 2,
+          source_id: "highlighted",
+          type: "code",
+        }}
+      />,
+    );
+
+    const bands = container.querySelectorAll(".code-highlight");
+    expect(bands).toHaveLength(4);
+    expect(bands[0]).toHaveClass("code-highlight-yellow");
+    expect(bands[0]).toHaveAttribute("data-start", "1");
+    expect(bands[0]).toHaveAttribute("data-end", "2");
+    expect(bands[1]).toHaveClass("code-highlight-blue");
+    expect(bands[2]).toHaveClass("code-highlight-green");
+    expect(bands[3]).toHaveClass("code-highlight-red");
+    expect(container.querySelector(".code-line-numbers")).toHaveTextContent("1 2 3 4 5");
+    expect(container.querySelector(".hljs-comment")).toHaveTextContent("/* first second */");
+    expect(screen.getByText(/Highlighted lines 1 through 2 in yellow/)).toBeInTheDocument();
+  });
+
   it("folds files independently in a multi-file diff", async () => {
     const user = userEvent.setup();
     render(

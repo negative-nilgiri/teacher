@@ -52,7 +52,7 @@ enum Command {
     /// Emit the exact authored-document JSON Schema.
     Schema {
         /// Source schema version to emit.
-        #[arg(long, default_value = "1.2.0")]
+        #[arg(long, default_value = "1.3.0")]
         version: String,
     },
 }

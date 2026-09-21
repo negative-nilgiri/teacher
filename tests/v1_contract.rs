@@ -54,7 +54,7 @@ impl Drop for TempDir {
 
 #[test]
 fn emitted_schema_and_valid_fixtures_match_the_decoder() {
-    let output = output_success(Command::new(learnc()).args(["schema", "--version", "1.2.0"]));
+    let output = output_success(Command::new(learnc()).args(["schema", "--version", "1.3.0"]));
     let emitted: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(emitted, agent_teacher::source::source_json_schema());
     let default_output = output_success(Command::new(learnc()).arg("schema"));
@@ -83,13 +83,17 @@ fn emitted_schema_and_valid_fixtures_match_the_decoder() {
         "source schema 1.0.0 must not advertise the 1.1.0 language field"
     );
     assert!(schema_code_block_has_language(&emitted));
-    let previous = output_success(Command::new(learnc()).args(["schema", "--version", "1.1.0"]));
-    let previous: serde_json::Value = serde_json::from_slice(&previous.stdout).unwrap();
-    assert!(schema_code_block_has_language(&previous));
-    assert!(!schema_block_has_property(&previous, "code", "caption"));
-    assert!(!schema_block_has_property(&previous, "diff", "caption"));
+    let v1_1 = output_success(Command::new(learnc()).args(["schema", "--version", "1.1.0"]));
+    let v1_1: serde_json::Value = serde_json::from_slice(&v1_1.stdout).unwrap();
+    assert!(schema_code_block_has_language(&v1_1));
+    assert!(!schema_block_has_property(&v1_1, "code", "caption"));
+    assert!(!schema_block_has_property(&v1_1, "diff", "caption"));
     assert!(schema_block_has_property(&emitted, "code", "caption"));
     assert!(schema_block_has_property(&emitted, "diff", "caption"));
+    let v1_2 = output_success(Command::new(learnc()).args(["schema", "--version", "1.2.0"]));
+    let v1_2: serde_json::Value = serde_json::from_slice(&v1_2.stdout).unwrap();
+    assert!(!schema_block_has_property(&v1_2, "code", "highlights"));
+    assert!(schema_block_has_property(&emitted, "code", "highlights"));
 
     let valid = manifest_dir().join("tests/fixtures/source/valid");
     for entry in fs::read_dir(valid).unwrap() {
@@ -361,6 +365,10 @@ fn repository_example_checks_builds_and_freezes_relative_provenance() {
     let public = serde_json::to_value(project_artifact(&artifact)).unwrap();
     assert_eq!(public["nodes"][1]["filename"], "queue.rs");
     assert_eq!(public["nodes"][2]["filename"], "queue.rs");
+    assert_eq!(public["nodes"][1]["highlights"][0]["start"], 2);
+    assert_eq!(public["nodes"][1]["highlights"][0]["color"], "green");
+    assert_eq!(public["nodes"][2]["highlights"][0]["start"], 2);
+    assert_eq!(public["nodes"][2]["highlights"][0]["color"], "red");
 
     let encoded = String::from_utf8(bytes).unwrap();
     assert!(

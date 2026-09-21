@@ -17,17 +17,21 @@ pub enum SchemaVersion {
     #[serde(rename = "1.2.0")]
     #[schemars(rename = "1.2.0")]
     V1_2_0,
+    #[serde(rename = "1.3.0")]
+    #[schemars(rename = "1.3.0")]
+    V1_3_0,
 }
 
 impl SchemaVersion {
-    pub const CURRENT: Self = Self::V1_2_0;
-    pub const SUPPORTED: [Self; 3] = [Self::V1_0_0, Self::V1_1_0, Self::V1_2_0];
+    pub const CURRENT: Self = Self::V1_3_0;
+    pub const SUPPORTED: [Self; 4] = [Self::V1_0_0, Self::V1_1_0, Self::V1_2_0, Self::V1_3_0];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::V1_0_0 => "1.0.0",
             Self::V1_1_0 => "1.1.0",
             Self::V1_2_0 => "1.2.0",
+            Self::V1_3_0 => "1.3.0",
         }
     }
 }
@@ -51,9 +55,10 @@ pub struct LessonSource {
 
 /// Exact decoder/schema model for the original source format.
 ///
-/// `language` was introduced in source schema 1.1.0 and `caption` in 1.2.0, so
-/// older blocks intentionally remain separate closed shapes. Every versioned
-/// wire model lowers into the same internal [`LessonSource`] representation.
+/// `language` was introduced in source schema 1.1.0, `caption` in 1.2.0, and
+/// `highlights` in 1.3.0, so older blocks intentionally remain separate closed
+/// shapes. Every versioned wire model lowers into the same internal
+/// [`LessonSource`] representation.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(title = "LessonSource")]
@@ -110,6 +115,7 @@ impl From<BlockV1_0_0> for Block {
                 id: block.id,
                 language: None,
                 caption: None,
+                highlights: Vec::new(),
                 source: block.source,
             }),
             BlockV1_0_0::Diff(block) => Self::Diff(block.into()),
@@ -185,6 +191,7 @@ impl From<BlockV1_1_0> for Block {
                 id: block.id,
                 language: block.language,
                 caption: None,
+                highlights: Vec::new(),
                 source: block.source,
             }),
             BlockV1_1_0::Diff(block) => Self::Diff(block.into()),
@@ -211,7 +218,7 @@ pub(crate) struct LessonSourceV1_2_0 {
     schema_version: SchemaVersionV1_2_0,
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     title: String,
-    blocks: Vec<Block>,
+    blocks: Vec<BlockV1_2_0>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -225,6 +232,73 @@ impl From<LessonSourceV1_2_0> for LessonSource {
     fn from(source: LessonSourceV1_2_0) -> Self {
         Self {
             schema_version: SchemaVersion::V1_2_0,
+            title: source.title,
+            blocks: source.blocks.into_iter().map(Block::from).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum BlockV1_2_0 {
+    Markdown(MarkdownBlock),
+    Code(CodeBlockV1_2_0),
+    Diff(DiffBlock),
+    MultipleChoice(MultipleChoiceBlock),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CodeBlockV1_2_0 {
+    id: SourceId,
+    #[serde(default)]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    language: Option<String>,
+    #[serde(default)]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    caption: Option<String>,
+    source: CodeSource,
+}
+
+impl From<BlockV1_2_0> for Block {
+    fn from(block: BlockV1_2_0) -> Self {
+        match block {
+            BlockV1_2_0::Markdown(block) => Self::Markdown(block),
+            BlockV1_2_0::Code(block) => Self::Code(CodeBlock {
+                id: block.id,
+                language: block.language,
+                caption: block.caption,
+                highlights: Vec::new(),
+                source: block.source,
+            }),
+            BlockV1_2_0::Diff(block) => Self::Diff(block),
+            BlockV1_2_0::MultipleChoice(block) => Self::MultipleChoice(block),
+        }
+    }
+}
+
+/// Exact decoder/schema model for source schema 1.3.0.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(title = "LessonSource")]
+pub(crate) struct LessonSourceV1_3_0 {
+    schema_version: SchemaVersionV1_3_0,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    title: String,
+    blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+enum SchemaVersionV1_3_0 {
+    #[serde(rename = "1.3.0")]
+    #[schemars(rename = "1.3.0")]
+    V1_3_0,
+}
+
+impl From<LessonSourceV1_3_0> for LessonSource {
+    fn from(source: LessonSourceV1_3_0) -> Self {
+        Self {
+            schema_version: SchemaVersion::V1_3_0,
             title: source.title,
             blocks: source.blocks,
         }
@@ -270,7 +344,37 @@ pub struct CodeBlock {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     pub caption: Option<String>,
+    /// Optional attention ranges for file-backed code. Inline code cannot be highlighted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub highlights: Vec<CodeHighlight>,
     pub source: CodeSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CodeHighlight {
+    /// One or more one-based, inclusive ranges in the original source file.
+    #[schemars(length(min = 1))]
+    pub lines: Vec<LineRange>,
+    /// Pastel presentation color. Omission defaults to yellow.
+    #[serde(default, skip_serializing_if = "HighlightColor::is_default")]
+    pub color: HighlightColor,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HighlightColor {
+    #[default]
+    Yellow,
+    Green,
+    Red,
+    Blue,
+}
+
+impl HighlightColor {
+    fn is_default(&self) -> bool {
+        *self == Self::Yellow
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

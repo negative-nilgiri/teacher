@@ -69,6 +69,16 @@ pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberatio
 .language-label { color: var(--muted); font-size: .7rem; font-weight: 750; letter-spacing: .08em; line-height: 1; text-transform: uppercase; }
 .source-caption { padding: .75rem 1rem; border-bottom: 1px solid var(--line); background: #f7f3eb; color: var(--muted); font-size: .9rem; }
 .code-block > pre { border-radius: 0; }
+.code-listing { padding: 0; }
+.code-listing-inner { position: relative; display: grid; grid-template-columns: auto 1fr; width: max-content; min-width: 100%; padding-block: 1rem; }
+.code-line-numbers, .code-listing-source { position: relative; z-index: 1; display: block; font-size: .86rem; line-height: 1.55; white-space: pre; }
+.code-line-numbers { min-width: 3.25rem; padding-inline: .75rem; border-right: 1px solid rgb(255 255 255 / 12%); color: #92999d; text-align: right; user-select: none; }
+.code-listing-source { min-width: 0; padding-inline: 1rem 1.1rem; }
+.code-highlight { position: absolute; z-index: 0; right: 0; left: 0; border-left: .28rem solid; font-size: .86rem; pointer-events: none; }
+.code-highlight-yellow { border-color: #e3b341; background: rgb(247 216 103 / 24%); }
+.code-highlight-green { border-color: #46a36f; background: rgb(104 211 145 / 20%); }
+.code-highlight-red { border-color: #d66760; background: rgb(244 124 116 / 20%); }
+.code-highlight-blue { border-color: #579ad6; background: rgb(103 174 236 / 20%); }
 
 .mermaid-loading, .mermaid-error { margin: 0; background: var(--paper); padding: 1rem; color: var(--muted); }
 .mermaid-error p { margin-top: 0; }

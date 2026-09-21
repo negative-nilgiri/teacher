@@ -13,9 +13,9 @@ use rand::seq::SliceRandom;
 use sha2::{Digest, Sha256};
 
 use crate::artifact::{
-    BuildProvenance, CURRENT_ARTIFACT_VERSION, ChoiceId, CompiledLesson, CompiledNode,
-    CompiledNodeContent, FrozenDiffTarget, LessonPresentation, PresentedChoice, PrivateLesson,
-    QuizAnswer, ResourceProvenance,
+    BuildProvenance, CURRENT_ARTIFACT_VERSION, ChoiceId, CompiledCodeHighlight, CompiledLesson,
+    CompiledNode, CompiledNodeContent, FrozenDiffTarget, LessonPresentation, PresentedChoice,
+    PrivateLesson, QuizAnswer, ResourceProvenance,
 };
 use crate::diagnostics::Diagnostic;
 use crate::language::Language;
@@ -24,7 +24,8 @@ use crate::repository::{
     ResourceProvenance as RepositoryResourceProvenance, SnapshotGuard,
 };
 use crate::source::{
-    self, Block, CodeSource, DiffSource, GitDiffTarget, LessonSource, LineRange, MarkdownSource,
+    self, Block, CodeHighlight, CodeSource, DiffSource, GitDiffTarget, LessonSource, LineRange,
+    MarkdownSource,
 };
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -87,6 +88,7 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
     let mut next_choice_id: u64 = 0;
 
     for (index, block) in source.blocks.into_iter().enumerate() {
+        let block_pointer = format!("/blocks/{index}");
         let pointer = format!("/blocks/{index}/source");
         let node_id = symbols
             .node_id(block.id())
@@ -99,8 +101,10 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                 block.source,
                 block.language.as_deref(),
                 block.caption,
+                block.highlights,
                 repository.as_ref(),
                 &pointer,
+                &block_pointer,
             ),
             Block::Diff(block) => {
                 resolve_diff(block.source, block.caption, repository.as_ref(), &pointer)
@@ -312,22 +316,36 @@ fn resolve_code(
     source: CodeSource,
     authored_language: Option<&str>,
     caption: Option<String>,
+    authored_highlights: Vec<CodeHighlight>,
     repository: Option<&Repository>,
     pointer: &str,
+    block_pointer: &str,
 ) -> Result<CompiledNodeContent, Diagnostic> {
     match source {
-        CodeSource::Inline { content } => Ok(CompiledNodeContent::Code {
-            provenance: inline_provenance(content.as_bytes()),
-            language: authored_language
-                .map(Language::from_authored)
-                .unwrap_or_default(),
-            caption,
-            content,
-        }),
+        CodeSource::Inline { content } => {
+            if !authored_highlights.is_empty() {
+                return Err(Diagnostic::error(
+                    "compiler.code.highlights.inline",
+                    format!("{block_pointer}/highlights"),
+                    "line highlights require a file-backed code source",
+                ));
+            }
+            Ok(CompiledNodeContent::Code {
+                provenance: inline_provenance(content.as_bytes()),
+                language: authored_language
+                    .map(Language::from_authored)
+                    .unwrap_or_default(),
+                caption,
+                highlights: Vec::new(),
+                content,
+            })
+        }
         CodeSource::File { path, lines } => {
             let language = authored_language
                 .map(Language::from_authored)
                 .unwrap_or_else(|| Language::from_path(path.as_str()));
+            reject_mermaid_highlights(language, &authored_highlights, block_pointer)?;
+            let source_start = lines.map_or(1, |range| range.start);
             let repository = require_repository(repository, pointer)?;
             let path = repository_path(&path, pointer)?;
             let resource = repository
@@ -339,10 +357,17 @@ fn resolve_code(
                         .map_err(|error| repository_diagnostic(pointer, error))?,
                 )
                 .map_err(|error| repository_diagnostic(pointer, error))?;
+            let highlights = compile_code_highlights(
+                &authored_highlights,
+                source_start,
+                &resource.content,
+                block_pointer,
+            )?;
             Ok(CompiledNodeContent::Code {
                 content: resource.content,
                 language,
                 caption,
+                highlights,
                 provenance: resource_provenance(resource.provenance),
             })
         }
@@ -354,6 +379,8 @@ fn resolve_code(
             let language = authored_language
                 .map(Language::from_authored)
                 .unwrap_or_else(|| Language::from_path(path.as_str()));
+            reject_mermaid_highlights(language, &authored_highlights, block_pointer)?;
+            let source_start = lines.map_or(1, |range| range.start);
             let repository = require_repository(repository, pointer)?;
             let path = repository_path(&path, pointer)?;
             let resource = repository
@@ -366,14 +393,104 @@ fn resolve_code(
                         .map_err(|error| repository_diagnostic(pointer, error))?,
                 )
                 .map_err(|error| repository_diagnostic(pointer, error))?;
+            let highlights = compile_code_highlights(
+                &authored_highlights,
+                source_start,
+                &resource.content,
+                block_pointer,
+            )?;
             Ok(CompiledNodeContent::Code {
                 content: resource.content,
                 language,
                 caption,
+                highlights,
                 provenance: resource_provenance(resource.provenance),
             })
         }
     }
+}
+
+fn reject_mermaid_highlights(
+    language: Language,
+    highlights: &[CodeHighlight],
+    block_pointer: &str,
+) -> Result<(), Diagnostic> {
+    if language == Language::Mermaid && !highlights.is_empty() {
+        return Err(Diagnostic::error(
+            "compiler.code.highlights.mermaid",
+            format!("{block_pointer}/highlights"),
+            "Mermaid blocks render as diagrams and cannot highlight source lines",
+        )
+        .with_suggestion("Explain the diagram with a caption or nearby Markdown instead."));
+    }
+    Ok(())
+}
+
+fn compile_code_highlights(
+    authored: &[CodeHighlight],
+    source_start: u32,
+    content: &str,
+    block_pointer: &str,
+) -> Result<Vec<CompiledCodeHighlight>, Diagnostic> {
+    let line_count = u32::try_from(content.lines().count()).map_err(|_| {
+        Diagnostic::error(
+            "compiler.code.lines.overflow",
+            format!("{block_pointer}/source"),
+            "code fragment contains too many lines to index",
+        )
+    })?;
+    let mut compiled = Vec::new();
+    for (highlight_index, highlight) in authored.iter().enumerate() {
+        for (range_index, range) in highlight.lines.iter().enumerate() {
+            let pointer =
+                format!("{block_pointer}/highlights/{highlight_index}/lines/{range_index}");
+            let Some(relative_start) = range
+                .start
+                .checked_sub(source_start)
+                .and_then(|value| value.checked_add(1))
+            else {
+                return Err(Diagnostic::error(
+                    "compiler.code.highlight.outside_fragment",
+                    pointer,
+                    format!(
+                        "highlight begins at source line {}, before displayed source line {source_start}",
+                        range.start
+                    ),
+                ));
+            };
+            let Some(relative_end) = range
+                .end
+                .checked_sub(source_start)
+                .and_then(|value| value.checked_add(1))
+            else {
+                return Err(Diagnostic::error(
+                    "compiler.code.highlight.outside_fragment",
+                    pointer,
+                    "highlight range cannot be mapped into the compiled fragment",
+                ));
+            };
+            if relative_end > line_count {
+                return Err(
+                    Diagnostic::error(
+                        "compiler.code.highlight.outside_fragment",
+                        pointer,
+                        format!(
+                            "highlight ends at source line {}, after the fragment's final source line {}",
+                            range.end,
+                            source_start.saturating_add(line_count.saturating_sub(1))
+                        ),
+                    )
+                    .with_suggestion("Keep every highlight inside the resolved file content."),
+                );
+            }
+            compiled.push(CompiledCodeHighlight {
+                start: relative_start,
+                end: relative_end,
+                color: highlight.color,
+            });
+        }
+    }
+    Ok(compiled)
 }
 
 fn resolve_diff(
@@ -720,6 +837,117 @@ mod tests {
             encoded["presentation"]["nodes"][0]["caption"],
             "The queue is the **serialization point**."
         );
+    }
+
+    #[test]
+    fn normalizes_file_and_git_blob_highlights_into_fragment_lines() {
+        let unique = format!(
+            "agent-teacher-highlight-test-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let directory = std::env::temp_dir().join(unique);
+        fs::create_dir(&directory).unwrap();
+        git(&directory, &["init", "-q"]);
+        git(
+            &directory,
+            &["config", "user.email", "tests@example.invalid"],
+        );
+        git(&directory, &["config", "user.name", "Tests"]);
+        git(&directory, &["config", "commit.gpgsign", "false"]);
+        fs::write(
+            directory.join("sample.rs"),
+            "one\ntwo\nthree\nfour\nfive\nsix\n",
+        )
+        .unwrap();
+        git(&directory, &["add", "sample.rs"]);
+        git(&directory, &["commit", "-qm", "base"]);
+
+        let lesson = r#"{
+            "schema_version":"1.3.0",
+            "title":"Highlights",
+            "blocks":[
+                {
+                    "type":"code",
+                    "id":"worktree",
+                    "highlights":[
+                        {"lines":[{"start":2,"end":2},{"start":4,"end":4}]},
+                        {"lines":[{"start":5,"end":5}],"color":"blue"}
+                    ],
+                    "source":{"kind":"file","path":"sample.rs","lines":{"start":2,"end":5}}
+                },
+                {
+                    "type":"code",
+                    "id":"git",
+                    "highlights":[{"lines":[{"start":2,"end":4}],"color":"green"}],
+                    "source":{"kind":"git_blob","revision":"HEAD","path":"sample.rs","lines":{"start":2,"end":5}}
+                }
+            ]
+        }"#;
+        let artifact = compile(lesson, &CompileOptions::new(&directory)).unwrap();
+
+        let CompiledNodeContent::Code { highlights, .. } = &artifact.presentation.nodes[0].content
+        else {
+            panic!("expected code node")
+        };
+        assert_eq!(
+            highlights,
+            &[
+                CompiledCodeHighlight {
+                    start: 1,
+                    end: 1,
+                    color: crate::source::HighlightColor::Yellow,
+                },
+                CompiledCodeHighlight {
+                    start: 3,
+                    end: 3,
+                    color: crate::source::HighlightColor::Yellow,
+                },
+                CompiledCodeHighlight {
+                    start: 4,
+                    end: 4,
+                    color: crate::source::HighlightColor::Blue,
+                },
+            ]
+        );
+        let CompiledNodeContent::Code { highlights, .. } = &artifact.presentation.nodes[1].content
+        else {
+            panic!("expected code node")
+        };
+        assert_eq!(highlights[0].start, 1);
+        assert_eq!(highlights[0].end, 3);
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn rejects_highlights_beyond_a_full_file() {
+        let unique = format!(
+            "agent-teacher-highlight-bounds-test-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let directory = std::env::temp_dir().join(unique);
+        fs::create_dir(&directory).unwrap();
+        git(&directory, &["init", "-q"]);
+        fs::write(directory.join("sample.rs"), "one\ntwo\n").unwrap();
+        let lesson = r#"{
+            "schema_version":"1.3.0",
+            "title":"Highlights",
+            "blocks":[{
+                "type":"code",
+                "id":"sample",
+                "highlights":[{"lines":[{"start":3,"end":3}]}],
+                "source":{"kind":"file","path":"sample.rs"}
+            }]
+        }"#;
+        let diagnostics = compile(lesson, &CompileOptions::new(&directory)).unwrap_err();
+        assert_eq!(
+            diagnostics[0].code,
+            "compiler.code.highlight.outside_fragment"
+        );
+        assert_eq!(diagnostics[0].pointer, "/blocks/0/highlights/0/lines/0");
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

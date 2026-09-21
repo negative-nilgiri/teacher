@@ -87,6 +87,33 @@ Use each block for its presentation semantics:
   specific Git revision. Use a diff only when the change itself matters—when
   additions, deletions, or the before/after relationship are part of what the
   learner should understand.
+- Source schema `1.3.0` lets a file or Git-blob code block direct attention to
+  several absolute source-line ranges with `highlights`. Available colors are
+  `yellow` (the default), `green`, `red`, and `blue`; differently colored
+  ranges may not overlap. Keep highlights selective: if most of the fragment
+  needs emphasis, narrow the source's `lines` range instead. Inline code and
+  rendered Mermaid diagrams cannot use highlights. If generated code needs
+  highlighted lines, write it to at least a temporary file and use a file
+  source. For example:
+
+  ```json
+  {
+    "type": "code",
+    "id": "parser-branches",
+    "highlights": [
+      { "lines": [{ "start": 52, "end": 56 }] },
+      {
+        "lines": [{ "start": 71, "end": 73 }],
+        "color": "blue"
+      }
+    ],
+    "source": {
+      "kind": "file",
+      "path": "src/parser.rs",
+      "lines": { "start": 40, "end": 80 }
+    }
+  }
+  ```
 - Set a code block's optional language when it is known, especially for inline
   sources. File and Git-blob sources can infer a recognized language from their
   path. Prefer the canonical names `rust`, `python`, `javascript`, `typescript`,
@@ -102,7 +129,7 @@ Use each block for its presentation semantics:
   named `classDef` declarations and compact `class A,B category` assignments.
   The lesson UI derives its legend from those definitions. Do not add
   decorative subgraphs solely to group similarly styled nodes.
-- Source schema `1.2.0` lets code and diff blocks carry an optional Markdown
+- Source schema `1.2.0` and later lets code and diff blocks carry an optional Markdown
   `caption`. Use it only for block-specific information the learner cannot infer
   from the rendered content. It is primarily for a Mermaid diagram whose
   important assumption, omission, or relationship is not self-explanatory;

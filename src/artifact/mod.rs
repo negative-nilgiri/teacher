@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::language::Language;
 use crate::repository::ResolvedDiff;
-use crate::source::{NodeId, SchemaVersion};
+use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
 pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_0_0;
@@ -73,6 +73,9 @@ pub enum CompiledNodeContent {
         language: Language,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         caption: Option<String>,
+        /// One-based inclusive positions in the compiled code fragment.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        highlights: Vec<CompiledCodeHighlight>,
         provenance: ResourceProvenance,
     },
     Diff {
@@ -87,6 +90,14 @@ pub enum CompiledNodeContent {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hints: Vec<String>,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompiledCodeHighlight {
+    pub start: u32,
+    pub end: u32,
+    pub color: HighlightColor,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -197,6 +208,50 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
                 "duplicate retained source ID {:?}",
                 node.source_id
             )));
+        }
+        if let CompiledNodeContent::Code {
+            content,
+            language,
+            highlights,
+            ..
+        } = &node.content
+        {
+            if *language == Language::Mermaid && !highlights.is_empty() {
+                return Err(ArtifactValidationError::new(format!(
+                    "Mermaid node {} cannot contain source-line highlights",
+                    node.node_id
+                )));
+            }
+            let line_count = content.lines().count();
+            for (highlight_index, highlight) in highlights.iter().enumerate() {
+                if highlight.start == 0 || highlight.end < highlight.start {
+                    return Err(ArtifactValidationError::new(format!(
+                        "code highlight {highlight_index} on node {} has an invalid range {}-{}",
+                        node.node_id, highlight.start, highlight.end
+                    )));
+                }
+                if usize::try_from(highlight.end).map_or(true, |end| end > line_count) {
+                    return Err(ArtifactValidationError::new(format!(
+                        "code highlight {highlight_index} on node {} ends after line {line_count}",
+                        node.node_id
+                    )));
+                }
+            }
+            for left_index in 0..highlights.len() {
+                for right_index in (left_index + 1)..highlights.len() {
+                    let left = highlights[left_index];
+                    let right = highlights[right_index];
+                    if left.color != right.color
+                        && left.start <= right.end
+                        && right.start <= left.end
+                    {
+                        return Err(ArtifactValidationError::new(format!(
+                            "differently colored code highlights {left_index} and {right_index} overlap on node {}",
+                            node.node_id
+                        )));
+                    }
+                }
+            }
         }
         if let CompiledNodeContent::MultipleChoice {
             choices: values, ..
@@ -374,5 +429,29 @@ mod tests {
         let mut artifact = quiz_artifact();
         artifact.private.answers[0].correct_choice_id = ChoiceId::new(99);
         assert!(validate_artifact(&artifact).is_err());
+    }
+
+    #[test]
+    fn validation_rejects_code_highlights_outside_the_fragment() {
+        let mut artifact = quiz_artifact();
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "code".into(),
+            content: CompiledNodeContent::Code {
+                content: "only one line".into(),
+                language: Language::Rust,
+                caption: None,
+                highlights: vec![CompiledCodeHighlight {
+                    start: 2,
+                    end: 2,
+                    color: HighlightColor::Yellow,
+                }],
+                provenance: ResourceProvenance::Inline {
+                    sha256: "0".repeat(64),
+                },
+            },
+        });
+        let error = validate_artifact(&artifact).unwrap_err();
+        assert!(error.to_string().contains("ends after line 1"));
     }
 }

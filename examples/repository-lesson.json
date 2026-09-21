@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.3.0",
   "title": "Repository-backed queue change",
   "blocks": [
     {
@@ -10,6 +10,9 @@
     {
       "type": "code",
       "id": "current-implementation",
+      "highlights": [
+        { "lines": [{ "start": 2, "end": 2 }], "color": "green" }
+      ],
       "source": {
         "kind": "file",
         "path": "src/queue.rs",
@@ -19,6 +22,9 @@
     {
       "type": "code",
       "id": "implementation-at-head",
+      "highlights": [
+        { "lines": [{ "start": 2, "end": 2 }], "color": "red" }
+      ],
       "source": {
         "kind": "git_blob",
         "revision": "HEAD",

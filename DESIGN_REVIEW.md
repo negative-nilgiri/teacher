@@ -70,7 +70,7 @@ V1 session state is in memory and is lost when `learn` exits. The compiled
 
 ```json
 {
-  "schema_version": "1.2.0",
+  "schema_version": "1.3.0",
   "title": "Understanding the queue changes",
   "blocks": []
 }
@@ -168,10 +168,10 @@ information that a learner cannot infer from the rendered content. Its primary
 use is explaining a non-self-explanatory Mermaid diagram; intricate code or
 diffs may use it exceptionally. Captions must not narrate obvious syntax,
 visible arrows, labels, or reading direction, and should not duplicate adjacent
-Markdown. Other presentation controls such as authored colors, layout, line
-highlights, and copy-button configuration are excluded from v1. Lessons should
-form local narrative units by interleaving an explanation, its relevant code or
-diff, and any follow-up instead of collecting unrelated diffs at the end.
+Markdown. Arbitrary presentation controls such as layout, line height, and
+copy-button configuration are excluded from v1. Lessons should form local
+narrative units by interleaving an explanation, its relevant code or diff, and
+any follow-up instead of collecting unrelated diffs at the end.
 
 ### Compiled lesson output
 
@@ -263,9 +263,19 @@ sources, and unknown paths fall back to plain text, as do unknown explicit
 language values.
 
 The language field is introduced by source schema `1.1.0`. Source schema `1.2.0`
-adds optional captions to code and diff blocks. The compiler continues to decode
-the older closed formats and can emit each version's exact JSON Schema; new
-captioned documents use `1.2.0`.
+adds optional captions to code and diff blocks, and `1.3.0` adds file-backed code
+line highlights. The compiler continues to decode the older closed formats and
+can emit each version's exact JSON Schema.
+
+Code highlights contain one or more absolute, one-based, inclusive source-line
+ranges. They are valid for file and Git-blob sources, but not inline code or
+rendered Mermaid diagrams. Their optional color is yellow by default, with
+green, red, and blue also available; differently colored ranges may not overlap.
+The compiler verifies that every range belongs to the displayed fragment and
+normalizes it to fragment-relative artifact positions. Highlighting is for
+directing attention inside useful context, not decorating most of a block; an
+agent should narrow the source range when most displayed lines would otherwise
+be highlighted.
 
 `mermaid` is rendered as a diagram rather than highlighted source. Mermaid uses
 the ordinary code block with an inline source and `language: "mermaid"`; fenced
@@ -402,7 +412,8 @@ The artifact contains:
 - an `artifact_version` independent of the source `schema_version`;
 - the lesson title and ordered compiled nodes;
 - Markdown retained as resolved Markdown text;
-- code retained as resolved text plus its normalized or inferred language;
+- code retained as resolved text plus its normalized or inferred language and
+  normalized line highlights;
 - diffs lowered into structured file/hunk/line data;
 - a presentation section, including authored hints, separated from server-owned
   quiz answers and explanations;

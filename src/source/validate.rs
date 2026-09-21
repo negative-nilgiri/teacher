@@ -5,9 +5,9 @@ use serde::de::DeserializeOwned;
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
 
 use super::{
-    Block, CodeSource, DiffSource, GitDiffTarget, GitRevision, LessonSource, LineRange,
-    MarkdownSource, RepoPath, SourceId, SymbolTable,
-    model::{LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0},
+    Block, CodeHighlight, CodeSource, DiffSource, GitDiffTarget, GitRevision, LessonSource,
+    LineRange, MarkdownSource, RepoPath, SourceId, SymbolTable,
+    model::{LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +39,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
         Some("1.0.0") => deserialize_source::<LessonSourceV1_0_0>(input).map(Into::into),
         Some("1.1.0") => deserialize_source::<LessonSourceV1_1_0>(input).map(Into::into),
         Some("1.2.0") => deserialize_source::<LessonSourceV1_2_0>(input).map(Into::into),
+        Some("1.3.0") => deserialize_source::<LessonSourceV1_3_0>(input).map(Into::into),
         _ => deserialize_source::<LessonSource>(input),
     }?;
     validate(source)
@@ -160,7 +161,7 @@ pub fn validate(source: LessonSource) -> Result<ValidatedLesson, Vec<Diagnostic>
                         &mut diagnostics,
                     );
                 }
-                validate_code(&block.source, &base, &mut diagnostics);
+                validate_code(&block.source, &block.highlights, &base, &mut diagnostics);
             }
             Block::Diff(block) => {
                 if let Some(caption) = &block.caption {
@@ -201,7 +202,13 @@ fn validate_markdown(source: &MarkdownSource, base: &str, diagnostics: &mut Diag
     }
 }
 
-fn validate_code(source: &CodeSource, base: &str, diagnostics: &mut DiagnosticBag) {
+fn validate_code(
+    source: &CodeSource,
+    highlights: &[CodeHighlight],
+    base: &str,
+    diagnostics: &mut DiagnosticBag,
+) {
+    validate_code_highlights(source, highlights, base, diagnostics);
     match source {
         CodeSource::Inline { content } => nonempty(
             content,
@@ -224,6 +231,99 @@ fn validate_code(source: &CodeSource, base: &str, diagnostics: &mut DiagnosticBa
             repo_path(path, &format!("{base}/source/path"), diagnostics);
             if let Some(lines) = lines {
                 line_range(lines, &format!("{base}/source/lines"), diagnostics);
+            }
+        }
+    }
+}
+
+fn validate_code_highlights(
+    source: &CodeSource,
+    highlights: &[CodeHighlight],
+    base: &str,
+    diagnostics: &mut DiagnosticBag,
+) {
+    if highlights.is_empty() {
+        return;
+    }
+    if matches!(source, CodeSource::Inline { .. }) {
+        diagnostics.push(
+            Diagnostic::error(
+                "source.code.highlights.inline",
+                format!("{base}/highlights"),
+                "line highlights require a file-backed code source",
+            )
+            .with_suggestion(
+                "Write generated code to a file and use a file source when line highlighting is needed.",
+            ),
+        );
+    }
+
+    let displayed_lines = match source {
+        CodeSource::File { lines, .. } | CodeSource::GitBlob { lines, .. } => *lines,
+        CodeSource::Inline { .. } => None,
+    };
+    for (highlight_index, highlight) in highlights.iter().enumerate() {
+        let highlight_base = format!("{base}/highlights/{highlight_index}/lines");
+        if highlight.lines.is_empty() {
+            diagnostics.push(
+                Diagnostic::error(
+                    "source.code.highlights.empty",
+                    &highlight_base,
+                    "a highlight group must contain at least one line range",
+                )
+                .with_suggestion("Add a relevant range or remove the highlight group."),
+            );
+        }
+        for (range_index, range) in highlight.lines.iter().enumerate() {
+            let range_base = format!("{highlight_base}/{range_index}");
+            line_range(range, &range_base, diagnostics);
+            if let Some(displayed) = displayed_lines
+                && (range.start < displayed.start || range.end > displayed.end)
+            {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "source.code.highlight.outside_selection",
+                        range_base,
+                        format!(
+                            "highlight lines {}-{} fall outside displayed lines {}-{}",
+                            range.start, range.end, displayed.start, displayed.end
+                        ),
+                    )
+                    .with_suggestion(
+                        "Keep every highlight inside the code source's displayed range.",
+                    ),
+                );
+            }
+        }
+    }
+
+    for left_group in 0..highlights.len() {
+        for right_group in (left_group + 1)..highlights.len() {
+            if highlights[left_group].color == highlights[right_group].color {
+                continue;
+            }
+            for (left_index, left) in highlights[left_group].lines.iter().enumerate() {
+                for (right_index, right) in highlights[right_group].lines.iter().enumerate() {
+                    if left.start <= right.end && right.start <= left.end {
+                        diagnostics.push(
+                            Diagnostic::error(
+                                "source.code.highlight.color_overlap",
+                                format!("{base}/highlights/{right_group}/lines/{right_index}"),
+                                format!(
+                                    "highlight lines {}-{} overlap differently colored lines {}-{}",
+                                    right.start, right.end, left.start, left.end
+                                ),
+                            )
+                            .with_related(
+                                format!("{base}/highlights/{left_group}/lines/{left_index}"),
+                                "the differently colored range is declared here",
+                            )
+                            .with_suggestion(
+                                "Use one color for overlapping ranges or make the ranges disjoint.",
+                            ),
+                        );
+                    }
+                }
             }
         }
     }
@@ -639,6 +739,91 @@ mod tests {
         assert_eq!(diagnostics.len(), 2);
         assert_eq!(diagnostics[0].pointer, "/blocks/0/caption");
         assert_eq!(diagnostics[1].pointer, "/blocks/1/caption");
+    }
+
+    #[test]
+    fn source_1_2_rejects_highlights_added_in_1_3() {
+        let json = r#"{
+            "schema_version":"1.2.0",
+            "title":"Legacy contract",
+            "blocks":[{
+                "type":"code",
+                "id":"sample",
+                "highlights":[{"lines":[{"start":1,"end":1}]}],
+                "source":{"kind":"file","path":"src/lib.rs"}
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(json).expect_err("1.2 must remain a closed shape");
+        assert_eq!(diagnostics[0].code, "source.deserialize");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0");
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unknown field `highlights`")
+        );
+    }
+
+    #[test]
+    fn highlights_require_file_backing_and_disjoint_colors() {
+        let json = r#"{
+            "schema_version":"1.3.0",
+            "title":"Highlights",
+            "blocks":[
+                {
+                    "type":"code",
+                    "id":"inline",
+                    "highlights":[{"lines":[{"start":1,"end":1}]}],
+                    "source":{"kind":"inline","content":"let value = 1;"}
+                },
+                {
+                    "type":"code",
+                    "id":"overlap",
+                    "highlights":[
+                        {"lines":[{"start":12,"end":14}],"color":"blue"},
+                        {"lines":[{"start":14,"end":15}],"color":"green"}
+                    ],
+                    "source":{
+                        "kind":"file",
+                        "path":"src/lib.rs",
+                        "lines":{"start":10,"end":20}
+                    }
+                }
+            ]
+        }"#;
+        let diagnostics = parse_and_validate(json).expect_err("invalid highlights");
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "source.code.highlights.inline"
+                && diagnostic.pointer == "/blocks/0/highlights"
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "source.code.highlight.color_overlap"
+                && diagnostic.pointer == "/blocks/1/highlights/1/lines/0"
+        }));
+    }
+
+    #[test]
+    fn highlight_ranges_must_stay_inside_the_displayed_file_selection() {
+        let json = r#"{
+            "schema_version":"1.3.0",
+            "title":"Highlights",
+            "blocks":[{
+                "type":"code",
+                "id":"sample",
+                "highlights":[{"lines":[{"start":9,"end":12}]}],
+                "source":{
+                    "kind":"git_blob",
+                    "revision":"HEAD",
+                    "path":"src/lib.rs",
+                    "lines":{"start":10,"end":20}
+                }
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(json).expect_err("highlight escapes selection");
+        assert_eq!(
+            diagnostics[0].code,
+            "source.code.highlight.outside_selection"
+        );
+        assert_eq!(diagnostics[0].pointer, "/blocks/0/highlights/0/lines/0");
     }
 
     #[test]

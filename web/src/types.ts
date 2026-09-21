@@ -17,6 +17,15 @@ export interface CodeNode extends LessonNodeBase {
   language: string;
   caption?: string;
   filename?: string;
+  highlights?: CodeHighlight[];
+}
+
+export type HighlightColor = "yellow" | "green" | "red" | "blue";
+
+export interface CodeHighlight {
+  start: number;
+  end: number;
+  color: HighlightColor;
 }
 
 export type DiffLineKind = "context" | "addition" | "deletion";

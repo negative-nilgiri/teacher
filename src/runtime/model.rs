@@ -174,11 +174,13 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                     content,
                     language,
                     caption,
+                    highlights,
                     provenance,
                 } => PublicLessonNodeContent::Code {
                     content: content.clone(),
                     language: *language,
                     caption: caption.clone(),
+                    highlights: highlights.clone(),
                     filename: provenance_basename(provenance),
                 },
                 CompiledNodeContent::Diff { diff, caption, .. } => PublicLessonNodeContent::Diff {
@@ -284,6 +286,8 @@ pub enum PublicLessonNodeContent {
         language: crate::language::Language,
         #[serde(skip_serializing_if = "Option::is_none")]
         caption: Option<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        highlights: Vec<crate::artifact::CompiledCodeHighlight>,
         #[serde(skip_serializing_if = "Option::is_none")]
         filename: Option<String>,
     },
@@ -427,6 +431,7 @@ pub(crate) mod tests {
                 content: "flowchart LR\nA --> B".into(),
                 language: crate::language::Language::Mermaid,
                 caption: Some("The edge represents an asynchronous handoff.".into()),
+                highlights: Vec::new(),
                 provenance: crate::artifact::ResourceProvenance::Inline {
                     sha256: "0".repeat(64),
                 },
@@ -452,6 +457,11 @@ pub(crate) mod tests {
                 content: "fn parse() {}".into(),
                 language: crate::language::Language::Rust,
                 caption: None,
+                highlights: vec![crate::artifact::CompiledCodeHighlight {
+                    start: 1,
+                    end: 1,
+                    color: crate::source::HighlightColor::Blue,
+                }],
                 provenance: crate::artifact::ResourceProvenance::GitBlob {
                     repository: ".".into(),
                     path: "src/compiler/parser.rs".into(),
@@ -465,6 +475,9 @@ pub(crate) mod tests {
 
         let projection = serde_json::to_value(project_artifact(&artifact)).unwrap();
         assert_eq!(projection["nodes"][1]["filename"], "parser.rs");
+        assert_eq!(projection["nodes"][1]["highlights"][0]["start"], 1);
+        assert_eq!(projection["nodes"][1]["highlights"][0]["end"], 1);
+        assert_eq!(projection["nodes"][1]["highlights"][0]["color"], "blue");
     }
 
     #[test]

@@ -8,7 +8,7 @@ for a learner to understand one change at a time.
 Use the compiler as the source of truth:
 
 ```console
-learnc schema --version 1.2.0
+learnc schema --version 1.3.0
 learnc check lesson.json
 learnc build lesson.json
 learn serve lesson.learn
@@ -43,7 +43,7 @@ Do not author numeric node IDs or choice IDs—the compiler generates those.
 flowchart LR
     L["LessonSource<br/>schema_version · title · blocks"]:::envelope
     L --> M["markdown<br/>inline | file"]:::content
-    L --> C["code<br/>language? · caption? · inline | file | git_blob"]:::content
+    L --> C["code<br/>language? · caption? · highlights? · inline | file | git_blob"]:::content
     L --> D["diff<br/>caption? · inline | file | git"]:::repository
     L --> Q["multiple_choice<br/>prompt · choices · hints · explanation"]:::quiz
 
@@ -62,7 +62,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "1.2.0",
+  "schema_version": "1.3.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -72,9 +72,10 @@ flowchart LR
 
 `learnc schema` is the exact structural schema for the selected source version.
 Source schema `1.1.0` adds the optional code-block `language` field, and `1.2.0`
-adds optional Markdown `caption` fields to code and diff blocks. The compiler
-still accepts older documents, but their closed schemas reject fields introduced
-later; use `1.2.0` for captioned lessons.
+adds optional Markdown `caption` fields to code and diff blocks. Source schema
+`1.3.0` adds file-backed code `highlights`. The compiler still accepts older
+documents, but their closed schemas reject fields introduced later; use `1.3.0`
+for highlighted lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -88,6 +89,8 @@ therefore enforced only by `learnc check` and `learnc build`. These include:
 - document-wide source-ID uniqueness;
 - exactly one correct choice per question;
 - inclusive range ordering (`end >= start`) and ranges fitting resolved content;
+- highlighted ranges remaining inside the displayed file fragment, with no
+  overlap between different colors;
 - unique and non-empty Git file selections and range/change intersection;
 - path ownership, file existence and UTF-8 decoding;
 - Git revision resolution, owning-repository boundaries, ignored-file rules,
@@ -142,6 +145,13 @@ General teaching prose still belongs in surrounding Markdown blocks.
   "type": "code",
   "id": "implementation-at-head",
   "language": "rust",
+  "highlights": [
+    { "lines": [{ "start": 76, "end": 80 }] },
+    {
+      "lines": [{ "start": 103, "end": 106 }],
+      "color": "blue"
+    }
+  ],
   "source": {
     "kind": "git_blob",
     "revision": "HEAD~2",
@@ -150,6 +160,22 @@ General teaching prose still belongs in surrounding Markdown blocks.
   }
 }
 ```
+
+Highlights direct attention without removing useful surrounding context. They
+are available only on `file` and `git_blob` code sources and use absolute,
+one-based, inclusive line numbers from the original file—not positions relative
+to the selected fragment. A group may contain several `lines` ranges. Its
+optional `color` is `yellow` by default and may also be `green`, `red`, or
+`blue`. Differently colored ranges cannot overlap. The compiler verifies the
+ranges against the resolved content and stores fragment-relative positions in
+the artifact.
+
+Do not highlight most of a block merely for decoration; narrow the source
+`lines` range when less context would be clearer. Inline code cannot carry
+highlights. Write generated content to at least a temporary file when it needs
+line emphasis. Mermaid blocks render as diagrams and also reject source-line
+highlights; use a substantive caption or nearby Markdown when a diagram needs
+additional explanation.
 
 The canonical language names are `rust`, `python`, `javascript`, `typescript`,
 `c`, `cpp`, `go`, `java`, `shell`, `json`, `yaml`, `toml`, `html`, `css`,
@@ -180,7 +206,7 @@ a file or Git-blob source, the compiler infers it from the path extension.
 Extensionless names such as `Makefile` and `Dockerfile`, and any other
 unrecognized path, fall back to plain text. Inline sources have no filename to
 inspect, so set `language`
-explicitly when highlighting or special rendering matters. An unknown explicit
+explicitly when syntax coloring or special rendering matters. An unknown explicit
 language also normalizes to `text` instead of making the lesson invalid.
 
 Mermaid is the one code language with semantic rendering: a code block that
