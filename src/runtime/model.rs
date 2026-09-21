@@ -174,11 +174,12 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                     content,
                     language,
                     caption,
-                    ..
+                    provenance,
                 } => PublicLessonNodeContent::Code {
                     content: content.clone(),
                     language: *language,
                     caption: caption.clone(),
+                    filename: provenance_basename(provenance),
                 },
                 CompiledNodeContent::Diff { diff, caption, .. } => PublicLessonNodeContent::Diff {
                     files: project_diff(diff),
@@ -217,6 +218,16 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
         },
         answers,
     }
+}
+
+fn provenance_basename(provenance: &crate::artifact::ResourceProvenance) -> Option<String> {
+    let path = match provenance {
+        crate::artifact::ResourceProvenance::File { path, .. }
+        | crate::artifact::ResourceProvenance::GitBlob { path, .. } => path,
+        crate::artifact::ResourceProvenance::Inline { .. }
+        | crate::artifact::ResourceProvenance::GitDiff { .. } => return None,
+    };
+    path.rsplit('/').next().map(str::to_owned)
 }
 
 fn project_diff(diff: &ResolvedDiff) -> Vec<PublicDiffFile> {
@@ -273,6 +284,8 @@ pub enum PublicLessonNodeContent {
         language: crate::language::Language,
         #[serde(skip_serializing_if = "Option::is_none")]
         caption: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
     },
     Diff {
         files: Vec<PublicDiffFile>,
@@ -426,6 +439,32 @@ pub(crate) mod tests {
             value["nodes"][1]["caption"],
             "The edge represents an asynchronous handoff."
         );
+        assert!(value["nodes"][1].get("filename").is_none());
+    }
+
+    #[test]
+    fn public_projection_derives_code_basename_from_frozen_provenance() {
+        let mut artifact = quiz_artifact();
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "parser".into(),
+            content: CompiledNodeContent::Code {
+                content: "fn parse() {}".into(),
+                language: crate::language::Language::Rust,
+                caption: None,
+                provenance: crate::artifact::ResourceProvenance::GitBlob {
+                    repository: ".".into(),
+                    path: "src/compiler/parser.rs".into(),
+                    revision: "HEAD".into(),
+                    revision_object_id: "0".repeat(40),
+                    content_object_id: "1".repeat(40),
+                    sha256: "2".repeat(64),
+                },
+            },
+        });
+
+        let projection = serde_json::to_value(project_artifact(&artifact)).unwrap();
+        assert_eq!(projection["nodes"][1]["filename"], "parser.rs");
     }
 
     #[test]

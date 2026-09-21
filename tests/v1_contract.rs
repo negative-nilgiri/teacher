@@ -358,6 +358,10 @@ fn repository_example_checks_builds_and_freezes_relative_provenance() {
     assert_eq!(artifact.presentation.nodes.len(), 6);
     assert_eq!(artifact.private.answers.len(), 1);
 
+    let public = serde_json::to_value(project_artifact(&artifact)).unwrap();
+    assert_eq!(public["nodes"][1]["filename"], "queue.rs");
+    assert_eq!(public["nodes"][2]["filename"], "queue.rs");
+
     let encoded = String::from_utf8(bytes).unwrap();
     assert!(
         !encoded.contains(&repository.path().to_string_lossy().to_string()),

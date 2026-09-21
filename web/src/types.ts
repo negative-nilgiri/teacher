@@ -16,6 +16,7 @@ export interface CodeNode extends LessonNodeBase {
   content: string;
   language: string;
   caption?: string;
+  filename?: string;
 }
 
 export type DiffLineKind = "context" | "addition" | "deletion";

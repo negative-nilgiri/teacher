@@ -127,6 +127,8 @@ entire prose section.
 Code supports inline text, a worktree file, or a blob at a Git revision. Its
 optional `language` controls syntax presentation. Line ranges are optional,
 one-based, inclusive, and must exist in the resolved text.
+For file and Git-blob sources, the runtime shows the source basename in the code
+header; inline code has no invented filename.
 
 Code and diff blocks also accept an optional Markdown `caption`. Use it only for
 block-local information the learner cannot infer from the rendered content. It
@@ -268,6 +270,8 @@ the nearest owning repository independently for every selected path, so sibling
 repositories and submodules are both supported beneath one root. Split paths
 with different owners into separate diff blocks. Explicitly selected untracked
 worktree files become complete additions; ignored files are rejected.
+When one resolved diff contains multiple files, the runtime lets the learner
+fold each file independently. Single-file diffs keep only the block-level fold.
 
 The compiler invokes Git directly from structured fields. Never place shell
 commands or Git argument arrays in the lesson.
@@ -276,6 +280,11 @@ commands or Git argument arrays in the lesson.
 
 A multiple-choice block needs at least two Markdown choices and exactly one
 `correct: true`. Omitting `correct` means false. Do not give choices IDs.
+`learnc` randomizes the presented choice order during compilation, assigns IDs
+to that shuffled order, and freezes both the order and matching private answer
+in the `.learn` artifact. Write choices for semantic quality rather than trying
+to vary where the correct answer appears; `learn` preserves the compiled order
+across refreshes.
 
 ```json
 {

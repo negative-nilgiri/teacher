@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CodeBlock } from "../components/CodeBlock";
 import { DiffBlock } from "../components/DiffBlock";
@@ -43,6 +44,7 @@ describe("semantic source rendering", () => {
       <CodeBlock
         node={{
           content: "fn main() { let answer = 42; }",
+          filename: "main.rs",
           language: "rust",
           node_id: 1,
           source_id: "main",
@@ -52,8 +54,56 @@ describe("semantic source rendering", () => {
     );
 
     expect(screen.getByLabelText("Language: Rust")).toHaveTextContent("Rust");
+    expect(screen.getByText("main.rs")).toHaveClass("source-file-name");
     expect(container.querySelector("code.language-rust")).toHaveTextContent("fn main() { let answer = 42; }");
     expect(container.querySelector(".hljs-keyword")).toHaveTextContent("fn");
+  });
+
+  it("folds files independently in a multi-file diff", async () => {
+    const user = userEvent.setup();
+    render(
+      <DiffBlock
+        node={{
+          files: [
+            {
+              hunks: [{
+                header: "@@ -1 +1 @@",
+                lines: [{ content: "first change", kind: "addition", new_line: 1, old_line: null }],
+              }],
+              language: "rust",
+              new_path: "src/first.rs",
+              old_path: "src/first.rs",
+            },
+            {
+              hunks: [{
+                header: "@@ -1 +1 @@",
+                lines: [{ content: "second change", kind: "addition", new_line: 1, old_line: null }],
+              }],
+              language: "rust",
+              new_path: "src/second.rs",
+              old_path: "src/second.rs",
+            },
+          ],
+          node_id: 3,
+          source_id: "multi-file-diff",
+          type: "diff",
+        }}
+      />,
+    );
+
+    const firstToggle = screen.getByRole("button", {
+      name: "Collapse diff file src/first.rs",
+    });
+    expect(screen.getByText("first change")).toBeVisible();
+    expect(screen.getByText("second change")).toBeVisible();
+
+    await user.click(firstToggle);
+    expect(screen.getByText("first change")).not.toBeVisible();
+    expect(screen.getByText("second change")).toBeVisible();
+    expect(firstToggle).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(screen.getByRole("button", { name: "Expand diff file src/first.rs" }));
+    expect(screen.getByText("first change")).toBeVisible();
   });
 
   it("uses the language resolved for each diff file", () => {
@@ -82,6 +132,7 @@ describe("semantic source rendering", () => {
     );
 
     expect(screen.getByLabelText("Language: JavaScript")).toHaveTextContent("JavaScript");
+    expect(screen.queryByRole("button", { name: /diff file/ })).not.toBeInTheDocument();
     expect(screen.getByText("addition")).toHaveTextContent("addition");
     expect(screen.getByText("addition").tagName).toBe("STRONG");
     expect(container.querySelector("code.language-javascript .hljs-keyword")).toHaveTextContent("const");

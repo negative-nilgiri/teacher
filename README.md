@@ -19,9 +19,11 @@ Run `just` (or `just --list`) to see the documented development commands.
 
 ## Install and use
 
-The only runtime prerequisite is `git`; Node.js is needed only when changing the
-React frontend. Install all three Rust binaries from the package root and run a
-lesson with the convenience recipes:
+The installed binaries require only `git` at runtime. Building or installing
+from a source checkout also requires Node.js and npm because the React bundle is
+generated locally and intentionally not tracked. `just install` installs the
+pinned frontend dependencies, builds the bundle, and installs all three Rust
+binaries:
 
 ```sh
 just install
@@ -48,10 +50,12 @@ opens a browser only when `--open` is supplied.
 
 ## Package contract
 
-The Cargo package deliberately includes `web/dist` and excludes frontend source,
-`node_modules`, and generated TypeScript metadata. `learn` embeds that prebuilt
-bundle at Rust compile time, so installing and running the packaged binaries does
-not invoke npm or require Node.js.
+`web/dist` is an ignored build output. The Cargo package deliberately includes
+that generated directory while excluding frontend source, `node_modules`, and
+generated TypeScript metadata. `learn` embeds the bundle at Rust compile time,
+so running the installed binaries—and installing an already assembled Cargo
+package—does not invoke npm or require Node.js. Source-checkout builds use the
+`just` recipes to install and build the frontend first.
 
 Source schema, artifact schema, and package versions are independent SemVer
 values. An incompatible `.learn` artifact is disposable: rebuild it from its
@@ -65,6 +69,7 @@ all three binaries into an isolated temporary Cargo root with failing Node/npm s
 compiles and serves a smoke lesson, fetches its embedded UI and API, and checks
 that incompatible artifacts return actionable rebuild guidance.
 
-`just package-smoke` runs only the packaging/install smoke test against the
-already-built `web/dist`; it intentionally does not rebuild the frontend. This is
-the command that proves a consumer installation does not need Node.js.
+`just package-smoke` first installs and builds the frontend, then assembles the
+Cargo package and disables Node for the consumer-install phase. This proves that
+the generated package is self-contained even though producing it from source
+requires Node.js.

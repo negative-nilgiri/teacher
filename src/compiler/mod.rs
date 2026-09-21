@@ -9,6 +9,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use rand::seq::SliceRandom;
 use sha2::{Digest, Sha256};
 
 use crate::artifact::{
@@ -109,7 +110,10 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                 let mut choices = Vec::with_capacity(block.choices.len());
                 let mut correct = None;
                 let mut overflow = None;
-                for (choice_index, choice) in block.choices.into_iter().enumerate() {
+                let mut authored_choices =
+                    block.choices.into_iter().enumerate().collect::<Vec<_>>();
+                authored_choices.shuffle(&mut rand::rng());
+                for (choice_index, choice) in authored_choices {
                     let Ok(raw_choice_id) = u32::try_from(next_choice_id) else {
                         overflow = Some(
                             Diagnostic::error(
@@ -620,6 +624,24 @@ mod tests {
         let question_json = serde_json::to_value(&artifact.presentation.nodes[2]).unwrap();
         assert!(question_json.get("correct_choice_id").is_none());
         assert!(question_json.get("explanation").is_none());
+
+        let CompiledNodeContent::MultipleChoice { choices, .. } =
+            &artifact.presentation.nodes[2].content
+        else {
+            panic!("expected compiled question")
+        };
+        let answer = &artifact.private.answers[0];
+        let correct = choices
+            .iter()
+            .find(|choice| choice.choice_id == answer.correct_choice_id)
+            .expect("private answer refers to a presented choice");
+        assert_eq!(correct.content, "Oldest");
+        let mut contents = choices
+            .iter()
+            .map(|choice| choice.content.as_str())
+            .collect::<Vec<_>>();
+        contents.sort_unstable();
+        assert_eq!(contents, ["Newest", "Oldest"]);
     }
 
     #[test]

@@ -120,7 +120,7 @@ artifacts, or study sessions.
 | [`src/runtime/`](../src/runtime) | Artifact loading, public projection, session state, API, and embedded asset serving. |
 | [`web/src/`](../web/src) | React application and the TypeScript mirror of the public API. |
 | [`web/src/languages.ts`](../web/src/languages.ts) | Frontend language display names and statically imported Highlight.js grammars. |
-| [`web/dist/`](../web/dist) | Generated production bundle embedded into `learn`; this is a build input. |
+| [`web/dist/`](../web/dist) | Ignored production build output embedded into `learn`; generate it before Rust compilation. |
 | [`tests/v1_contract.rs`](../tests/v1_contract.rs) | Cross-layer tests using real binaries, Git repositories, and HTTP requests. |
 | [`tests/fixtures/`](../tests/fixtures) | Valid/invalid source documents and artifact/package fixtures. |
 | [`examples/`](../examples) | Runnable inline and repository-backed lesson examples plus their fixture scripts. |
@@ -182,8 +182,9 @@ The concrete orchestration starts in
    [`SnapshotGuard`](../src/repository/snapshot.rs#L19). Git-backed paths also
    get a whole-build owner/repository-state guard; plain-file-only lessons never
    invoke Git.
-4. Markdown, code, diff, and quiz blocks are lowered in authored order. Code
-   languages are normalized or inferred from source paths during lowering.
+4. Markdown, code, diff, and quiz blocks are lowered in authored block order.
+   Code languages are normalized or inferred from source paths during lowering;
+   choices inside each quiz are shuffled before dense choice IDs are assigned.
    Resolver errors are collected where possible instead of stopping at the
    first block.
 5. Every symbolic revision observed by a blob or diff is re-resolved in its
@@ -393,15 +394,19 @@ compact label and falls back to `Code` when no specific language is known:
 - [`Markdown`](../web/src/components/Markdown.tsx) uses GFM without enabling raw
   HTML.
 - [`CodeBlock`](../web/src/components/CodeBlock.tsx) syntax-highlights known
-  languages beneath a visible normalized-language header, renders `mermaid` as
-  a diagram, and safely falls back to literal text for unknown languages or an
-  invalid diagram. An authored caption renders as Markdown immediately above
-  the content. Mermaid runs in strict security mode and derives an optional
-  legend from semantic `classDef` declarations.
+  languages beneath a visible normalized-language header. File and Git-blob
+  code sources also show the basename derived from their frozen provenance;
+  inline code has no synthetic filename. Mermaid renders as a diagram, with a
+  safe literal fallback for unknown languages or invalid diagrams. An authored
+  caption renders as Markdown immediately above the content. Mermaid runs in
+  strict security mode and derives an optional legend from semantic `classDef`
+  declarations.
 - [`DiffBlock`](../web/src/components/DiffBlock.tsx) renders structured lines and
   old/new line numbers, showing and using the language frozen for each compiled
-  diff file to syntax-highlight its content. Optional captions render once above
-  the complete diff. Git-generated diffs also show the
+  diff file to syntax-highlight its content. A multi-file diff gives every file
+  an independent local fold control; a single-file diff avoids redundant nested
+  folding. Optional captions render once above the complete diff. Git-generated
+  diffs also show the
   safe root-relative owning repository projected from artifact provenance when
   it identifies a nested or sibling repository. The uninformative root owner
   (`.`), inline diffs, and patch-file diffs have no repository label.
@@ -414,7 +419,9 @@ in [`web/src/api.ts`](../web/src/api.ts).
 
 ## Frontend build and packaging
 
-Editing `web/src` does not change `learn` until `web/dist` is rebuilt.
+Editing `web/src` does not change `learn` until `web/dist` is rebuilt. The
+directory is intentionally ignored: source builds require Node.js, while the
+resulting Rust binaries remain self-contained.
 
 ```mermaid
 flowchart LR
@@ -442,11 +449,13 @@ flowchart LR
 ```
 
 [`WebAssets`](../src/runtime/server.rs#L135) embeds `web/dist` into the Rust
-binary. [`Cargo.toml`](../Cargo.toml) explicitly packages those assets while
-excluding the frontend toolchain and `node_modules`, so consumer installation
-does not run Node. [`build.rs`](../build.rs) fingerprints the complete generated
-asset tree so Vite's content-hashed filename changes always invalidate Cargo's
-embedded-resource build.
+binary. [`Cargo.toml`](../Cargo.toml) explicitly packages those generated assets
+while excluding the frontend toolchain and `node_modules`, so installation from
+the assembled package does not run Node. A source checkout instead uses
+`just web-build`, which depends on `just web-install`. [`build.rs`](../build.rs)
+rejects a missing bundle with an actionable message and fingerprints the
+complete generated asset tree so Vite's content-hashed filename changes always
+invalidate Cargo's embedded-resource build.
 
 Asset routing serves exact files with inferred MIME types, falls back to
 `index.html` for non-API client routes, and never sends the SPA for an unknown
@@ -484,7 +493,8 @@ line to discover the random URL before waiting on the long-running server.
 | `just test` | Runs all Rust unit, CLI, and contract tests. |
 | `just web-test` | Runs the Vitest frontend suite. |
 | `just verify` | Checks formatting, strict Clippy, Rust tests, and frontend tests. |
-| `just web-build` | Rebuilds the production bundle in `web/dist`. |
+| `just web-install` | Installs the pinned frontend dependency tree with `npm ci`. |
+| `just web-build` | Runs `web-install`, then rebuilds the ignored production bundle in `web/dist`. |
 | `just build` | Rebuilds `web/dist`, then builds all three Rust binaries. |
 | `just install` | Rebuilds `web/dist`, then installs all three binaries from this checkout. |
 | `just learnc [args...]` | Passes arbitrary arguments directly to the compiler binary. |
@@ -496,7 +506,7 @@ line to discover the random URL before waiting on the long-running server.
 | `just run [serve-args...]` | Rebuilds the UI, compiles the inline example, and forwards all arguments to `learn serve`. |
 | `just repository-example` | Creates the repository fixture, compiles its lesson, and serves it until interrupted. |
 | `just package-list` | Shows the exact Cargo package contents. |
-| `just package-smoke` | Packages, installs without Node, builds a lesson, and probes the installed server. |
+| `just package-smoke` | Builds assets, packages them, then installs with Node disabled and probes the server. |
 | `just release-check` | Rebuilds assets, runs verification, and runs the package smoke test. |
 
 The ignored `cargo_install_smoke` test in
@@ -566,8 +576,8 @@ asset in isolation:
 6. A new serialized language value changes the artifact contract for older
    runtimes. Follow [Change a versioned contract](#change-a-versioned-contract)
    and make the compatibility/version decision explicitly.
-7. Run `just web-build` and `just verify`, then commit the refreshed `web/dist`
-   assets with the source changes. Use `just release-check` before publishing.
+7. Run `just web-build` and `just verify`. Do not commit `web/dist`; it is an
+   ignored build output. Use `just release-check` before publishing.
 
 ### Add a display-only block
 
@@ -585,7 +595,7 @@ asset in isolation:
    [`web/src/types.ts`](../web/src/types.ts), add a component, and update
    [`LessonNodeView`](../web/src/components/LessonNodeView.tsx).
 7. Add source, compiler/artifact, runtime, and React tests.
-8. Rebuild and commit `web/dist`.
+8. Rebuild `web/dist`; do not commit the generated output.
 
 ### Add a stateful interaction
 
@@ -619,8 +629,9 @@ selects the default for new documents.
 
 Update the allowlist in [`Cargo.toml`](../Cargo.toml), the required/leak checks in
 [`scripts/package-smoke.sh`](../scripts/package-smoke.sh), and the production
-asset contract test. Preserve the defining invariant: a consumer's
-`cargo install` must not invoke Node.
+asset contract test. Preserve the defining invariant: producing a package from
+source may require Node, but installing the assembled package and running its
+binaries must not.
 
 ## Current intentional limits
 

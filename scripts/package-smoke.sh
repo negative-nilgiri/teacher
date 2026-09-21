@@ -16,6 +16,11 @@ trap cleanup EXIT INT TERM
 
 cd "$project_root"
 
+if [[ ! -f web/dist/index.html ]]; then
+    echo "package smoke: web/dist is missing; run 'just web-build' first" >&2
+    exit 1
+fi
+
 package_list="$smoke_root/package-list.txt"
 cargo package --list --allow-dirty >"$package_list"
 

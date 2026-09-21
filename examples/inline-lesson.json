@@ -31,10 +31,10 @@
     },
     {
       "type": "diff",
-      "id": "focused-diff",
+      "id": "multi-file-diff",
       "source": {
         "kind": "inline",
-        "content": "diff --git a/src/queue.rs b/src/queue.rs\nindex 1111111..2222222 100644\n--- a/src/queue.rs\n+++ b/src/queue.rs\n@@ -2 +2 @@\n-    queue.pop_back()\n+    queue.pop_front()\n"
+        "content": "diff --git a/src/queue.rs b/src/queue.rs\nindex 1111111..2222222 100644\n--- a/src/queue.rs\n+++ b/src/queue.rs\n@@ -2 +2 @@\n-    queue.pop_back()\n+    queue.pop_front()\ndiff --git a/docs/queue.md b/docs/queue.md\nindex 3333333..4444444 100644\n--- a/docs/queue.md\n+++ b/docs/queue.md\n@@ -1 +1 @@\n-The newest job leaves first.\n+The oldest job leaves first.\n"
       }
     },
     {

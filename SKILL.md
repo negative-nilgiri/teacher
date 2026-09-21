@@ -116,7 +116,10 @@ Use each block for its presentation semantics:
   comparable in length, specificity, tone, and grammatical form so the correct
   answer is not exposed by being substantially more detailed or carefully
   qualified. Put the fuller teaching explanation in the answer explanation,
-  and ensure exactly one choice remains defensibly correct.
+  and ensure exactly one choice remains defensibly correct. Do not manually
+  rotate the correct answer through different positions: `learnc` randomizes
+  each question's presented choice order during compilation and freezes that
+  order with the matching private answer in the artifact.
 
 Order blocks as local teaching units. Introduce a concept, show the relevant
 code or diff near that explanation, explain the change, and add any follow-up

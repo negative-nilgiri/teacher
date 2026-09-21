@@ -7,7 +7,10 @@ import { SyntaxCode } from "./SyntaxCode";
 export function CodeBlock({ node }: { node: CodeNode }) {
   return (
     <section className="code-block" aria-label={`Code: ${node.source_id}`}>
-      <header className="source-block-header">
+      <header
+        className={`source-block-header${node.filename ? " source-block-header-with-file" : ""}`}
+      >
+        {node.filename ? <code className="source-file-name">{node.filename}</code> : null}
         <LanguageLabel language={node.language} />
       </header>
       {node.caption ? <Markdown className="source-caption">{node.caption}</Markdown> : null}

@@ -16,6 +16,10 @@ fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) {
 
 fn main() {
     let root = Path::new("web/dist");
+    assert!(
+        root.is_dir(),
+        "web/dist is missing; source builds require Node.js and must run `just web-build` first"
+    );
     println!("cargo:rerun-if-changed={}", root.display());
 
     let mut files = Vec::new();

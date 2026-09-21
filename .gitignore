@@ -1,7 +1,9 @@
 /.env
 /target/
 /web/node_modules/
+/web/dist/
 *.learn
+*.env
 .idea
 Cargo.lock
 prompts

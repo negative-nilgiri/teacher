@@ -64,6 +64,8 @@ pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberatio
 
 .code-block { overflow: hidden; border: 1px solid var(--line); border-radius: .55rem; background: var(--paper); }
 .source-block-header { display: flex; align-items: center; min-height: 2.25rem; padding: .45rem .75rem; border-bottom: 1px solid var(--line); background: #ece7de; }
+.source-block-header-with-file { justify-content: space-between; gap: 1rem; }
+.source-file-name { overflow: hidden; color: var(--ink); font-size: .78rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .language-label { color: var(--muted); font-size: .7rem; font-weight: 750; letter-spacing: .08em; line-height: 1; text-transform: uppercase; }
 .source-caption { padding: .75rem 1rem; border-bottom: 1px solid var(--line); background: #f7f3eb; color: var(--muted); font-size: .9rem; }
 .code-block > pre { border-radius: 0; }
@@ -83,6 +85,11 @@ pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberatio
 .diff-file + .diff-file { border-top: 1px solid var(--line); }
 .diff-file-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; background: #ece7de; }
 .diff-file-name { margin: 0; font: 650 .87rem "SFMono-Regular", Consolas, monospace; overflow-wrap: anywhere; }
+.diff-file-controls { display: flex; flex: 0 0 auto; align-items: center; gap: .75rem; }
+.diff-file-toggle { display: inline-flex; align-items: center; gap: .35rem; padding: .28rem .48rem; background: var(--paper); color: var(--muted); font-size: .72rem; }
+.diff-file-toggle:hover { border-color: var(--accent); color: var(--ink); }
+.diff-file-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.diff-file-toggle-icon { width: .8rem; color: var(--accent); font-size: 1rem; font-weight: 750; line-height: .7; text-align: center; }
 .diff-hunk { overflow-x: auto; }
 .diff-hunk + .diff-hunk { border-top: 1px solid var(--line); }
 .diff-hunk-header { padding: .35rem 1rem; background: #e7edf0; color: #4e626c; font: .8rem "SFMono-Regular", Consolas, monospace; }

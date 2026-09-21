@@ -24,9 +24,10 @@ and exploratory alternatives have been removed.
   `learnc` compiles lessons and `learn` serves compiled artifacts. `learn` embeds
   the compiled React frontend. Docker, bind mounts, and a separately installed
   JavaScript runtime are not part of the workflow.
-- Installation is initially through `cargo install`; the sole initial user is the
-  project author. The prebuilt frontend bundle must therefore be included in the
-  crate package so installation does not require Node.js.
+- Installation from a source checkout uses `just install`; the sole initial user
+  is the project author. Source builds require Node.js to generate the ignored
+  frontend bundle. The assembled crate package includes that bundle, and the
+  installed binaries do not require Node.js at runtime.
 - The installed `git` executable is an acceptable dependency.
 - `learnc` is the only component that reads source repository files and invokes
   Git. `learn` and the browser receive resolved artifact data.
@@ -49,7 +50,8 @@ V1 block types:
 
 There is no separate `callout` block in v1; Markdown is sufficient initially.
 
-V1 includes deterministic multiple-choice quizzes. It does not include free
+V1 includes multiple-choice quizzes whose choice order is randomized once by
+the compiler and then frozen in the artifact. It does not include free
 response, self-review, LLM grading, chat, or tutor interaction. LLM-backed
 interaction is a possible follow-up after v1.
 
