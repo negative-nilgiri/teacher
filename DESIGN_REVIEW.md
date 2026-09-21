@@ -70,7 +70,7 @@ V1 session state is in memory and is lost when `learn` exits. The compiled
 
 ```json
 {
-  "schema_version": "1.3.0",
+  "schema_version": "2.0.0",
   "title": "Understanding the queue changes",
   "blocks": []
 }
@@ -267,7 +267,9 @@ language values.
 The language field is introduced by source schema `1.1.0`. Source schema `1.2.0`
 adds optional captions to code and diff blocks, and `1.3.0` adds file-backed code
 line highlights. The compiler continues to decode the older closed formats and
-can emit each version's exact JSON Schema.
+can emit each version's exact JSON Schema. Source schema `2.0.0` changes a
+multiple-choice prompt from a Markdown string to `MarkdownSource`, allowing
+inline or file-backed prompts while preserving every `1.x` decoder.
 
 Code highlights contain one or more absolute, one-based, inclusive source-line
 ranges. They are valid for file and Git-blob sources, but not inline code or
@@ -371,7 +373,11 @@ interaction. V1 therefore has exactly four block types:
 - `diff`
 - `multiple_choice`
 
-Multiple-choice prompts, choices, explanations, and hints use Markdown. There
+Multiple-choice prompts, choices, explanations, and hints use Markdown. In
+source schema `2.0.0`, the prompt is an inline-or-file `MarkdownSource`; the
+other quiz fields remain inline strings. Prompt files follow the same selected
+root, UTF-8, and snapshot rules as other file-backed Markdown and are
+frozen to an artifact string during compilation. There
 must be at least two choices and exactly one choice marked `correct: true`;
 omitting `correct` means false. Choices are not graph nodes and do not have
 agent-authored IDs. The compiler generates artifact-local `ChoiceId` values,

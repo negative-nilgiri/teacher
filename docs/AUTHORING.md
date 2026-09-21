@@ -8,7 +8,7 @@ for a learner to understand one change at a time.
 Use the compiler as the source of truth:
 
 ```console
-learnc schema --version 1.3.0
+learnc schema --version 2.0.0
 learnc check lesson.json
 learnc build lesson.json
 learn serve lesson.learn
@@ -45,7 +45,7 @@ flowchart LR
     L --> M["markdown<br/>inline | file"]:::content
     L --> C["code<br/>language? · caption? · highlights? · inline | file | git_blob"]:::content
     L --> D["diff<br/>caption? · inline | file | git"]:::repository
-    L --> Q["multiple_choice<br/>prompt · choices · hints · explanation"]:::quiz
+    L --> Q["multiple_choice<br/>prompt: inline | file<br/>choices · hints · explanation"]:::quiz
 
     subgraph Legend
       LE["Document envelope"]:::envelope
@@ -62,7 +62,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "1.3.0",
+  "schema_version": "2.0.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -74,8 +74,11 @@ flowchart LR
 Source schema `1.1.0` adds the optional code-block `language` field, and `1.2.0`
 adds optional Markdown `caption` fields to code and diff blocks. Source schema
 `1.3.0` adds file-backed code `highlights`. The compiler still accepts older
-documents, but their closed schemas reject fields introduced later; use `1.3.0`
-for highlighted lessons.
+documents, but their closed schemas reject fields introduced later. Source
+schema `2.0.0` changes the multiple-choice `prompt` from a string to a Markdown
+source object so it can be inline or file-backed. This is a breaking source
+shape, while the compiled artifact remains compatible because the prompt is
+still frozen as Markdown text. Use `2.0.0` for new lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -332,7 +335,10 @@ across refreshes.
 {
   "type": "multiple_choice",
   "id": "check-order",
-  "prompt": "Which operation implements FIFO removal?",
+  "prompt": {
+    "kind": "inline",
+    "content": "Which operation implements FIFO removal?"
+  },
   "choices": [
     { "content": "`pop_front`", "correct": true },
     { "content": "`pop_back`" }
@@ -341,6 +347,22 @@ across refreshes.
   "explanation": "Removing from the front returns the oldest queued value."
 }
 ```
+
+In source schema `2.0.0`, only the prompt uses a Markdown source object. Choices,
+hints, and explanations remain inline Markdown strings. Use a file source when
+the prompt needs substantial formatting without JSON escaping:
+
+```json
+"prompt": {
+  "kind": "file",
+  "path": ".learn/questions/queue-order.md"
+}
+```
+
+The path is relative to the selected filesystem root and must remain available
+through `learnc check` or `learnc build`. A successful build freezes its UTF-8
+contents into the artifact, so a genuinely temporary prompt file may then be
+removed; keep it when the authored lesson must remain rebuildable.
 
 Hints are public. The correct generated choice ID and explanation are stored in
 the artifact's server-owned answer table. An incorrect attempt does not reveal

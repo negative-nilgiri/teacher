@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "title": "Understand queue ordering",
   "blocks": [
     {
@@ -29,7 +29,10 @@
     {
       "type": "multiple_choice",
       "id": "check-ordering",
-      "prompt": "Which item does `pop_front` return?",
+      "prompt": {
+        "kind": "inline",
+        "content": "Which item does `pop_front` return?"
+      },
       "choices": [
         {
           "content": "The oldest queued item",

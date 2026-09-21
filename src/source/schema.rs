@@ -1,6 +1,9 @@
 use super::{
     SchemaVersion,
-    model::{LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0},
+    model::{
+        LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
+        LessonSourceV2_0_0,
+    },
 };
 
 /// Exact JSON Schema for the current authored-document version.
@@ -15,6 +18,7 @@ pub fn source_json_schema_for(version: SchemaVersion) -> serde_json::Value {
         SchemaVersion::V1_1_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV1_1_0)),
         SchemaVersion::V1_2_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV1_2_0)),
         SchemaVersion::V1_3_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV1_3_0)),
+        SchemaVersion::V2_0_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_0_0)),
     }
     .expect("generated lesson source schema must serialize")
 }
@@ -52,7 +56,7 @@ mod tests {
     #[test]
     fn schema_names_all_four_block_types_and_current_version() {
         let schema = source_json_schema_pretty();
-        for expected in ["markdown", "code", "diff", "multiple_choice", "1.3.0"] {
+        for expected in ["markdown", "code", "diff", "multiple_choice", "2.0.0"] {
             assert!(schema.contains(expected), "schema omitted {expected}");
         }
     }
@@ -63,11 +67,14 @@ mod tests {
         let v1_1 = source_json_schema_for(SchemaVersion::V1_1_0);
         let v1_2 = source_json_schema_for(SchemaVersion::V1_2_0);
         let v1_3 = source_json_schema_for(SchemaVersion::V1_3_0);
+        let v2_0 = source_json_schema_for(SchemaVersion::V2_0_0);
         let v1_0_code = variant(&v1_0, "BlockV1_0_0", "code");
         let v1_1_code = variant(&v1_1, "BlockV1_1_0", "code");
         let v1_2_code = variant(&v1_2, "BlockV1_2_0", "code");
         let v1_2_diff = variant(&v1_2, "BlockV1_2_0", "diff");
-        let v1_3_code = variant(&v1_3, "Block", "code");
+        let v1_3_code = variant(&v1_3, "BlockV1_3_0", "code");
+        let v1_3_question = variant(&v1_3, "BlockV1_3_0", "multiple_choice");
+        let v2_0_question = variant(&v2_0, "Block", "multiple_choice");
         assert!(v1_0_code["properties"].get("language").is_none());
         assert!(v1_1_code["properties"].get("language").is_some());
         assert!(v1_1_code["properties"].get("caption").is_none());
@@ -75,6 +82,11 @@ mod tests {
         assert!(v1_2_diff["properties"].get("caption").is_some());
         assert!(v1_2_code["properties"].get("highlights").is_none());
         assert!(v1_3_code["properties"].get("highlights").is_some());
+        assert_eq!(v1_3_question["properties"]["prompt"]["type"], "string");
+        assert_eq!(
+            v2_0_question["properties"]["prompt"]["$ref"],
+            "#/$defs/MarkdownSource"
+        );
         assert_eq!(
             v1_0["properties"]["schema_version"]["$ref"],
             "#/$defs/SchemaVersionV1_0_0"
@@ -90,6 +102,10 @@ mod tests {
         assert_eq!(
             v1_3["properties"]["schema_version"]["$ref"],
             "#/$defs/SchemaVersionV1_3_0"
+        );
+        assert_eq!(
+            v2_0["properties"]["schema_version"]["$ref"],
+            "#/$defs/SchemaVersionV2_0_0"
         );
     }
 

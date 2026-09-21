@@ -153,6 +153,14 @@ Use each block for its presentation semantics:
   rotate the correct answer through different positions: `learnc` randomizes
   each question's presented choice order during compilation and freezes that
   order with the matching private answer in the artifact.
+- In source schema `2.0.0`, author every multiple-choice `prompt` as a Markdown
+  source object. Use `{"kind":"inline","content":"..."}` for concise prompts
+  and `{"kind":"file","path":"..."}` when substantial Markdown, KaTeX, lists,
+  or tables would be awkward to JSON-escape. Prompt files must be below the
+  selected filesystem root and exist through `learnc check` or `learnc build`.
+  The artifact freezes their content, so temporary files may be removed after a
+  successful build; retain them when the lesson source must be rebuildable.
+  Choices, hints, and explanations remain inline Markdown strings.
 
 Order blocks as local teaching units. Introduce a concept, show the relevant
 code or diff near that explanation, explain the change, and add any follow-up

@@ -54,7 +54,7 @@ impl Drop for TempDir {
 
 #[test]
 fn emitted_schema_and_valid_fixtures_match_the_decoder() {
-    let output = output_success(Command::new(learnc()).args(["schema", "--version", "1.3.0"]));
+    let output = output_success(Command::new(learnc()).args(["schema", "--version", "2.0.0"]));
     let emitted: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(emitted, agent_teacher::source::source_json_schema());
     let default_output = output_success(Command::new(learnc()).arg("schema"));
@@ -94,6 +94,16 @@ fn emitted_schema_and_valid_fixtures_match_the_decoder() {
     let v1_2: serde_json::Value = serde_json::from_slice(&v1_2.stdout).unwrap();
     assert!(!schema_block_has_property(&v1_2, "code", "highlights"));
     assert!(schema_block_has_property(&emitted, "code", "highlights"));
+    let v1_3 = output_success(Command::new(learnc()).args(["schema", "--version", "1.3.0"]));
+    let v1_3: serde_json::Value = serde_json::from_slice(&v1_3.stdout).unwrap();
+    assert_eq!(
+        schema_block(&v1_3, "multiple_choice")["properties"]["prompt"]["type"],
+        "string"
+    );
+    assert_eq!(
+        schema_block(&emitted, "multiple_choice")["properties"]["prompt"]["$ref"],
+        "#/$defs/MarkdownSource"
+    );
 
     let valid = manifest_dir().join("tests/fixtures/source/valid");
     for entry in fs::read_dir(valid).unwrap() {
@@ -110,6 +120,50 @@ fn emitted_schema_and_valid_fixtures_match_the_decoder() {
             "check wrote an artifact"
         );
     }
+}
+
+#[test]
+fn compiler_freezes_file_backed_question_prompts() {
+    let root = TempDir::new("question-prompt");
+    fs::write(
+        root.path().join("question.md"),
+        "## Check the queue\n\nWhich call removes the oldest item?\n",
+    )
+    .unwrap();
+    let lesson = root.path().join("lesson.json");
+    let source = serde_json::json!({
+        "schema_version": "2.0.0",
+        "title": "Prompt source",
+        "blocks": [{
+            "type": "multiple_choice",
+            "id": "question",
+            "prompt": {"kind": "file", "path": "question.md"},
+            "choices": [
+                {"content": "`pop_front`", "correct": true},
+                {"content": "`pop_back`"}
+            ],
+            "explanation": "The oldest item is at the front."
+        }]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+
+    output_success(
+        Command::new(learnc())
+            .arg("build")
+            .arg("--root")
+            .arg(root.path())
+            .arg(&lesson),
+    );
+    let artifact: CompiledLesson =
+        serde_json::from_slice(&fs::read(root.path().join("lesson.learn")).unwrap()).unwrap();
+    assert_eq!(artifact.provenance.source_schema_version.as_str(), "2.0.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.0.0");
+    assert_eq!(artifact.provenance.compiler_version, "1.8.0");
+    assert!(matches!(
+        &artifact.presentation.nodes[0].content,
+        CompiledNodeContent::MultipleChoice { prompt, .. }
+            if prompt == "## Check the queue\n\nWhich call removes the oldest item?\n"
+    ));
 }
 
 #[test]
@@ -243,6 +297,7 @@ fn cli_help_version_and_usage_errors_follow_the_output_mode() {
         let version: serde_json::Value = serde_json::from_slice(&version.stdout).unwrap();
         assert_eq!(version["ok"], true);
         assert_eq!(version["kind"], "version");
+        assert_eq!(version["version"], "1.8.0");
         assert_eq!(version["name"], name);
 
         let human = output_success(Command::new(binary).args(["-t", "--help"]));
@@ -1266,7 +1321,7 @@ fn schema_code_block_has_language(schema: &serde_json::Value) -> bool {
     schema_block_has_property(schema, "code", "language")
 }
 
-fn schema_block_has_property(schema: &serde_json::Value, block_type: &str, property: &str) -> bool {
+fn schema_block<'a>(schema: &'a serde_json::Value, block_type: &str) -> &'a serde_json::Value {
     match schema {
         serde_json::Value::Object(object) => {
             let is_requested_block = object
@@ -1275,15 +1330,42 @@ fn schema_block_has_property(schema: &serde_json::Value, block_type: &str, prope
                 .and_then(|kind| kind.get("const"))
                 .is_some_and(|kind| kind == block_type);
             if is_requested_block {
-                return object["properties"].get(property).is_some();
+                return schema;
             }
             object
                 .values()
-                .any(|value| schema_block_has_property(value, block_type, property))
+                .find_map(|value| find_schema_block(value, block_type))
+                .unwrap_or_else(|| panic!("schema omitted {block_type} block"))
+        }
+        _ => panic!("schema root is not an object"),
+    }
+}
+
+fn find_schema_block<'a>(
+    schema: &'a serde_json::Value,
+    block_type: &str,
+) -> Option<&'a serde_json::Value> {
+    match schema {
+        serde_json::Value::Object(object) => {
+            let is_requested_block = object
+                .get("properties")
+                .and_then(|properties| properties.get("type"))
+                .and_then(|kind| kind.get("const"))
+                .is_some_and(|kind| kind == block_type);
+            is_requested_block.then_some(schema).or_else(|| {
+                object
+                    .values()
+                    .find_map(|value| find_schema_block(value, block_type))
+            })
         }
         serde_json::Value::Array(values) => values
             .iter()
-            .any(|value| schema_block_has_property(value, block_type, property)),
-        _ => false,
+            .find_map(|value| find_schema_block(value, block_type)),
+        _ => None,
     }
+}
+
+fn schema_block_has_property(schema: &serde_json::Value, block_type: &str, property: &str) -> bool {
+    find_schema_block(schema, block_type)
+        .is_some_and(|block| block["properties"].get(property).is_some())
 }

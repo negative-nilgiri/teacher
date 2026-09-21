@@ -251,8 +251,8 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `0.1.0` | [`Cargo.toml`](../Cargo.toml) |
-| Authored schema | `1.3.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
+| Cargo package | `1.8.0` | [`Cargo.toml`](../Cargo.toml) |
+| Authored schema | `2.0.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
 | Artifact schema | `1.0.0` | [`ArtifactVersion`](../src/artifact/mod.rs#L15) |
 
 ## Repository and diff resolution
@@ -623,11 +623,15 @@ change may require a new `SchemaVersion` decoder while leaving artifacts stable;
 an artifact change requires explicit runtime compatibility handling. Never infer
 compatibility from the Cargo package version.
 
-The compiler currently decodes source schemas `1.0.0`, `1.1.0`, and `1.2.0`;
-`1.1.0` adds the optional code-block `language` field, while `1.2.0` adds
-optional Markdown captions to code and diff blocks. Each schema command emits
-the exact closed shape for the requested version, and `SchemaVersion::CURRENT`
-selects the default for new documents.
+The compiler decodes source schemas `1.0.0` through `1.3.0` and `2.0.0`.
+`1.1.0` adds the optional code-block `language` field, `1.2.0` adds optional
+Markdown captions to code and diff blocks, and `1.3.0` adds code highlights.
+Schema `2.0.0` is the breaking source transition from string quiz prompts to
+inline-or-file `MarkdownSource` objects. Legacy wire models lower old strings
+to internal inline sources, while compilation resolves current prompt files to
+the same artifact string. Each schema command emits the exact closed shape for
+the requested version, and `SchemaVersion::CURRENT` selects the default for new
+documents.
 
 ### Change package contents
 

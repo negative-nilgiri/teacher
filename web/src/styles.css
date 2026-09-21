@@ -113,7 +113,7 @@ pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberatio
 .diff-content { padding-inline: .2rem 1rem; white-space: pre; }
 
 .question { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: .55rem; background: var(--paper); padding: 1.25rem; }
-.question-prompt { font-size: 1.06rem; font-weight: 600; }
+.question-prompt { font-size: 1.06rem; }
 .question fieldset { margin: 1rem 0 0; padding: 0; border: 0; }
 .choices { display: grid; gap: .55rem; }
 .choice { display: flex; gap: .7rem; align-items: flex-start; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: .4rem; cursor: pointer; }
