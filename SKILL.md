@@ -49,6 +49,28 @@ Use each block for its presentation semantics:
 - Use a code block with language `markdown` only when the literal Markdown
   syntax is itself being taught, and include only the smallest fragment needed
   for that example.
+- Use a code block when the lesson is presenting what a file contains, including
+  a newly added or untracked file. Do not use a diff merely to select interesting
+  lines or because the file is new. Both `file` and `git_blob` code sources
+  accept an optional one-based, inclusive `lines` range. Use `file` for current
+  filesystem content:
+
+  ```json
+  {
+    "type": "code",
+    "id": "focused-parser",
+    "source": {
+      "kind": "file",
+      "path": "src/parser.rs",
+      "lines": { "start": 42, "end": 78 }
+    }
+  }
+  ```
+
+  Use `git_blob` with the same `lines` shape when the content must come from a
+  specific Git revision. Use a diff only when the change itself matters—when
+  additions, deletions, or the before/after relationship are part of what the
+  learner should understand.
 - Set a code block's optional language when it is known, especially for inline
   sources. File and Git-blob sources can infer a recognized language from their
   path. Prefer the canonical names `rust`, `python`, `javascript`, `typescript`,
@@ -128,7 +150,9 @@ This support is limited to explicitly selected worktree files. Ignored files,
 non-regular files, and files outside an owning Git repository are rejected; an
 untracked file also cannot appear in a revision-to-revision comparison. Let
 `learnc check` determine whether the selected path is valid instead of inferring
-failure from ordinary Git behavior.
+failure from ordinary Git behavior. Use this complete-addition diff only when
+the fact that the file was added is relevant; use a ranged `file` code source
+when the lesson only needs to present selected content from that file.
 
 After a successful check, use `learnc build` to create the `.learn` artifact.
 Consult command help for the current argument order and output-path option rather
