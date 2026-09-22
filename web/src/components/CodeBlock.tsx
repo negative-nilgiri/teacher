@@ -16,6 +16,7 @@ export function CodeBlock({ node }: { node: CodeNode }) {
         <LanguageLabel language={node.language} />
       </header>
       {node.caption ? <Markdown className="source-caption">{node.caption}</Markdown> : null}
+      <HighlightAnnotations highlights={highlights} />
       {node.language === "mermaid" ? (
         <MermaidDiagram label={`Diagram: ${node.source_id}`} source={node.content} />
       ) : (
@@ -41,16 +42,18 @@ function CodeListing({
     <>
       <pre className="code-listing">
         <span className="code-listing-inner">
-          {highlights.map((highlight, index) => (
-            <span
-              aria-hidden="true"
-              className={`code-highlight code-highlight-${highlight.color}`}
-              data-end={highlight.end}
-              data-start={highlight.start}
-              key={`${highlight.start}-${highlight.end}-${highlight.color}-${index}`}
-              style={highlightStyle(highlight)}
-            />
-          ))}
+          {highlights.flatMap((highlight, groupIndex) =>
+            highlight.lines.map((range, rangeIndex) => (
+              <span
+                aria-hidden="true"
+                className={`code-highlight code-highlight-${highlight.color}`}
+                data-end={range.end}
+                data-start={range.start}
+                key={`${groupIndex}-${rangeIndex}-${range.start}-${range.end}`}
+                style={highlightStyle(range)}
+              />
+            )),
+          )}
           <span aria-hidden="true" className="code-line-numbers">
             {lineNumbers}
           </span>
@@ -74,7 +77,33 @@ function sourceLineCount(content: string): number {
   return withoutFinalNewline.split("\n").length;
 }
 
-function highlightStyle(highlight: CodeHighlight): CSSProperties {
+function HighlightAnnotations({ highlights }: { highlights: CodeHighlight[] }) {
+  const annotated = highlights.filter(
+    (highlight): highlight is CodeHighlight & { annotation: string } =>
+      Boolean(highlight.annotation),
+  );
+  if (annotated.length === 0) return null;
+
+  return (
+    <aside className="highlight-annotations" aria-label="Highlighted code explanations">
+      <ul>
+        {annotated.map((highlight, index) => (
+          <li
+            className={`highlight-annotation highlight-annotation-${highlight.color}`}
+            key={`${highlight.color}-${lineReferences(highlight)}-${index}`}
+          >
+            <span className="highlight-annotation-label">
+              {capitalize(highlight.color)} · {lineReferences(highlight)}
+            </span>
+            <Markdown className="highlight-annotation-content">{highlight.annotation}</Markdown>
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
+function highlightStyle(highlight: { start: number; end: number }): CSSProperties {
   const lineHeight = 1.55;
   return {
     height: `${(highlight.end - highlight.start + 1) * lineHeight}em`,
@@ -83,9 +112,16 @@ function highlightStyle(highlight: CodeHighlight): CSSProperties {
 }
 
 function highlightDescription(highlight: CodeHighlight): string {
-  const lines =
-    highlight.start === highlight.end
-      ? `Highlighted line ${highlight.start}`
-      : `Highlighted lines ${highlight.start} through ${highlight.end}`;
-  return `${lines} in ${highlight.color}`;
+  return `Highlighted ${lineReferences(highlight).toLowerCase()} in ${highlight.color}`;
+}
+
+function lineReferences(highlight: CodeHighlight): string {
+  const ranges = highlight.lines.map(({ start, end }) =>
+    start === end ? `${start}` : `${start}–${end}`,
+  );
+  return `${ranges.length === 1 && highlight.lines[0].start === highlight.lines[0].end ? "Line" : "Lines"} ${ranges.join(", ")}`;
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }

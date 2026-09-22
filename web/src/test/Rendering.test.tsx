@@ -96,10 +96,14 @@ describe("semantic source rendering", () => {
         node={{
           content: "/* first\nsecond */\nfn main() {}\nlet answer = 42;\nanswer\n",
           highlights: [
-            { color: "yellow", end: 2, start: 1 },
-            { color: "blue", end: 4, start: 4 },
-            { color: "green", end: 3, start: 3 },
-            { color: "red", end: 5, start: 5 },
+            {
+              annotation: "The comment documents the **shared invariant**.",
+              color: "yellow",
+              lines: [{ end: 2, start: 1 }],
+            },
+            { color: "blue", lines: [{ end: 4, start: 4 }] },
+            { color: "green", lines: [{ end: 3, start: 3 }] },
+            { color: "red", lines: [{ end: 5, start: 5 }] },
           ],
           language: "rust",
           node_id: 2,
@@ -119,7 +123,12 @@ describe("semantic source rendering", () => {
     expect(bands[3]).toHaveClass("code-highlight-red");
     expect(container.querySelector(".code-line-numbers")).toHaveTextContent("1 2 3 4 5");
     expect(container.querySelector(".hljs-comment")).toHaveTextContent("/* first second */");
-    expect(screen.getByText(/Highlighted lines 1 through 2 in yellow/)).toBeInTheDocument();
+    expect(screen.getByText("Yellow · Lines 1–2")).toBeInTheDocument();
+    expect(screen.getByLabelText("Highlighted code explanations")).toHaveTextContent(
+      "The comment documents the shared invariant.",
+    );
+    expect(screen.getByText("shared invariant").tagName).toBe("STRONG");
+    expect(screen.getByText(/Highlighted lines 1–2 in yellow/)).toBeInTheDocument();
   });
 
   it("folds files independently in a multi-file diff", async () => {

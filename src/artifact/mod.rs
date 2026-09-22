@@ -10,18 +10,21 @@ use crate::repository::ResolvedDiff;
 use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_0_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_1_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
     #[serde(rename = "1.0.0")]
     V1_0_0,
+    #[serde(rename = "1.1.0")]
+    V1_1_0,
 }
 
 impl ArtifactVersion {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::V1_0_0 => "1.0.0",
+            Self::V1_1_0 => "1.1.0",
         }
     }
 }
@@ -92,12 +95,78 @@ pub enum CompiledNodeContent {
     },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "CompiledCodeHighlightWire")]
 #[serde(deny_unknown_fields)]
 pub struct CompiledCodeHighlight {
+    /// One or more one-based inclusive ranges in the compiled fragment.
+    pub lines: Vec<CompiledLineRange>,
+    pub color: HighlightColor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotation: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompiledLineRange {
     pub start: u32,
     pub end: u32,
-    pub color: HighlightColor,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CompiledCodeHighlightWire {
+    Current(CompiledCodeHighlightCurrentWire),
+    Legacy(CompiledCodeHighlightLegacyWire),
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompiledCodeHighlightCurrentWire {
+    lines: Vec<CompiledLineRange>,
+    color: HighlightColor,
+    #[serde(default)]
+    annotation: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CompiledCodeHighlightLegacyWire {
+    start: u32,
+    end: u32,
+    color: HighlightColor,
+}
+
+impl TryFrom<CompiledCodeHighlightWire> for CompiledCodeHighlight {
+    type Error = &'static str;
+
+    fn try_from(value: CompiledCodeHighlightWire) -> Result<Self, Self::Error> {
+        match value {
+            CompiledCodeHighlightWire::Current(CompiledCodeHighlightCurrentWire {
+                lines,
+                color,
+                annotation,
+            }) => {
+                if lines.is_empty() {
+                    return Err("a compiled code highlight must contain at least one line range");
+                }
+                Ok(Self {
+                    lines,
+                    color,
+                    annotation,
+                })
+            }
+            CompiledCodeHighlightWire::Legacy(CompiledCodeHighlightLegacyWire {
+                start,
+                end,
+                color,
+            }) => Ok(Self {
+                lines: vec![CompiledLineRange { start, end }],
+                color,
+                annotation: None,
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -224,31 +293,54 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
             }
             let line_count = content.lines().count();
             for (highlight_index, highlight) in highlights.iter().enumerate() {
-                if highlight.start == 0 || highlight.end < highlight.start {
+                if highlight.lines.is_empty() {
                     return Err(ArtifactValidationError::new(format!(
-                        "code highlight {highlight_index} on node {} has an invalid range {}-{}",
-                        node.node_id, highlight.start, highlight.end
-                    )));
-                }
-                if usize::try_from(highlight.end).map_or(true, |end| end > line_count) {
-                    return Err(ArtifactValidationError::new(format!(
-                        "code highlight {highlight_index} on node {} ends after line {line_count}",
+                        "code highlight {highlight_index} on node {} has no ranges",
                         node.node_id
                     )));
+                }
+                if highlight
+                    .annotation
+                    .as_ref()
+                    .is_some_and(|value| value.trim().is_empty())
+                {
+                    return Err(ArtifactValidationError::new(format!(
+                        "code highlight {highlight_index} on node {} has an empty annotation",
+                        node.node_id
+                    )));
+                }
+                for (range_index, range) in highlight.lines.iter().enumerate() {
+                    if range.start == 0 || range.end < range.start {
+                        return Err(ArtifactValidationError::new(format!(
+                            "code highlight {highlight_index} range {range_index} on node {} has an invalid range {}-{}",
+                            node.node_id, range.start, range.end
+                        )));
+                    }
+                    if usize::try_from(range.end).map_or(true, |end| end > line_count) {
+                        return Err(ArtifactValidationError::new(format!(
+                            "code highlight {highlight_index} range {range_index} on node {} ends after line {line_count}",
+                            node.node_id
+                        )));
+                    }
                 }
             }
             for left_index in 0..highlights.len() {
                 for right_index in (left_index + 1)..highlights.len() {
-                    let left = highlights[left_index];
-                    let right = highlights[right_index];
-                    if left.color != right.color
-                        && left.start <= right.end
-                        && right.start <= left.end
-                    {
-                        return Err(ArtifactValidationError::new(format!(
-                            "differently colored code highlights {left_index} and {right_index} overlap on node {}",
-                            node.node_id
-                        )));
+                    let left = &highlights[left_index];
+                    let right = &highlights[right_index];
+                    if left.color != right.color {
+                        for left_range in &left.lines {
+                            for right_range in &right.lines {
+                                if left_range.start <= right_range.end
+                                    && right_range.start <= left_range.end
+                                {
+                                    return Err(ArtifactValidationError::new(format!(
+                                        "differently colored code highlights {left_index} and {right_index} overlap on node {}",
+                                        node.node_id
+                                    )));
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -399,6 +491,46 @@ mod tests {
     }
 
     #[test]
+    fn legacy_flat_highlight_ranges_decode_into_groups() {
+        let mut artifact = quiz_artifact();
+        artifact.artifact_version = ArtifactVersion::V1_0_0;
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "legacy-code".into(),
+            content: CompiledNodeContent::Code {
+                content: "first\nsecond\n".into(),
+                language: Language::Text,
+                caption: None,
+                highlights: Vec::new(),
+                provenance: ResourceProvenance::Inline {
+                    sha256: "0".repeat(64),
+                },
+            },
+        });
+        let mut value = serde_json::to_value(artifact).unwrap();
+        value["presentation"]["nodes"][1]["highlights"] = serde_json::json!([{
+            "start": 1,
+            "end": 2,
+            "color": "blue"
+        }]);
+
+        let decoded: CompiledLesson = serde_json::from_value(value).unwrap();
+        validate_artifact(&decoded).unwrap();
+        let CompiledNodeContent::Code { highlights, .. } = &decoded.presentation.nodes[1].content
+        else {
+            panic!("expected code node")
+        };
+        assert_eq!(
+            highlights[0],
+            CompiledCodeHighlight {
+                lines: vec![CompiledLineRange { start: 1, end: 2 }],
+                color: HighlightColor::Blue,
+                annotation: None,
+            }
+        );
+    }
+
+    #[test]
     fn legacy_v1_code_and_diff_languages_default_to_text() {
         let artifact: CompiledLesson = serde_json::from_str(include_str!(
             "../../tests/fixtures/artifact/v1.0.0-without-language-fields.learn.json"
@@ -442,9 +574,9 @@ mod tests {
                 language: Language::Rust,
                 caption: None,
                 highlights: vec![CompiledCodeHighlight {
-                    start: 2,
-                    end: 2,
+                    lines: vec![CompiledLineRange { start: 2, end: 2 }],
                     color: HighlightColor::Yellow,
+                    annotation: None,
                 }],
                 provenance: ResourceProvenance::Inline {
                     sha256: "0".repeat(64),

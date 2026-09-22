@@ -23,9 +23,14 @@ export interface CodeNode extends LessonNodeBase {
 export type HighlightColor = "yellow" | "green" | "red" | "blue";
 
 export interface CodeHighlight {
+  lines: CodeHighlightRange[];
+  color: HighlightColor;
+  annotation?: string;
+}
+
+export interface CodeHighlightRange {
   start: number;
   end: number;
-  color: HighlightColor;
 }
 
 export type DiffLineKind = "context" | "addition" | "deletion";

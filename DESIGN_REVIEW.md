@@ -70,7 +70,7 @@ V1 session state is in memory and is lost when `learn` exits. The compiled
 
 ```json
 {
-  "schema_version": "2.0.0",
+  "schema_version": "2.1.0",
   "title": "Understanding the queue changes",
   "blocks": []
 }
@@ -269,14 +269,17 @@ adds optional captions to code and diff blocks, and `1.3.0` adds file-backed cod
 line highlights. The compiler continues to decode the older closed formats and
 can emit each version's exact JSON Schema. Source schema `2.0.0` changes a
 multiple-choice prompt from a Markdown string to `MarkdownSource`, allowing
-inline or file-backed prompts while preserving every `1.x` decoder.
+inline or file-backed prompts while preserving every `1.x` decoder. Source
+schema `2.1.0` adds optional Markdown annotations to highlight groups.
 
 Code highlights contain one or more absolute, one-based, inclusive source-line
 ranges. They are valid for file and Git-blob sources, but not inline code or
 rendered Mermaid diagrams. Their optional color is yellow by default, with
 green, red, and blue also available; differently colored ranges may not overlap.
 The compiler verifies that every range belongs to the displayed fragment and
-normalizes it to fragment-relative artifact positions. Highlighting is for
+normalizes it to fragment-relative artifact positions while preserving the
+group, color, and optional annotation. The runtime presents annotations with
+line references without requiring hover or color perception. Highlighting is for
 directing attention inside useful context, not decorating most of a block; an
 agent should narrow the source range when most displayed lines would otherwise
 be highlighted.

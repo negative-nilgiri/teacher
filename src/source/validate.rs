@@ -9,7 +9,7 @@ use super::{
     LineRange, MarkdownSource, RepoPath, SourceId, SymbolTable,
     model::{
         LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
-        LessonSourceV2_0_0,
+        LessonSourceV2_0_0, LessonSourceV2_1_0,
     },
 };
 
@@ -45,6 +45,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
         Some("1.2.0") => deserialize_source::<LessonSourceV1_2_0>(input).map(Into::into),
         Some("1.3.0") => deserialize_source::<LessonSourceV1_3_0>(input).map(Into::into),
         Some("2.0.0") => deserialize_source::<LessonSourceV2_0_0>(input).map(Into::into),
+        Some("2.1.0") => deserialize_source::<LessonSourceV2_1_0>(input).map(Into::into),
         _ => deserialize_source::<LessonSource>(input),
     }?;
     validate(source)
@@ -273,6 +274,14 @@ fn validate_code_highlights(
         CodeSource::Inline { .. } => None,
     };
     for (highlight_index, highlight) in highlights.iter().enumerate() {
+        if let Some(annotation) = &highlight.annotation {
+            nonempty(
+                annotation,
+                &format!("{base}/highlights/{highlight_index}/annotation"),
+                "highlight annotation",
+                diagnostics,
+            );
+        }
         let highlight_base = format!("{base}/highlights/{highlight_index}/lines");
         if highlight.lines.is_empty() {
             diagnostics.push(
@@ -832,6 +841,50 @@ mod tests {
         let diagnostics = parse_and_validate(invalid_source).expect_err("prompt path escapes root");
         assert_eq!(diagnostics[0].code, "source.path.invalid");
         assert_eq!(diagnostics[0].pointer, "/blocks/0/prompt/path");
+    }
+
+    #[test]
+    fn highlight_annotations_begin_in_source_2_1_and_must_not_be_blank() {
+        let legacy = r#"{
+            "schema_version":"2.0.0",
+            "title":"Legacy highlights",
+            "blocks":[{
+                "type":"code",
+                "id":"code",
+                "highlights":[{
+                    "lines":[{"start":1,"end":1}],
+                    "annotation":"This explanation is too new for 2.0.0."
+                }],
+                "source":{"kind":"file","path":"sample.rs"}
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(legacy).expect_err("2.0 rejects annotations");
+        assert_eq!(diagnostics[0].code, "source.deserialize");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0");
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unknown field `annotation`")
+        );
+
+        let current = r#"{
+            "schema_version":"2.1.0",
+            "title":"Annotated highlights",
+            "blocks":[{
+                "type":"code",
+                "id":"code",
+                "highlights":[{
+                    "lines":[{"start":1,"end":1}],
+                    "annotation":"   "
+                }],
+                "source":{"kind":"file","path":"sample.rs"}
+            }]
+        }"#;
+        let diagnostics = parse_and_validate(current).expect_err("blank annotation is invalid");
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "source.content.empty"
+                && diagnostic.pointer == "/blocks/0/highlights/0/annotation"
+        }));
     }
 
     #[test]

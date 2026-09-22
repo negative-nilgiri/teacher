@@ -23,16 +23,20 @@ pub enum SchemaVersion {
     #[serde(rename = "2.0.0")]
     #[schemars(rename = "2.0.0")]
     V2_0_0,
+    #[serde(rename = "2.1.0")]
+    #[schemars(rename = "2.1.0")]
+    V2_1_0,
 }
 
 impl SchemaVersion {
-    pub const CURRENT: Self = Self::V2_0_0;
-    pub const SUPPORTED: [Self; 5] = [
+    pub const CURRENT: Self = Self::V2_1_0;
+    pub const SUPPORTED: [Self; 6] = [
         Self::V1_0_0,
         Self::V1_1_0,
         Self::V1_2_0,
         Self::V1_3_0,
         Self::V2_0_0,
+        Self::V2_1_0,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -42,6 +46,7 @@ impl SchemaVersion {
             Self::V1_2_0 => "1.2.0",
             Self::V1_3_0 => "1.3.0",
             Self::V2_0_0 => "2.0.0",
+            Self::V2_1_0 => "2.1.0",
         }
     }
 }
@@ -66,9 +71,10 @@ pub struct LessonSource {
 /// Exact decoder/schema model for the original source format.
 ///
 /// `language` was introduced in source schema 1.1.0, `caption` in 1.2.0, and
-/// `highlights` in 1.3.0, and file-backed quiz prompts in 2.0.0, so older blocks
-/// intentionally remain separate closed shapes. Every versioned wire model
-/// lowers into the same internal [`LessonSource`] representation.
+/// `highlights` in 1.3.0, file-backed quiz prompts in 2.0.0, and highlight
+/// annotations in 2.1.0, so older blocks intentionally remain separate closed
+/// shapes. Every versioned wire model lowers into the same internal
+/// [`LessonSource`] representation.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(title = "LessonSource")]
@@ -319,7 +325,7 @@ impl From<LessonSourceV1_3_0> for LessonSource {
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum BlockV1_3_0 {
     Markdown(MarkdownBlock),
-    Code(CodeBlock),
+    Code(CodeBlockBeforeV2_1_0),
     Diff(DiffBlock),
     MultipleChoice(MultipleChoiceBlockBeforeV2_0_0),
 }
@@ -328,7 +334,7 @@ impl From<BlockV1_3_0> for Block {
     fn from(block: BlockV1_3_0) -> Self {
         match block {
             BlockV1_3_0::Markdown(block) => Self::Markdown(block),
-            BlockV1_3_0::Code(block) => Self::Code(block),
+            BlockV1_3_0::Code(block) => Self::Code(block.into()),
             BlockV1_3_0::Diff(block) => Self::Diff(block),
             BlockV1_3_0::MultipleChoice(block) => Self::MultipleChoice(block.into()),
         }
@@ -343,7 +349,7 @@ pub(crate) struct LessonSourceV2_0_0 {
     schema_version: SchemaVersionV2_0_0,
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     title: String,
-    blocks: Vec<Block>,
+    blocks: Vec<BlockV2_0_0>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -358,7 +364,108 @@ impl From<LessonSourceV2_0_0> for LessonSource {
         Self {
             schema_version: SchemaVersion::V2_0_0,
             title: source.title,
+            blocks: source.blocks.into_iter().map(Block::from).collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "Block")]
+enum BlockV2_0_0 {
+    Markdown(MarkdownBlock),
+    Code(CodeBlockBeforeV2_1_0),
+    Diff(DiffBlock),
+    MultipleChoice(MultipleChoiceBlock),
+}
+
+impl From<BlockV2_0_0> for Block {
+    fn from(block: BlockV2_0_0) -> Self {
+        match block {
+            BlockV2_0_0::Markdown(block) => Self::Markdown(block),
+            BlockV2_0_0::Code(block) => Self::Code(block.into()),
+            BlockV2_0_0::Diff(block) => Self::Diff(block),
+            BlockV2_0_0::MultipleChoice(block) => Self::MultipleChoice(block),
+        }
+    }
+}
+
+/// Exact decoder/schema model for source schema 2.1.0.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(title = "LessonSource")]
+pub(crate) struct LessonSourceV2_1_0 {
+    schema_version: SchemaVersionV2_1_0,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    title: String,
+    blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+enum SchemaVersionV2_1_0 {
+    #[serde(rename = "2.1.0")]
+    #[schemars(rename = "2.1.0")]
+    V2_1_0,
+}
+
+impl From<LessonSourceV2_1_0> for LessonSource {
+    fn from(source: LessonSourceV2_1_0) -> Self {
+        Self {
+            schema_version: SchemaVersion::V2_1_0,
+            title: source.title,
             blocks: source.blocks,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "CodeBlock")]
+struct CodeBlockBeforeV2_1_0 {
+    id: SourceId,
+    #[serde(default)]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    language: Option<String>,
+    #[serde(default)]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    caption: Option<String>,
+    #[serde(default)]
+    highlights: Vec<CodeHighlightBeforeV2_1_0>,
+    source: CodeSource,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(rename = "CodeHighlight")]
+struct CodeHighlightBeforeV2_1_0 {
+    #[schemars(length(min = 1))]
+    lines: Vec<LineRange>,
+    #[serde(default)]
+    color: HighlightColor,
+}
+
+impl From<CodeBlockBeforeV2_1_0> for CodeBlock {
+    fn from(block: CodeBlockBeforeV2_1_0) -> Self {
+        Self {
+            id: block.id,
+            language: block.language,
+            caption: block.caption,
+            highlights: block
+                .highlights
+                .into_iter()
+                .map(CodeHighlight::from)
+                .collect(),
+            source: block.source,
+        }
+    }
+}
+
+impl From<CodeHighlightBeforeV2_1_0> for CodeHighlight {
+    fn from(highlight: CodeHighlightBeforeV2_1_0) -> Self {
+        Self {
+            lines: highlight.lines,
+            color: highlight.color,
+            annotation: None,
         }
     }
 }
@@ -417,6 +524,10 @@ pub struct CodeHighlight {
     /// Pastel presentation color. Omission defaults to yellow.
     #[serde(default, skip_serializing_if = "HighlightColor::is_default")]
     pub color: HighlightColor,
+    /// Optional Markdown explaining why this group of ranges matters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub annotation: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

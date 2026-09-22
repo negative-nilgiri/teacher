@@ -14,8 +14,8 @@ use sha2::{Digest, Sha256};
 
 use crate::artifact::{
     BuildProvenance, CURRENT_ARTIFACT_VERSION, ChoiceId, CompiledCodeHighlight, CompiledLesson,
-    CompiledNode, CompiledNodeContent, FrozenDiffTarget, LessonPresentation, PresentedChoice,
-    PrivateLesson, QuizAnswer, ResourceProvenance,
+    CompiledLineRange, CompiledNode, CompiledNodeContent, FrozenDiffTarget, LessonPresentation,
+    PresentedChoice, PrivateLesson, QuizAnswer, ResourceProvenance,
 };
 use crate::diagnostics::Diagnostic;
 use crate::language::Language;
@@ -470,6 +470,7 @@ fn compile_code_highlights(
     })?;
     let mut compiled = Vec::new();
     for (highlight_index, highlight) in authored.iter().enumerate() {
+        let mut lines = Vec::with_capacity(highlight.lines.len());
         for (range_index, range) in highlight.lines.iter().enumerate() {
             let pointer =
                 format!("{block_pointer}/highlights/{highlight_index}/lines/{range_index}");
@@ -512,12 +513,16 @@ fn compile_code_highlights(
                     .with_suggestion("Keep every highlight inside the resolved file content."),
                 );
             }
-            compiled.push(CompiledCodeHighlight {
+            lines.push(CompiledLineRange {
                 start: relative_start,
                 end: relative_end,
-                color: highlight.color,
             });
         }
+        compiled.push(CompiledCodeHighlight {
+            lines,
+            color: highlight.color,
+            annotation: highlight.annotation.clone(),
+        });
     }
     Ok(compiled)
 }
@@ -841,7 +846,7 @@ mod tests {
             artifact.provenance.source_schema_version,
             crate::source::SchemaVersion::V2_0_0
         );
-        assert_eq!(artifact.provenance.compiler_version, "1.8.0");
+        assert_eq!(artifact.provenance.compiler_version, "1.9.0");
 
         fs::remove_dir_all(directory).unwrap();
     }
@@ -949,14 +954,17 @@ mod tests {
         git(&directory, &["commit", "-qm", "base"]);
 
         let lesson = r#"{
-            "schema_version":"1.3.0",
+            "schema_version":"2.1.0",
             "title":"Highlights",
             "blocks":[
                 {
                     "type":"code",
                     "id":"worktree",
                     "highlights":[
-                        {"lines":[{"start":2,"end":2},{"start":4,"end":4}]},
+                        {
+                            "lines":[{"start":2,"end":2},{"start":4,"end":4}],
+                            "annotation":"Both lines participate in the **same invariant**."
+                        },
                         {"lines":[{"start":5,"end":5}],"color":"blue"}
                     ],
                     "source":{"kind":"file","path":"sample.rs","lines":{"start":2,"end":5}}
@@ -979,19 +987,17 @@ mod tests {
             highlights,
             &[
                 CompiledCodeHighlight {
-                    start: 1,
-                    end: 1,
+                    lines: vec![
+                        CompiledLineRange { start: 1, end: 1 },
+                        CompiledLineRange { start: 3, end: 3 },
+                    ],
                     color: crate::source::HighlightColor::Yellow,
+                    annotation: Some("Both lines participate in the **same invariant**.".into()),
                 },
                 CompiledCodeHighlight {
-                    start: 3,
-                    end: 3,
-                    color: crate::source::HighlightColor::Yellow,
-                },
-                CompiledCodeHighlight {
-                    start: 4,
-                    end: 4,
+                    lines: vec![CompiledLineRange { start: 4, end: 4 }],
                     color: crate::source::HighlightColor::Blue,
+                    annotation: None,
                 },
             ]
         );
@@ -999,8 +1005,8 @@ mod tests {
         else {
             panic!("expected code node")
         };
-        assert_eq!(highlights[0].start, 1);
-        assert_eq!(highlights[0].end, 3);
+        assert_eq!(highlights[0].lines[0].start, 1);
+        assert_eq!(highlights[0].lines[0].end, 3);
 
         fs::remove_dir_all(directory).unwrap();
     }

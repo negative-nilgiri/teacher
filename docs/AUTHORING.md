@@ -8,7 +8,7 @@ for a learner to understand one change at a time.
 Use the compiler as the source of truth:
 
 ```console
-learnc schema --version 2.0.0
+learnc schema --version 2.1.0
 learnc check lesson.json
 learnc build lesson.json
 learn serve lesson.learn
@@ -43,7 +43,7 @@ Do not author numeric node IDs or choice IDs—the compiler generates those.
 flowchart LR
     L["LessonSource<br/>schema_version · title · blocks"]:::envelope
     L --> M["markdown<br/>inline | file"]:::content
-    L --> C["code<br/>language? · caption? · highlights? · inline | file | git_blob"]:::content
+    L --> C["code<br/>language? · caption? · highlights + annotations? · inline | file | git_blob"]:::content
     L --> D["diff<br/>caption? · inline | file | git"]:::repository
     L --> Q["multiple_choice<br/>prompt: inline | file<br/>choices · hints · explanation"]:::quiz
 
@@ -62,7 +62,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "2.0.0",
+  "schema_version": "2.1.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -77,8 +77,8 @@ adds optional Markdown `caption` fields to code and diff blocks. Source schema
 documents, but their closed schemas reject fields introduced later. Source
 schema `2.0.0` changes the multiple-choice `prompt` from a string to a Markdown
 source object so it can be inline or file-backed. This is a breaking source
-shape, while the compiled artifact remains compatible because the prompt is
-still frozen as Markdown text. Use `2.0.0` for new lessons.
+shape. Source schema `2.1.0` adds optional Markdown annotations to code
+highlight groups. Use `2.1.0` for new lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -88,7 +88,8 @@ ranges.
 Some rules depend on relationships between values or on external state and are
 therefore enforced only by `learnc check` and `learnc build`. These include:
 
-- non-blank titles, IDs, Markdown, code, captions, prompts, choices, hints, and explanations;
+- non-blank titles, IDs, Markdown, code, captions, highlight annotations,
+  prompts, choices, hints, and explanations;
 - document-wide source-ID uniqueness;
 - exactly one correct choice per question;
 - inclusive range ordering (`end >= start`) and ranges fitting resolved content;
@@ -125,7 +126,8 @@ entire prose section.
 Markdown fields support KaTeX mathematics. Use `$...$` for inline notation and
 put `$$` delimiters on their own lines for display notation. This works in
 standalone Markdown blocks and every other Markdown-bearing field, including
-quiz prompts, choices, hints, explanations, and code or diff captions. KaTeX
+quiz prompts, choices, hints, explanations, code or diff captions, and
+code-highlight annotations. KaTeX
 implements a mathematical subset of LaTeX rather than a complete LaTeX
 document processor. Keep formulas out of code fences unless the literal LaTeX
 source is itself the subject of the lesson.
@@ -168,7 +170,8 @@ General teaching prose still belongs in surrounding Markdown blocks.
     { "lines": [{ "start": 76, "end": 80 }] },
     {
       "lines": [{ "start": 103, "end": 106 }],
-      "color": "blue"
+      "color": "blue",
+      "annotation": "This branch preserves the previous value until the **commit point**."
     }
   ],
   "source": {
@@ -185,9 +188,14 @@ are available only on `file` and `git_blob` code sources and use absolute,
 one-based, inclusive line numbers from the original file—not positions relative
 to the selected fragment. A group may contain several `lines` ranges. Its
 optional `color` is `yellow` by default and may also be `green`, `red`, or
-`blue`. Differently colored ranges cannot overlap. The compiler verifies the
-ranges against the resolved content and stores fragment-relative positions in
-the artifact.
+`blue`. Source schema `2.1.0` also lets a group carry an optional Markdown
+`annotation`. The runtime shows annotated groups persistently with their color
+and line references, so the explanation works without hover and does not rely
+on color alone. One annotation applies to every range in its group; split
+ranges into separate groups, even with the same color, when their explanations
+differ. Differently colored ranges cannot overlap. The compiler verifies the
+ranges against the resolved content and stores fragment-relative positions and
+grouping in the artifact.
 
 Do not highlight most of a block merely for decoration; narrow the source
 `lines` range when less context would be clearer. Inline code cannot carry
@@ -195,6 +203,15 @@ highlights. Write generated content to at least a temporary file when it needs
 line emphasis. Mermaid blocks render as diagrams and also reject source-line
 highlights; use a substantive caption or nearby Markdown when a diagram needs
 additional explanation.
+
+Code comments and highlight annotations serve different purposes. Keep or add
+concise comments inside agent-authored code when they convey local intent that
+the code alone cannot, particularly when separate blocks show different parts
+or states of the same file. Do not rely on a block ID to explain why a fragment
+was included. Preserve pedagogically relevant comments when selecting ranges
+from real files, but do not modify repository source solely to add lesson
+commentary; use a highlight annotation or nearby Markdown instead. Omit
+comments that merely narrate obvious syntax.
 
 The canonical language names are `rust`, `python`, `javascript`, `typescript`,
 `c`, `cpp`, `go`, `java`, `shell`, `json`, `yaml`, `toml`, `html`, `css`,

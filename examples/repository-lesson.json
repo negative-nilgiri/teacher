@@ -1,5 +1,5 @@
 {
-  "schema_version": "2.0.0",
+  "schema_version": "2.1.0",
   "title": "Repository-backed queue change",
   "blocks": [
     {
@@ -11,7 +11,11 @@
       "type": "code",
       "id": "current-implementation",
       "highlights": [
-        { "lines": [{ "start": 2, "end": 2 }], "color": "green" }
+        {
+          "lines": [{ "start": 2, "end": 2 }],
+          "color": "green",
+          "annotation": "The worktree now removes from the **front**, preserving FIFO order."
+        }
       ],
       "source": {
         "kind": "file",
@@ -23,7 +27,11 @@
       "type": "code",
       "id": "implementation-at-head",
       "highlights": [
-        { "lines": [{ "start": 2, "end": 2 }], "color": "red" }
+        {
+          "lines": [{ "start": 2, "end": 2 }],
+          "color": "red",
+          "annotation": "At `HEAD`, removal still happens at the **back** of the queue."
+        }
       ],
       "source": {
         "kind": "git_blob",

@@ -69,6 +69,15 @@ pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberatio
 .source-file-name { overflow: hidden; color: var(--ink); font-size: .78rem; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .language-label { color: var(--muted); font-size: .7rem; font-weight: 750; letter-spacing: .08em; line-height: 1; text-transform: uppercase; }
 .source-caption { padding: .75rem 1rem; border-bottom: 1px solid var(--line); background: #f7f3eb; color: var(--muted); font-size: .9rem; }
+.highlight-annotations { padding: .7rem .85rem; border-bottom: 1px solid var(--line); background: #fbf8f1; }
+.highlight-annotations ul { display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
+.highlight-annotation { padding: .55rem .7rem; border-left: .28rem solid; border-radius: .2rem; background: var(--paper); }
+.highlight-annotation-yellow { border-color: #e3b341; }
+.highlight-annotation-green { border-color: #46a36f; }
+.highlight-annotation-red { border-color: #d66760; }
+.highlight-annotation-blue { border-color: #579ad6; }
+.highlight-annotation-label { display: block; margin-bottom: .2rem; color: var(--muted); font-size: .68rem; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
+.highlight-annotation-content { color: var(--muted); font-size: .86rem; }
 .code-block > pre { border-radius: 0; }
 .code-listing { padding: 0; }
 .code-listing-inner { position: relative; display: grid; grid-template-columns: auto 1fr; width: max-content; min-width: 100%; padding-block: 1rem; }

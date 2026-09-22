@@ -67,7 +67,8 @@ Use each block for its presentation semantics:
   for that example.
 - Markdown fields render KaTeX math. Write inline notation as `$...$` and put
   `$$` delimiters on their own lines for display notation. This applies to
-  Markdown blocks, quiz text, hints, explanations, and code or diff captions.
+  Markdown blocks, quiz text, hints, explanations, code or diff captions, and
+  code-highlight annotations.
   Use math only where it clarifies the material, keep delimiters balanced, and
   stay within KaTeX's supported LaTeX subset. Put a formula in a code block only
   when the literal LaTeX source is what the learner needs to inspect.
@@ -93,6 +94,14 @@ Use each block for its presentation semantics:
   specific Git revision. Use a diff only when the change itself matters—when
   additions, deletions, or the before/after relationship are part of what the
   learner should understand.
+- Keep comments that carry teaching meaning inside the displayed code. In
+  agent-authored snippets, add a concise source comment when it communicates
+  context or a distinction that the code alone cannot—especially when two
+  blocks show different portions or states of the same file. Do not make the
+  learner infer that purpose from the block ID. Preserve relevant existing
+  comments when selecting a file range, but do not edit real repository source
+  merely to add lesson commentary; use nearby Markdown or a highlight
+  annotation instead. Avoid comments that only paraphrase obvious syntax.
 - Source schema `1.3.0` lets a file or Git-blob code block direct attention to
   several absolute source-line ranges with `highlights`. Available colors are
   `yellow` (the default), `green`, `red`, and `blue`; differently colored
@@ -109,8 +118,12 @@ Use each block for its presentation semantics:
     "highlights": [
       { "lines": [{ "start": 52, "end": 56 }] },
       {
-        "lines": [{ "start": 71, "end": 73 }],
-        "color": "blue"
+        "lines": [
+          { "start": 71, "end": 73 },
+          { "start": 79, "end": 80 }
+        ],
+        "color": "blue",
+        "annotation": "Both branches normalize input into the **same internal form**."
       }
     ],
     "source": {
@@ -120,6 +133,12 @@ Use each block for its presentation semantics:
     }
   }
   ```
+  Source schema `2.1.0` adds optional Markdown `annotation` text to each
+  highlight group. Use it when the learner cannot infer why those particular
+  ranges matter. One annotation applies to every range in its group; use
+  separate groups, even with the same color, when ranges need different
+  explanations. Do not write labels such as "the blue lines" or restate
+  visible code. The UI already shows the color and line references.
 - Set a code block's optional language when it is known, especially for inline
   sources. File and Git-blob sources can infer a recognized language from their
   path. Prefer the canonical names `rust`, `python`, `javascript`, `typescript`,

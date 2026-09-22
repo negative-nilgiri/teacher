@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::artifact::{
-    CURRENT_ARTIFACT_VERSION, ChoiceId, CompiledLesson, CompiledNodeContent, validate_artifact,
-};
+#[cfg(test)]
+use crate::artifact::CURRENT_ARTIFACT_VERSION;
+use crate::artifact::{ChoiceId, CompiledLesson, CompiledNodeContent, validate_artifact};
 use crate::repository::{DiffLine, ResolvedDiff};
 use crate::source::NodeId;
 
@@ -32,10 +32,10 @@ fn decode_artifact(bytes: &[u8]) -> Result<CompiledLesson, ArtifactLoadError> {
         .get("artifact_version")
         .and_then(serde_json::Value::as_str)
         .ok_or(ArtifactLoadError::MissingVersion)?;
-    if found_version != CURRENT_ARTIFACT_VERSION.as_str() {
+    if !matches!(found_version, "1.0.0" | "1.1.0") {
         return Err(ArtifactLoadError::UnsupportedVersion {
             found: found_version.to_owned(),
-            supported: CURRENT_ARTIFACT_VERSION.as_str(),
+            supported: "1.0.0 or 1.1.0",
         });
     }
 
@@ -458,9 +458,9 @@ pub(crate) mod tests {
                 language: crate::language::Language::Rust,
                 caption: None,
                 highlights: vec![crate::artifact::CompiledCodeHighlight {
-                    start: 1,
-                    end: 1,
+                    lines: vec![crate::artifact::CompiledLineRange { start: 1, end: 1 }],
                     color: crate::source::HighlightColor::Blue,
+                    annotation: None,
                 }],
                 provenance: crate::artifact::ResourceProvenance::GitBlob {
                     repository: ".".into(),
@@ -475,8 +475,14 @@ pub(crate) mod tests {
 
         let projection = serde_json::to_value(project_artifact(&artifact)).unwrap();
         assert_eq!(projection["nodes"][1]["filename"], "parser.rs");
-        assert_eq!(projection["nodes"][1]["highlights"][0]["start"], 1);
-        assert_eq!(projection["nodes"][1]["highlights"][0]["end"], 1);
+        assert_eq!(
+            projection["nodes"][1]["highlights"][0]["lines"][0]["start"],
+            1
+        );
+        assert_eq!(
+            projection["nodes"][1]["highlights"][0]["lines"][0]["end"],
+            1
+        );
         assert_eq!(projection["nodes"][1]["highlights"][0]["color"], "blue");
     }
 
