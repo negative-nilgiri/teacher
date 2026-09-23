@@ -190,8 +190,11 @@ to the selected fragment. A group may contain several `lines` ranges. Its
 optional `color` is `yellow` by default and may also be `green`, `red`, or
 `blue`. Source schema `2.1.0` also lets a group carry an optional Markdown
 `annotation`. The runtime shows annotated groups persistently with their color
-and line references, so the explanation works without hover and does not rely
-on color alone. One annotation applies to every range in its group; split
+and line references, and repeats the explanation beside a range when its `i`
+marker is activated by click, tap, Enter, or Space. Activating the same marker
+again closes the popup. The explanation therefore remains available without
+hover and does not rely on color alone. One annotation applies to every range
+in its group; split
 ranges into separate groups, even with the same color, when their explanations
 differ. Differently colored ranges cannot overlap. The compiler verifies the
 ranges against the resolved content and stores fragment-relative positions and

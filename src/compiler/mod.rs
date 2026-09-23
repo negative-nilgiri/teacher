@@ -846,7 +846,7 @@ mod tests {
             artifact.provenance.source_schema_version,
             crate::source::SchemaVersion::V2_0_0
         );
-        assert_eq!(artifact.provenance.compiler_version, "1.9.0");
+        assert_eq!(artifact.provenance.compiler_version, "1.10.0");
 
         fs::remove_dir_all(directory).unwrap();
     }

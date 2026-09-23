@@ -251,7 +251,7 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.9.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.10.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.1.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
 | Artifact schema | `1.1.0` | [`ArtifactVersion`](../src/artifact/mod.rs#L15) |
 
@@ -400,7 +400,10 @@ compact label and falls back to `Code` when no specific language is known:
   code sources also show the basename derived from their frozen provenance;
   inline code has no synthetic filename. Compiled highlight ranges add pastel
   full-line backgrounds and a stronger gutter accent without splitting the
-  syntax highlighter's multiline token spans. Mermaid renders as a diagram,
+  syntax highlighter's multiline token spans. Annotated ranges keep a
+  persistent summary above the listing and expose line-local Markdown cards
+  when their `i` markers are explicitly activated by pointer, keyboard, or
+  touch. Mermaid renders as a diagram,
   with a safe literal fallback for unknown languages or invalid diagrams. An
   authored caption renders as Markdown immediately above the content. Mermaid
   runs in strict security mode and derives an optional legend from semantic

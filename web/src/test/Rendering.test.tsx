@@ -90,16 +90,20 @@ describe("semantic source rendering", () => {
     expect(container.querySelector(".hljs-keyword")).toHaveTextContent("fn");
   });
 
-  it("renders normalized multi-color line highlights without breaking multiline syntax", () => {
+  it("renders line-local annotation cards without removing the persistent explanation", async () => {
+    const user = userEvent.setup();
     const { container } = render(
       <CodeBlock
         node={{
-          content: "/* first\nsecond */\nfn main() {}\nlet answer = 42;\nanswer\n",
+          content: "/* first\nsecond */\nfn main() {}\nlet answer = 42;\nanswer\nreturn answer;\n",
           highlights: [
             {
               annotation: "The comment documents the **shared invariant**.",
               color: "yellow",
-              lines: [{ end: 2, start: 1 }],
+              lines: [
+                { end: 2, start: 1 },
+                { end: 6, start: 6 },
+              ],
             },
             { color: "blue", lines: [{ end: 4, start: 4 }] },
             { color: "green", lines: [{ end: 3, start: 3 }] },
@@ -114,21 +118,56 @@ describe("semantic source rendering", () => {
     );
 
     const bands = container.querySelectorAll(".code-highlight");
-    expect(bands).toHaveLength(4);
+    expect(bands).toHaveLength(5);
     expect(bands[0]).toHaveClass("code-highlight-yellow");
     expect(bands[0]).toHaveAttribute("data-start", "1");
     expect(bands[0]).toHaveAttribute("data-end", "2");
-    expect(bands[1]).toHaveClass("code-highlight-blue");
-    expect(bands[2]).toHaveClass("code-highlight-green");
-    expect(bands[3]).toHaveClass("code-highlight-red");
-    expect(container.querySelector(".code-line-numbers")).toHaveTextContent("1 2 3 4 5");
+    expect(bands[1]).toHaveClass("code-highlight-yellow");
+    expect(bands[2]).toHaveClass("code-highlight-blue");
+    expect(bands[3]).toHaveClass("code-highlight-green");
+    expect(bands[4]).toHaveClass("code-highlight-red");
+    expect(container.querySelector(".code-line-numbers")).toHaveTextContent("1 2 3 4 5 6");
     expect(container.querySelector(".hljs-comment")).toHaveTextContent("/* first second */");
-    expect(screen.getByText("Yellow · Lines 1–2")).toBeInTheDocument();
+    expect(screen.getByText("Yellow · Lines 1–2, 6")).toBeInTheDocument();
     expect(screen.getByLabelText("Highlighted code explanations")).toHaveTextContent(
       "The comment documents the shared invariant.",
     );
     expect(screen.getByText("shared invariant").tagName).toBe("STRONG");
-    expect(screen.getByText(/Highlighted lines 1–2 in yellow/)).toBeInTheDocument();
+    expect(screen.getByText(/Highlighted lines 1–2, 6 in yellow/)).toBeInTheDocument();
+
+    const markers = screen.getAllByRole("button", { name: /Show annotation for/ });
+    expect(markers).toHaveLength(2);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+
+    await user.hover(markers[1]);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+
+    await user.hover(bands[0] as HTMLElement);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+
+    await user.click(markers[1]);
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "The comment documents the shared invariant.",
+    );
+    expect(screen.getByRole("note")).not.toHaveTextContent("Yellow · Line 6");
+    expect(markers[1]).toHaveAttribute("aria-expanded", "true");
+
+    await user.unhover(markers[1]);
+    expect(screen.getByRole("note")).toBeInTheDocument();
+
+    await user.click(markers[1]);
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    expect(markers[1]).toHaveAttribute("aria-expanded", "false");
+
+    markers[0].focus();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "The comment documents the shared invariant.",
+    );
+    expect(screen.getByRole("note")).not.toHaveTextContent("Yellow · Lines 1–2");
+    await user.keyboard(" ");
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
   it("folds files independently in a multi-file diff", async () => {

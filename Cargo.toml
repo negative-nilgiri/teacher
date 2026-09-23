@@ -1,6 +1,6 @@
 [package]
 name = "agent-teacher"
-version = "1.9.0"
+version = "1.10.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Compile and serve local, agent-authored interactive lessons"
