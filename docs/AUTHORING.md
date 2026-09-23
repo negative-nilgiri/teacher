@@ -269,6 +269,28 @@ Use `language: "text"` when Mermaid source should be shown literally instead
 of rendered as a diagram. If a Mermaid diagram is invalid, the runtime shows
 its escaped source instead of injecting a partial rendering.
 
+Sequence diagrams use the same code-block shape and begin their content with
+`sequenceDiagram`. Use them for time-ordered interactions rather than static
+structure. The runtime keeps their natural width inside a horizontally
+scrollable canvas and omits Mermaid's duplicate bottom row of participants:
+
+```json
+{
+  "type": "code",
+  "id": "build-sequence",
+  "language": "mermaid",
+  "source": {
+    "kind": "inline",
+    "content": "sequenceDiagram\n  autonumber\n  participant A as Agent\n  participant C as Compiler\n  A->>C: Build lesson\n  activate C\n  C-->>A: Return artifact\n  deactivate C"
+  }
+}
+```
+
+Sequence diagrams do not accept flowchart `classDef` and `class` statements,
+so they do not produce the class-derived legend below. Use participant aliases,
+message labels, notes, and a substantive block caption to make their meaning
+clear.
+
 When color communicates semantic categories, define named `classDef` styles
 and assign nodes with `class`. The runtime derives a compact legend from those
 definitions, using the semantic class name as its label. Diagrams without

@@ -30,6 +30,16 @@
       }
     },
     {
+      "type": "code",
+      "id": "queue-sequence",
+      "language": "mermaid",
+      "caption": "The consumer receives the oldest queued job only after both producers have completed their enqueue operations.",
+      "source": {
+        "kind": "inline",
+        "content": "sequenceDiagram\n  autonumber\n  participant A as Producer A\n  participant B as Producer B\n  participant Q as Queue\n  participant C as Consumer\n  A->>Q: Enqueue Job A\n  B->>Q: Enqueue Job B\n  C->>Q: Request next job\n  activate Q\n  Q-->>C: Return Job A\n  deactivate Q"
+      }
+    },
+    {
       "type": "diff",
       "id": "multi-file-diff",
       "source": {

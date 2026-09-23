@@ -251,7 +251,7 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.10.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.11.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.1.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
 | Artifact schema | `1.1.0` | [`ArtifactVersion`](../src/artifact/mod.rs#L15) |
 
@@ -407,7 +407,8 @@ compact label and falls back to `Code` when no specific language is known:
   with a safe literal fallback for unknown languages or invalid diagrams. An
   authored caption renders as Markdown immediately above the content. Mermaid
   runs in strict security mode and derives an optional legend from semantic
-  `classDef` declarations.
+  `classDef` declarations. Sequence diagrams retain their natural width in the
+  existing horizontal scroll container and suppress mirrored bottom actors.
 - [`DiffBlock`](../web/src/components/DiffBlock.tsx) renders structured lines and
   old/new line numbers, showing and using the language frozen for each compiled
   diff file to syntax-highlight its content. A multi-file diff gives every file

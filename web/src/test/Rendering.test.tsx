@@ -287,7 +287,11 @@ describe("semantic source rendering", () => {
     expect(screen.getByText(/shared queue is the serialization point/)).toBeInTheDocument();
     expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^mermaid-/), source);
     expect(mermaidMocks.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({ securityLevel: "strict", startOnLoad: false }),
+      expect.objectContaining({
+        securityLevel: "strict",
+        sequence: { mirrorActors: false, useMaxWidth: false },
+        startOnLoad: false,
+      }),
     );
     expect(screen.getByLabelText("Diagram legend")).toBeInTheDocument();
     expect(screen.getByTitle("Mermaid class: external")).toHaveTextContent("external");
@@ -296,6 +300,32 @@ describe("semantic source rendering", () => {
       borderColor: "#3b82f6",
       color: "#172554",
     });
+  });
+
+  it("renders Mermaid sequence diagrams through the semantic diagram path", async () => {
+    mermaidMocks.render.mockResolvedValue({
+      svg: '<svg data-testid="rendered-sequence"><text>Agent</text><text>Compiler</text></svg>',
+    });
+    const source =
+      "sequenceDiagram\n  autonumber\n  participant A as Agent\n  participant C as Compiler\n  A->>C: Build lesson\n  activate C\n  C-->>A: Return artifact\n  deactivate C";
+
+    render(
+      <CodeBlock
+        node={{
+          content: source,
+          language: "mermaid",
+          node_id: 5,
+          source_id: "build-sequence",
+          type: "code",
+        }}
+      />,
+    );
+
+    expect(
+      await screen.findByRole("img", { name: "Diagram: build-sequence" }),
+    ).toContainElement(screen.getByTestId("rendered-sequence"));
+    expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^mermaid-/), source);
+    expect(screen.queryByLabelText("Diagram legend")).not.toBeInTheDocument();
   });
 
   it("shows escaped source when Mermaid rejects invalid input", async () => {

@@ -150,6 +150,13 @@ Use each block for its presentation semantics:
   plain text.
 - Author a Mermaid diagram as a code block with an inline source and language
   `mermaid`. Do not put it in a fenced section inside a Markdown block.
+  Use `sequenceDiagram` when the lesson needs to explain time-ordered messages,
+  calls, responses, activation lifetimes, loops, or alternative interaction
+  paths. Declare participants with short identifiers and readable aliases;
+  prefer `->>` for calls, `-->>` for responses, and use `activate`/`deactivate`,
+  `loop`, `alt`/`else`, `opt`, and `Note` only when they carry teaching value.
+  Sequence diagrams do not use flowchart `classDef` assignments and therefore
+  do not receive the class-derived legend described below.
   When colors express semantic categories, use a small set of meaningfully
   named `classDef` declarations and compact `class A,B category` assignments.
   The lesson UI derives its legend from those definitions. Do not add

@@ -95,6 +95,10 @@ async function renderMermaid(id: string, source: string): Promise<string> {
     mermaid.initialize({
       flowchart: { htmlLabels: false },
       securityLevel: "strict",
+      sequence: {
+        mirrorActors: false,
+        useMaxWidth: false,
+      },
       startOnLoad: false,
       theme: "base",
     });

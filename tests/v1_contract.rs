@@ -170,7 +170,7 @@ fn compiler_freezes_file_backed_question_prompts() {
         serde_json::from_slice(&fs::read(root.path().join("lesson.learn")).unwrap()).unwrap();
     assert_eq!(artifact.provenance.source_schema_version.as_str(), "2.1.0");
     assert_eq!(artifact.artifact_version.as_str(), "1.1.0");
-    assert_eq!(artifact.provenance.compiler_version, "1.10.0");
+    assert_eq!(artifact.provenance.compiler_version, "1.11.0");
     assert!(matches!(
         &artifact.presentation.nodes[0].content,
         CompiledNodeContent::MultipleChoice { prompt, .. }
@@ -309,7 +309,7 @@ fn cli_help_version_and_usage_errors_follow_the_output_mode() {
         let version: serde_json::Value = serde_json::from_slice(&version.stdout).unwrap();
         assert_eq!(version["ok"], true);
         assert_eq!(version["kind"], "version");
-        assert_eq!(version["version"], "1.10.0");
+        assert_eq!(version["version"], "1.11.0");
         assert_eq!(version["name"], name);
 
         let human = output_success(Command::new(binary).args(["-t", "--help"]));
