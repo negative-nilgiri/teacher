@@ -150,12 +150,12 @@ async fn serve_asset(uri: Uri) -> Response {
     } else {
         requested
     };
-    let asset = WebAssets::get(asset_name)
-        .map(|asset| (asset_name, asset))
-        .or_else(|| WebAssets::get("index.html").map(|asset| ("index.html", asset)));
-    match asset {
-        Some((served_name, asset)) => {
-            let content_type = mime_guess::from_path(served_name)
+    // The lesson UI has no client-side routes, so anything that is not an
+    // embedded file is a real miss. Answering it with `index.html` would turn a
+    // missing script into a confusing HTML-as-JavaScript error.
+    match WebAssets::get(asset_name) {
+        Some(asset) => {
+            let content_type = mime_guess::from_path(asset_name)
                 .first_or_octet_stream()
                 .as_ref()
                 .to_owned();
@@ -165,8 +165,34 @@ async fn serve_asset(uri: Uri) -> Response {
                 .body(Body::from(asset.data.into_owned()))
                 .expect("static response is valid")
         }
-        None => ApiError::not_found("asset_not_found", "Frontend asset not found").into_response(),
+        None => not_found_page(uri.path()),
     }
+}
+
+const NOT_FOUND_PAGE: &str = include_str!("not_found.html");
+
+fn not_found_page(path: &str) -> Response {
+    let body = NOT_FOUND_PAGE.replace("{{path}}", &escape_html(path));
+    Response::builder()
+        .status(StatusCode::NOT_FOUND)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .body(Body::from(body))
+        .expect("static response is valid")
+}
+
+fn escape_html(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 #[derive(Debug)]
@@ -333,11 +359,40 @@ mod tests {
         assert_eq!(invalid_choice.code, "choice_not_found");
     }
 
+    async fn body_text(response: Response) -> String {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
     #[tokio::test]
-    async fn embedded_frontend_has_an_index_and_spa_fallback() {
-        assert!(WebAssets::get("index.html").is_some());
-        let response = serve_asset("/some/client/route".parse().unwrap()).await;
+    async fn embedded_frontend_serves_index_at_root() {
+        let response = serve_asset("/".parse().unwrap()).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "text/html");
+        assert!(
+            body_text(response)
+                .await
+                .contains(r#"<div id="root"></div>"#)
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_paths_get_an_escaped_html_404_page() {
+        for path in ["/assets/missing-abc123.js", "/some/client/route"] {
+            let response = serve_asset(path.parse().unwrap()).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(
+                response.headers()[header::CONTENT_TYPE],
+                "text/html; charset=utf-8"
+            );
+            assert!(body_text(response).await.contains(path));
+        }
+
+        assert_eq!(
+            escape_html(r#"<a href="x">&'"#),
+            "&lt;a href=&quot;x&quot;&gt;&amp;&#39;"
+        );
     }
 }

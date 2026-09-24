@@ -514,9 +514,11 @@ rejects a missing bundle with an actionable message and fingerprints the
 complete generated asset tree so Vite's content-hashed filename changes always
 invalidate Cargo's embedded-resource build.
 
-Asset routing serves exact files with inferred MIME types, falls back to
-`index.html` for non-API client routes, and never sends the SPA for an unknown
-`/api/*` path.
+Asset routing serves `index.html` at `/` and exact embedded files with inferred
+MIME types. The UI has no client-side routes, so any other path gets a
+self-contained HTML 404 page ([`not_found.html`](../src/runtime/not_found.html),
+in the UI's palette) rather than the SPA, and an unknown `/api/*` path gets a
+JSON 404.
 
 ## Diagnostics and command output
 
