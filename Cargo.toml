@@ -12,7 +12,6 @@ include = [
     "/config.example.toml",
     "/build.rs",
     "/README.md",
-    "/DESIGN_REVIEW.md",
     "/docs/**",
     "/examples/**",
     "/src/**",

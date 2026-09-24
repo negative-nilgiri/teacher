@@ -9,11 +9,10 @@ The project ships three Rust binaries from one Cargo package:
 - `learn` serves a compiled artifact and owns learner-session state.
 - `learnpick` optionally recommends one block type for one teaching unit.
 
-The accepted v1 behavior is specified in [`DESIGN_REVIEW.md`](DESIGN_REVIEW.md).
 Agents generating lessons should start with the concise
 [`docs/AUTHORING.md`](docs/AUTHORING.md) guide and checked examples.
-Developers changing the implementation should start with the architecture and
-code map in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+Developers changing the implementation should start with the design principles,
+architecture, and code map in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 Run `just` (or `just --list`) to see the documented development commands.
 

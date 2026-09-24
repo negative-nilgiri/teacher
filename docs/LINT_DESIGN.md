@@ -73,7 +73,7 @@ Filtering happens before computing `fatal`, so an ignored finding cannot fail
 lint even with `--warning-as-error`. Compiler-validation failures are not lint
 findings and cannot be hidden by this option.
 
-## Rules under discussion
+## Rules
 
 Rules are specified as `rule | enforcement | category | replacement`.
 Thresholds written as `$name` can be supplied by an optional TOML lint
@@ -128,7 +128,7 @@ no file-source alternative.
 | --- | --- | --- | --- |
 | Oversized inline code or diff | Count decoded characters of an inline source; trigger when the count exceeds `$max_inline_code_diff_chars` (default `256`). | `error` | Put the content in a file source; a temporary file is fine. |
 | Oversized inline Markdown or quiz prompt | Count decoded characters of an inline source; trigger when the count exceeds `$max_inline_prose_chars` (default `512`). | `error` | Put the content in a file source; a temporary file is fine. |
-| Markdown presented as code | The code block's resolved presentation language is Markdown, whether authored explicitly or inferred from a source path. No content heuristic is needed. | `critical` | Use a Markdown block for rendered prose. Literal Markdown syntax is a rare legitimate exception. |
+| Markdown presented as code | The code block's resolved presentation language is Markdown, whether authored explicitly or inferred from a source path. No content heuristic is needed. | `critical` | Use a Markdown block for rendered prose. The only legitimate exception is a lesson that teaches the Markdown language itself, which is very rare; that rarity is why this is `critical` rather than `warning`. |
 | Plain-text code block | The code block's resolved presentation language is Text, including an omitted or unknown language that falls back to Text. No Markdown-content heuristic is needed in v1. | `warning` | If this is prose, use a Markdown block; if it is code, specify a supported language. Keep literal plain text intentionally when appropriate. |
 | New file presented as a diff | Inspect each resolved diff file's `is_new` property. Additions to an existing file do **not** trigger this rule. | `error` | Explain the file in a Markdown block and show the relevant sourced code range, or use a highlighted code block with meaningful explanation. |
 | Very large code block | Count displayed logical lines after resolving the selected source; trigger when the count is greater than `$max_code_lines`. | `warning` | Split the excerpt into focused code blocks, with explanations where useful. |
@@ -138,17 +138,16 @@ no file-source alternative.
 | Many highlights in one fragment | Count highlighted line ranges across all groups; trigger at `$many_highlight_ranges` or more. | `info` | Consider separate code blocks. |
 | Uneven multiple-choice answer lengths | Count Unicode scalar values in each full decoded Markdown choice string, including formatting syntax, link destinations, and math source. Compare the longest and shortest choice in one question. Trigger when `(longest - shortest) / shortest > $max_choice_length_spread` (default `0.30`) **and** `longest - shortest >= $min_choice_length_gap_chars` (default `10`). | `warning` | Make choices comparable in length without sacrificing plausible, unambiguous answers; keep fuller teaching detail in the explanation. |
 | Few questions relative to lesson size | For a nonempty lesson, divide the number of `multiple_choice` blocks by the number of all top-level blocks. Report one lesson-wide finding when the result is below `$min_question_ratio` (default `0.20`); equality does not trigger. | `info` | If questions would serve the lesson's teaching goal, consider adding more. |
-| Flowchart uses `subgraph` or direct `style` | Inspect valid Mermaid flowcharts for those constructs. | `warning` | If they express semantic distinctions, consider reusable `classDef` and `class` assignments; keep `subgraph` when actual grouping is intended. |
+| Diagram uses `subgraph` or direct `style` | In valid Mermaid flowcharts and class diagrams, report every statement whose first word is `subgraph` or `style`. A statement starts at a line start or after an unquoted `;`; quoted text, bracketed labels and class bodies, and `%%` comments are skipped. Code `lint.mermaid.style_or_subgraph`. | `warning` | If they express semantic distinctions, consider reusable `classDef` and `class` assignments; keep `subgraph` when actual grouping is intended. |
 
 `mermaid-svg` 0.7.0 accepted the project's documented Mermaid diagrams and
 both illustrative flowcharts, and rejected an invalid direction and unclosed
 node label. It nevertheless accepted an unclosed flowchart `subgraph` and an
 unclosed sequence `alt` that the UI's locked Mermaid 11.17.2 parser rejected.
 Therefore `check`/`build` reject diagrams **this Rust parser** rejects, but do
-not promise complete Mermaid validity. The flowchart styling/grouping rule is
-lint, not a syntax check. The earlier reference to sequence or class diagrams
-for the lint styling rule was incorrect: the examples and requested syntax are
-flowcharts.
+not promise complete Mermaid validity. The styling/grouping rule is lint, not a
+syntax check, and applies to flowcharts and class diagrams. Sequence diagrams
+are excluded.
 
 Source spans are one-based line and Unicode-scalar columns in a primary
 `location` object with `path`, `start`, and `end`. Inline JSON strings map
@@ -159,8 +158,6 @@ Lesson-wide findings use `block_id: null`.
 
 ## Later decisions
 
-- Identify which existing skill instructions become redundant once rules are
-  enforced. Keep pedagogical judgment in guidance rather than lint.
 - Consider safe mechanical auto-fixes only after the rules and diagnostics are
   useful; auto-fixes are not required for the initial command.
 

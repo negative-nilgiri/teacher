@@ -52,8 +52,9 @@ A successful JSON response has this shape:
 }
 ```
 
-Failures use the same `{ "ok": false, "diagnostics": [...] }` envelope as the
-other tools and exit nonzero. A network, credential, or response error means
+Failures use the same `{ "ok": false, "diagnostics": [...] }` envelope as
+`learnc` and exit nonzero. (`learn` reports startup failures differently, as
+`{ "status": "error", "error": {...} }`.) A network, credential, or response error means
 the caller should choose a block manually; it does not invalidate lesson
 source.
 

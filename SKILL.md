@@ -5,269 +5,72 @@ description: Author and compile interactive lesson DSL documents with the instal
 
 # Learn Compiler
 
-`learnc` is the agent-facing compiler for interactive lessons. Use it to learn
-the current lesson schema, author a JSON lesson document, validate all file and
-Git-backed sources, and produce a self-contained `.learn` artifact.
+`learnc` compiles a JSON lesson into a self-contained `.learn` artifact. The
+user runs `learn` later; do not invoke `learn`, start a server, or open a
+browser. Use the installed `learnc` binary, not `cargo run` or a substitute.
 
-The user runs `learn` later when they are ready to study. Do not invoke `learn`,
-start the lesson server, or open a browser as part of this skill. For lesson
-tooling, use the installed `learnc` binary rather than `cargo run` or a
-hand-written substitute.
+## Workflow
 
-If one teaching unit could plausibly use several block types, you may ask the
-installed `learnpick` adviser before authoring it:
+1. Discover the contract from the binary instead of memory: `learnc --help`,
+   `learnc <command> --help`, and `learnc schema` for the exact JSON Schema.
+   Do not invent fields. Prefer the default JSON output and parse it.
+2. Write `lesson.json`. Paths are relative to the filesystem root (`--root`,
+   default: the current directory), not to the lesson file.
+3. Run `learnc check` until it succeeds.
+4. Run `learnc lint`. Fix every `error`. Fix each `critical` and `warning`, or
+   tell the user why the exception is intentional. Treat `info` as advice.
+5. Run `learnc build`, report the lesson and artifact paths, and stop.
 
-```sh
-learnpick "Explain why this patch fixes the race"
-```
+Keep every diagnostic's code, pointer, message, and suggestion when reporting a
+failure. Never replace a missing file, revision, or repository with guessed
+content.
 
-Pass one concise unit at a time. Its JSON result recommends `markdown`, `code`,
-`diff`, or `multiple_choice` and includes probabilities and confidence. Treat
-that result only as semantic advice: `learnpick` does not generate DSL, inspect
-the repository, validate a source kind, or replace `learnc schema` and
-`learnc check`. If credentials, the network, or the adviser fail—or if the
-probabilities are ambiguous—choose the block manually and continue. Use
-`learnpick --help` for its current agent-readable contract. Never invoke it
-merely to approve an already-obvious block.
+## Choosing blocks
 
-## Discover the contract
+- **Markdown** carries prose, headings, lists, and KaTeX math (`$...$` inline,
+  `$$` on their own lines for display).
+- **Code** shows what a file contains, including a new or untracked file. Use a
+  `file` source for current content and `git_blob` for a specific revision,
+  each with a narrow `lines` range. Show a new file as explanatory Markdown
+  followed by a ranged code block, or as a code block whose highlights carry
+  annotations. Never show a new file as a diff.
+- **Diff** is only for changes to existing files, when the before/after
+  relationship is what the learner must understand. Prefer a declarative `git`
+  source over a hand-made patch. Any two revisions Git can resolve may be
+  compared. Files owned by different repositories need separate diff blocks.
+- **Multiple choice** checks understanding at the point where it matters.
 
-Treat the binary as authoritative instead of relying on a remembered schema or
-command line. Start with its help and inspect command-specific help as needed:
+If one teaching unit could plausibly use several block types, you may ask
+`learnpick "<one concise unit>"`. Treat its answer as advice only. If it fails
+or is ambiguous, choose manually. Never call it to confirm an obvious choice.
 
-```sh
-learnc --help
-learnc schema --help
-learnc check --help
-learnc build --help
-```
+## Judgment lint cannot check
 
-Use `learnc schema` to obtain the exact authored-document JSON Schema before
-writing unfamiliar lesson structures. The source language is JSON in v1; do not
-invent fields or a different syntax.
+- **Local teaching units.** Explain a concept, show its code or diff right
+  there, then ask any follow-up question before moving on. Do not collect
+  diffs at the end. Repeat a small relevant fragment rather than pointing back
+  to a distant block.
+- **Captions** (code and diff) are for what the learner cannot infer from the
+  content, mainly a Mermaid diagram's assumption or omission. Never narrate
+  arrows, labels, reading direction, or adjacent Markdown.
+- **Highlights** direct attention inside useful context. Add an `annotation`
+  when the reason for a range is not obvious. Use separate groups for separate
+  explanations, and never write "the blue lines".
+- **Comments in shown code** should carry meaning the code cannot, such as why
+  two blocks show different states of one file. Do not edit real source files
+  to add lesson commentary; use Markdown or an annotation instead.
+- **Questions** should be hard because the alternatives are plausible (real
+  misconceptions, nearby APIs, believable consequences), never because they are
+  ambiguous. Exactly one choice must be defensibly correct, and the full
+  reasoning goes in `explanation`. Do not rotate the correct answer yourself;
+  `learnc` shuffles choices.
+- **Mermaid** diagrams are inline code blocks with `language: "mermaid"`, never
+  fences inside Markdown. Use `sequenceDiagram` for time-ordered calls and
+  responses. When color encodes meaning, define a few named `classDef` styles
+  and assign them with `class`; the UI builds its legend from them.
+- **Markdown as a code language** is only for lessons that teach Markdown
+  syntax itself. Lint flags it as `critical`, so tell the user when you
+  intend it.
 
-The default command output is intended for agents. Prefer the default structured
-output and parse its diagnostics. Use `-t` only when human-readable terminal
-output is specifically useful.
-
-## Author and compile a lesson
-
-Write a clear lesson source such as `lesson.json` from the material in scope.
-Lessons may explain code, embed selected files or Git revisions, present
-generated diffs, and ask multiple-choice questions. Follow the emitted schema
-and use paths relative to the selected filesystem root.
-
-Use each block for its presentation semantics:
-
-- Put rendered prose, headings, lists, emphasis, and explanations in Markdown
-  blocks. Never dump prose written in Markdown into a code block: its formatting
-  will not render there.
-- Use a code block with language `markdown` only when the literal Markdown
-  syntax is itself being taught, and include only the smallest fragment needed
-  for that example.
-- Markdown fields render KaTeX math. Write inline notation as `$...$` and put
-  `$$` delimiters on their own lines for display notation. This applies to
-  Markdown blocks, quiz text, hints, explanations, code or diff captions, and
-  code-highlight annotations.
-  Use math only where it clarifies the material, keep delimiters balanced, and
-  stay within KaTeX's supported LaTeX subset. Put a formula in a code block only
-  when the literal LaTeX source is what the learner needs to inspect.
-- Use a code block when the lesson is presenting what a file contains, including
-  a newly added or untracked file. Do not use a diff merely to select interesting
-  lines or because the file is new. Both `file` and `git_blob` code sources
-  accept an optional one-based, inclusive `lines` range. Use `file` for current
-  filesystem content:
-
-  ```json
-  {
-    "type": "code",
-    "id": "focused-parser",
-    "source": {
-      "kind": "file",
-      "path": "src/parser.rs",
-      "lines": { "start": 42, "end": 78 }
-    }
-  }
-  ```
-
-  Use `git_blob` with the same `lines` shape when the content must come from a
-  specific Git revision. Use a diff only when the change itself matters—when
-  additions, deletions, or the before/after relationship are part of what the
-  learner should understand.
-- Keep comments that carry teaching meaning inside the displayed code. In
-  agent-authored snippets, add a concise source comment when it communicates
-  context or a distinction that the code alone cannot—especially when two
-  blocks show different portions or states of the same file. Do not make the
-  learner infer that purpose from the block ID. Preserve relevant existing
-  comments when selecting a file range, but do not edit real repository source
-  merely to add lesson commentary; use nearby Markdown or a highlight
-  annotation instead. Avoid comments that only paraphrase obvious syntax.
-- Source schema `1.3.0` lets a file or Git-blob code block direct attention to
-  several absolute source-line ranges with `highlights`. Available colors are
-  `yellow` (the default), `green`, `red`, and `blue`; differently colored
-  ranges may not overlap. Keep highlights selective: if most of the fragment
-  needs emphasis, narrow the source's `lines` range instead. Inline code and
-  rendered Mermaid diagrams cannot use highlights. If generated code needs
-  highlighted lines, write it to at least a temporary file and use a file
-  source. For example:
-
-  ```json
-  {
-    "type": "code",
-    "id": "parser-branches",
-    "highlights": [
-      { "lines": [{ "start": 52, "end": 56 }] },
-      {
-        "lines": [
-          { "start": 71, "end": 73 },
-          { "start": 79, "end": 80 }
-        ],
-        "color": "blue",
-        "annotation": "Both branches normalize input into the **same internal form**."
-      }
-    ],
-    "source": {
-      "kind": "file",
-      "path": "src/parser.rs",
-      "lines": { "start": 40, "end": 80 }
-    }
-  }
-  ```
-  Source schema `2.1.0` adds optional Markdown `annotation` text to each
-  highlight group. Use it when the learner cannot infer why those particular
-  ranges matter. One annotation applies to every range in its group; use
-  separate groups, even with the same color, when ranges need different
-  explanations. Do not write labels such as "the blue lines" or restate
-  visible code. The UI already shows the color and line references.
-- Set a code block's optional language when it is known, especially for inline
-  sources. File and Git-blob sources can infer a recognized language from their
-  path. Prefer the canonical names `rust`, `python`, `javascript`, `typescript`,
-  `c`, `cpp`, `go`, `java`, `shell`, `json`, `yaml`, `toml`, `html`, `xml`,
-  `css`, `sql`, `markdown`, `mermaid`, and `text`. Common filename-style aliases
-  such as `rs`, `py`, `js`, `tsx`, `c++`, `golang`, `bash`, `yml`, `md`, `mmd`,
-  and `txt` are accepted and normalized. An unknown explicit language, an
-  omitted inline language, or an unrecognized source path falls back safely to
-  plain text.
-- Author a Mermaid diagram as a code block with an inline source and language
-  `mermaid`. Do not put it in a fenced section inside a Markdown block.
-  Use `sequenceDiagram` when the lesson needs to explain time-ordered messages,
-  calls, responses, activation lifetimes, loops, or alternative interaction
-  paths. Declare participants with short identifiers and readable aliases;
-  prefer `->>` for calls, `-->>` for responses, and use `activate`/`deactivate`,
-  `loop`, `alt`/`else`, `opt`, and `Note` only when they carry teaching value.
-  Sequence diagrams do not use flowchart `classDef` assignments and therefore
-  do not receive the class-derived legend described below.
-  When colors express semantic categories, use a small set of meaningfully
-  named `classDef` declarations and compact `class A,B category` assignments.
-  The lesson UI derives its legend from those definitions. Do not add
-  decorative subgraphs solely to group similarly styled nodes.
-- Source schema `1.2.0` and later lets code and diff blocks carry an optional Markdown
-  `caption`. Use it only for block-specific information the learner cannot infer
-  from the rendered content. It is primarily for a Mermaid diagram whose
-  important assumption, omission, or relationship is not self-explanatory;
-  intricate code or diffs may use it exceptionally. Do not caption routine
-  blocks, say "read from left to right," narrate visible arrows, restate labels
-  or syntax, or duplicate nearby Markdown. Omit `caption` when it adds no
-  substantive explanation.
-- Make multiple-choice questions challenging through plausible alternatives,
-  not ambiguity or trick wording. Derive incorrect choices from realistic
-  misconceptions, nearby APIs, or believable consequences. Keep every choice
-  comparable in length, specificity, tone, and grammatical form so the correct
-  answer is not exposed by being substantially more detailed or carefully
-  qualified. Put the fuller teaching explanation in the answer explanation,
-  and ensure exactly one choice remains defensibly correct. Do not manually
-  rotate the correct answer through different positions: `learnc` randomizes
-  each question's presented choice order during compilation and freezes that
-  order with the matching private answer in the artifact.
-- In source schema `2.0.0`, author every multiple-choice `prompt` as a Markdown
-  source object. Use `{"kind":"inline","content":"..."}` for concise prompts
-  and `{"kind":"file","path":"..."}` when substantial Markdown, KaTeX, lists,
-  or tables would be awkward to JSON-escape. Prompt files must be below the
-  selected filesystem root and exist through `learnc check` or `learnc build`.
-  The artifact freezes their content, so temporary files may be removed after a
-  successful build; retain them when the lesson source must be rebuildable.
-  Choices, hints, and explanations remain inline Markdown strings.
-
-Order blocks as local teaching units. Introduce a concept, show the relevant
-code or diff near that explanation, explain the change, and add any follow-up
-question before moving to the next concept. Do not collect all diffs at the end
-when they explain different parts of the lesson; preserve authored order to
-interleave explanations, code, diffs, and questions.
-
-A source file is not limited to one block per lesson. Include it as many times
-as necessary, using small ranges focused on the concept currently being
-explained. Prefer repeating a relevant fragment near its explanation over
-referring back to a distant block. Optimize for local readability, not
-deduplication. Apply the same proximity rule to diffs, while avoiding casual
-duplication of large patches: keep each diff near its explanation and narrow it
-to the relevant files whenever possible.
-
-Use `learnc check` while authoring. It runs the complete validation and source
-resolution pipeline without writing an artifact. Read every structured
-diagnostic, correct the lesson source, and check again until it succeeds.
-
-When source paths are involved, consult `check` or `build` help for the current
-filesystem-root option and pass the common anchor for every relative lesson
-path. A lesson may draw from multiple repositories, but files owned by different
-repositories belong in separate Git diff blocks.
-
-A Git diff may compare any two commit-ish revisions that Git can resolve in the
-selected files' owning repository; neither side has to be the current `HEAD`,
-and the revisions do not need an ancestor relationship. Commit hashes, branches,
-tags, and relative expressions such as `HEAD~2` are valid. Put the first
-revision in `base` and use a revision target for the second:
-
-```json
-{
-  "type": "diff",
-  "id": "release-change",
-  "source": {
-    "kind": "git",
-    "base": "v1.1.0",
-    "target": { "kind": "revision", "revision": "v1.2.0" },
-    "files": [{ "path": "src/compiler.rs" }],
-    "context_lines": 3
-  }
-}
-```
-
-Specify the intended revision pair and let `learnc` resolve, compare, and freeze
-both commits. Do not generate or copy the patch manually when a declarative Git
-source can express the comparison.
-
-Do not assume that an untracked file cannot appear in a lesson just because
-ordinary `git diff` omits it. For a Git diff source whose target is `worktree`,
-`learnc` treats every path in `files` as an explicit selection. If a selected
-path is an untracked, non-ignored regular file, `learnc` synthesizes a diff that
-shows the entire file as a new addition:
-
-```json
-{
-  "type": "diff",
-  "id": "new-document",
-  "source": {
-    "kind": "git",
-    "base": "HEAD",
-    "target": { "kind": "worktree" },
-    "files": [{ "path": "docs/new-document.md" }],
-    "context_lines": 3
-  }
-}
-```
-
-This support is limited to explicitly selected worktree files. Ignored files,
-non-regular files, and files outside an owning Git repository are rejected; an
-untracked file also cannot appear in a revision-to-revision comparison. Let
-`learnc check` determine whether the selected path is valid instead of inferring
-failure from ordinary Git behavior. Use this complete-addition diff only when
-the fact that the file was added is relevant; use a ranged `file` code source
-when the lesson only needs to present selected content from that file.
-
-After a successful check, use `learnc build` to create the `.learn` artifact.
-Consult command help for the current argument order and output-path option rather
-than assuming them. Report the authored JSON path and generated artifact path to
-the user, then stop. Do not serve the artifact.
-
-If compilation fails because a source file, Git revision, repository owner, or
-artifact input is unavailable, preserve the diagnostic code, pointer, message,
-and suggestion. Do not replace missing source context with guessed content.
+Temporary files are fine for long content: the artifact freezes what it shows.
+Keep them only if the lesson source must be rebuildable.

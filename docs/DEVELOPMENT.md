@@ -4,8 +4,10 @@ This guide maps the v1 implementation from authored lesson JSON to the browser.
 It describes the code that exists today, the invariants each layer owns, and the
 places that must change when the format or runtime grows.
 
-The accepted behavior is defined in [`DESIGN_REVIEW.md`](../DESIGN_REVIEW.md).
-Lesson authors should use [`docs/AUTHORING.md`](AUTHORING.md); this document is
+This guide, [`docs/AUTHORING.md`](AUTHORING.md) (the lesson format),
+[`docs/LINT_DESIGN.md`](LINT_DESIGN.md) (authoring-policy lint), and
+[`docs/LEARNPICK.md`](LEARNPICK.md) (the optional adviser) together define the
+accepted behavior. Lesson authors should use `AUTHORING.md`; this document is
 for people changing the compiler, artifact, server, or frontend.
 
 ## Start here
@@ -24,7 +26,7 @@ For a first pass through the implementation, read these files in order:
 
 1. [`src/lib.rs`](../src/lib.rs) — top-level module and trust boundaries.
 2. [`src/source/model.rs`](../src/source/model.rs) — authored JSON language.
-3. [`src/compiler/mod.rs`](../src/compiler/mod.rs#L55) — compilation pipeline.
+3. [`src/compiler/mod.rs`](../src/compiler/mod.rs) — compilation pipeline.
 4. [`src/artifact/mod.rs`](../src/artifact/mod.rs) — `.learn` contract.
 5. [`src/runtime/model.rs`](../src/runtime/model.rs) — artifact loading and public projection.
 6. [`src/runtime/session.rs`](../src/runtime/session.rs) — learner state machine.
@@ -42,6 +44,41 @@ The distribution-level check is:
 ```sh
 just release-check
 ```
+
+## Design principles
+
+These decisions constrain every layer. Change them deliberately, not as a side
+effect of a feature.
+
+- **Agents own pedagogy; the system owns mechanics.** Agents decide what to
+  teach, in which order, and which questions to ask. The system owns
+  validation, safe repository access, rendering, and interaction state. New
+  block types or fields are added only in response to demonstrated use.
+- **Lessons are immutable during a session.** Changing content means compiling
+  a new artifact. Attempts, reveals, and completion are session state, not
+  lesson mutations.
+- **`learn` owns shared truth.** Whenever state must be shared between
+  components or survive a browser refresh, the runtime owns it. React owns only
+  unsubmitted drafts and presentational state such as expanded hints, folds,
+  focus, and loading indicators.
+- **Artifacts are disposable build outputs.** Source schema, artifact schema,
+  and package versions are independent SemVer values. Compilers keep explicit
+  decoders for older source versions and reject newer ones. An incompatible
+  `.learn` file is rebuilt from its lesson JSON, never migrated.
+- **There is no artifact-check command.** `learnc check` accepts only lesson
+  source. Compiler/runtime artifact compatibility is covered by tests, and
+  `learn` still gates the version and structurally decodes every artifact.
+- **Typed endpoints only.** Each shared operation gets an explicit route; there
+  is no generic node-action RPC.
+- **Security is proportional to a trusted local prototype.** One user, their
+  agent, and their own repository. The baseline is loopback-only binding,
+  version gating plus structural decoding, root-relative source paths, Git
+  invoked with direct arguments, no execution of authored code, and raw HTML
+  disabled in Markdown. Launch tokens, CSRF protection, hostile-artifact limits,
+  and symlink hardening are not v1 goals. Revisit this before `learn` holds
+  credentials, talks to an agent or LLM, accepts third-party artifacts, listens
+  beyond loopback, or serves several users. `learnpick` holds an API key, which
+  is why it is a separate optional binary that nothing core depends on.
 
 ## System map
 
@@ -171,16 +208,16 @@ flowchart TD
 ```
 
 The concrete orchestration starts in
-[`compile`](../src/compiler/mod.rs#L55):
+[`compile`](../src/compiler/mod.rs):
 
-1. [`parse_and_validate`](../src/source/validate.rs#L34) performs path-aware
+1. [`parse_and_validate`](../src/source/validate.rs) performs path-aware
    deserialization, rejects trailing JSON, collects independent semantic errors,
    and assigns dense node IDs only after validation succeeds.
-2. [`repository_paths`](../src/compiler/mod.rs#L457) finds every file-backed
+2. [`repository_paths`](../src/compiler/mod.rs) finds every file-backed
    input. An all-inline lesson compiles without selecting a filesystem root.
 3. Lessons with file-backed inputs call
-   [`Repository::at_root`](../src/repository/git.rs#L94) and start a filesystem
-   [`SnapshotGuard`](../src/repository/snapshot.rs#L19). Git-backed paths also
+   [`Repository::at_root`](../src/repository/git.rs) and start a filesystem
+   [`SnapshotGuard`](../src/repository/snapshot.rs). Git-backed paths also
    get a whole-build owner/repository-state guard; plain-file-only lessons never
    invoke Git.
 4. Markdown, code, diff, and quiz blocks are lowered in authored block order.
@@ -194,9 +231,9 @@ The concrete orchestration starts in
    owning repository, then every selected repository snapshot is rechecked. A
    moved ref or changed input aborts the entire compile before an artifact is
    constructed.
-6. [`validate_artifact`](../src/artifact/mod.rs#L178) checks dense IDs and quiz
+6. [`validate_artifact`](../src/artifact/mod.rs) checks dense IDs and quiz
    cross-references before the artifact crosses the compiler/runtime boundary.
-7. [`write_artifact_atomic`](../src/compiler/mod.rs#L235) writes a same-directory
+7. [`write_artifact_atomic`](../src/compiler/mod.rs) writes a same-directory
    temporary file, flushes it, and renames it over the destination. Compilation
    failures never modify a previous artifact.
 
@@ -204,6 +241,9 @@ Important path rule: source paths are relative to the selected filesystem root,
 not to the directory containing `lesson.json`. Without `--root`, that root is
 the `learnc` process working directory. The root itself need not be a Git
 repository; Git ownership is discovered independently from each selected path.
+A Git-backed path's owning repository must be at or below the root, because
+provenance records repositories relative to it; a root inside a repository
+fails with `repository.owner_above_root`.
 
 ## Source, identity, and artifact model
 
@@ -237,15 +277,15 @@ flowchart LR
     class Private private
 ```
 
-- [`LessonSource`](../src/source/model.rs#L39) contains only
+- [`LessonSource`](../src/source/model.rs) contains only
   `schema_version`, `title`, and ordered `blocks`.
-- [`Block`](../src/source/model.rs#L151) has exactly four v1 variants:
+- [`Block`](../src/source/model.rs) has exactly four v1 variants:
   `markdown`, `code`, `diff`, and `multiple_choice`.
-- [`SourceId`](../src/source/ids.rs#L14) remains in the artifact for diagnostics;
-  runtime state and routes use [`NodeId`](../src/source/ids.rs#L83).
+- [`SourceId`](../src/source/ids.rs) remains in the artifact for diagnostics;
+  runtime state and routes use [`NodeId`](../src/source/ids.rs).
 - Choices are not nodes. The compiler removes `correct` markers, generates
-  [`ChoiceId`](../src/artifact/mod.rs#L99), and stores the answer separately.
-- [`CompiledLesson`](../src/artifact/mod.rs#L39) contains presentation data,
+  [`ChoiceId`](../src/artifact/mod.rs), and stores the answer separately.
+- [`CompiledLesson`](../src/artifact/mod.rs) contains presentation data,
   the private answer table, and build provenance.
 - “Private” is an API projection boundary, not encryption. A local user can
   inspect readable `.learn` JSON.
@@ -255,8 +295,8 @@ Three SemVer values evolve independently:
 | Version | Current value | Defined by |
 | --- | --- | --- |
 | Cargo package | `1.11.0` | [`Cargo.toml`](../Cargo.toml) |
-| Authored schema | `2.1.0` | [`SchemaVersion`](../src/source/model.rs#L10) |
-| Artifact schema | `1.1.0` | [`ArtifactVersion`](../src/artifact/mod.rs#L15) |
+| Authored schema | `2.1.0` | [`SchemaVersion`](../src/source/model.rs) |
+| Artifact schema | `1.1.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -279,10 +319,18 @@ Repository behavior lives primarily in
 - Git blobs retain both the resolved commit ID and content blob ID.
 - Explicit untracked worktree files become complete additions. Ignored files
   are rejected.
+- Every selected diff path must produce a change: a mistyped or unchanged path
+  fails with `repository.path_unchanged`, and a directory is rejected.
+- Generated diffs pin the output details that user configuration could change
+  (`a/`/`b/` prefixes, no textconv, no external diff, no `diff.relative`, no
+  renames), and inherited `GIT_DIR`-style variables are removed so a Git hook
+  running `learnc` cannot redirect owner discovery.
 
 Raw inline/file patches are parsed once by
-[`parse_unified_diff`](../src/repository/diff.rs#L105). The artifact and browser
-use structured files, hunks, and typed lines; React never parses patch text.
+[`parse_unified_diff`](../src/repository/diff.rs). Hunk bodies are read by the
+line counts in their `@@` header, so content such as a deleted `-- comment`
+is never mistaken for a file header. The artifact and browser use structured
+files, hunks, and typed lines; React never parses patch text.
 
 Generated diff ranges are applied to changed regions:
 
@@ -340,14 +388,14 @@ flowchart LR
     class React client
 ```
 
-[`AppState`](../src/runtime/server.rs#L25) contains an immutable
+[`AppState`](../src/runtime/server.rs) contains an immutable
 `Arc<RuntimeLesson>` and one shared `Arc<Mutex<Session>>`. Every tab talks to the
 same in-memory session. Refresh keeps server-owned progress; stopping `learn`
 loses it. There is no push channel, so a second tab observes another tab's
 changes only after its next request or refresh.
 
 The v1 routes are registered in
-[`router`](../src/runtime/server.rs#L83):
+[`router`](../src/runtime/server.rs):
 
 | Method | Path | Effect |
 | --- | --- | --- |
@@ -373,7 +421,7 @@ response rather than the project `{code, message}` envelope.
 
 ## Frontend flow
 
-[`App`](../web/src/App.tsx#L16) fetches the combined state projection once,
+[`App`](../web/src/App.tsx) fetches the combined state projection once,
 renders nodes in order, and treats every mutation response as server truth. The
 current server returns a focused `{progress, question}` response; the client can
 also accept a future full state response.
@@ -388,7 +436,7 @@ State ownership is split as follows:
 | | Focus, scroll, and loading UI |
 | When answer/explanation become visible | Transient request errors |
 
-[`LessonNodeView`](../web/src/components/LessonNodeView.tsx#L15) is the renderer
+[`LessonNodeView`](../web/src/components/LessonNodeView.tsx) is the renderer
 dispatch point. It wraps every node in a locally controlled disclosure whose
 collapsed state does not unmount the node, so unfinished quiz input survives a
 fold-and-expand cycle. A code disclosure uses its normalized language as its
@@ -416,11 +464,7 @@ compact label and falls back to `Code` when no specific language is known:
   old/new line numbers, showing and using the language frozen for each compiled
   diff file to syntax-highlight its content. A multi-file diff gives every file
   an independent local fold control; a single-file diff avoids redundant nested
-  folding. Optional captions render once above the complete diff. Git-generated
-  diffs also show the
-  safe root-relative owning repository projected from artifact provenance when
-  it identifies a nested or sibling repository. The uninformative root owner
-  (`.`), inline diffs, and patch-file diffs have no repository label.
+  folding. Optional captions render once above the complete diff.
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
 
@@ -459,7 +503,7 @@ flowchart LR
     class Learn runtime
 ```
 
-[`WebAssets`](../src/runtime/server.rs#L135) embeds `web/dist` into the Rust
+[`WebAssets`](../src/runtime/server.rs) embeds `web/dist` into the Rust
 binary. [`Cargo.toml`](../Cargo.toml) explicitly packages those generated assets
 while excluding the frontend toolchain and `node_modules`, so installation from
 the assembled package does not run Node. A source checkout instead uses
@@ -538,14 +582,14 @@ line to discover the random URL before waiting on the long-running server.
 | `just release-check` | Rebuilds assets, runs verification, and runs the package smoke test. |
 
 The ignored `cargo_install_smoke` test in
-[`tests/v1_contract.rs`](../tests/v1_contract.rs#L837) is a slower Rust-harness
+[`tests/v1_contract.rs`](../tests/v1_contract.rs) is a slower Rust-harness
 variant. `just package-smoke` is the stronger release path because it also
 checks the assembled crate, Node failure shims, embedded UI/API, and version
 errors.
 
 ### Frontend development limitation
 
-[`vite.config.ts`](../web/vite.config.ts#L6) currently proxies `/api` to fixed
+[`vite.config.ts`](../web/vite.config.ts) currently proxies `/api` to fixed
 port `3000`, while `learn serve` intentionally binds an OS-selected random port.
 There is not yet a single hot-reload command that wires Vite to a live `learn`
 process. Component work can use Vitest/Vite; integrated changes should rebuild
@@ -562,7 +606,7 @@ Tests are layered so failures identify the responsible boundary:
   [`src/lint/`](../src/lint); [`tests/lint_contract.rs`](../tests/lint_contract.rs)
   checks the command output, exit behavior, config, and compiler boundary.
 - Patch parsing and range-selection tests live in
-  [`src/repository/diff.rs`](../src/repository/diff.rs#L623).
+  [`src/repository/diff.rs`](../src/repository/diff.rs).
 - Real Git worktree, sibling-repository, submodule, revision, ref-movement,
   quoting, ignored, and untracked cases live in
   [`src/repository/tests.rs`](../src/repository/tests.rs).
@@ -599,8 +643,7 @@ asset in isolation:
    [`CodeBlock`](../web/src/components/CodeBlock.tsx), as Mermaid does. Preserve
    escaped plain-text fallback for unsupported values.
 4. Update the canonical language and alias table in
-   [`docs/AUTHORING.md`](../docs/AUTHORING.md) and the agent-facing
-   [`SKILL.md`](../SKILL.md).
+   [`docs/AUTHORING.md`](../docs/AUTHORING.md).
 5. Add compiler coverage proving authored aliases and inferred extensions freeze
    the expected language, plus React coverage for the visible label and actual
    highlighted token classes in code and diff blocks.
@@ -636,7 +679,7 @@ asset in isolation:
    or contextual data.
 3. Put state transitions in [`Session`](../src/runtime/session.rs), not handlers
    or React.
-4. Add a typed route in [`router`](../src/runtime/server.rs#L83) instead of a
+4. Add a typed route in [`router`](../src/runtime/server.rs) instead of a
    generic action RPC.
 5. Mirror request/response types in `web/src/types.ts` and the client call in
    `web/src/api.ts`.

@@ -86,11 +86,12 @@ the minimum value of one-based line numbers. Unknown fields are rejected both at
 the document root and inside blocks, sources, choices, file selectors, and line
 ranges.
 
-Some rules depend on relationships between values or on external state and are
+The schema also requires every text field (title, IDs, paths, revisions,
+inline content, captions, annotations, choices, hints, and explanations) to be
+non-blank, and rejects control characters in IDs, paths, and revisions. Some
+rules depend on relationships between values or on external state and are
 therefore enforced only by `learnc check` and `learnc build`. These include:
 
-- non-blank titles, IDs, Markdown, code, captions, highlight annotations,
-  prompts, choices, hints, and explanations;
 - document-wide source-ID uniqueness;
 - exactly one correct choice per question;
 - inclusive range ordering (`end >= start`) and ranges fitting resolved content;
@@ -113,7 +114,8 @@ unchanged. Its own findings never affect `check` or `build`. An inline code or
 diff source over 256 decoded characters, inline Markdown or quiz prompt over
 512 characters, or a diff that presents a new file is a lint `error` by default.
 Other rules cover code language and length, highlights, filename context,
-answer-choice balance, question frequency, and Mermaid flowchart styling. The
+answer-choice balance, question frequency, and Mermaid `subgraph`/`style` use in
+flowcharts and class diagrams. The
 complete rule and threshold table is in [`LINT_DESIGN.md`](LINT_DESIGN.md).
 
 Lint emits `{"diagnostics":[]}` for a clean JSON run, or no text with `-t`.
@@ -384,7 +386,9 @@ For a committed comparison, use
 `"target": { "kind": "revision", "revision": "main" }`. A `before_lines`
 range selects deletions by base-side line number; `after_lines` selects additions
 or modifications by target-side line number. A selected range that intersects no
-change is an error.
+change is an error, and so is a selected path with no change between the
+compared states (usually a typo or the wrong revision pair). Select files, not
+directories.
 
 One Git diff block may cover files owned by only one Git repository. Git finds
 the nearest owning repository independently for every selected path, so sibling
@@ -448,7 +452,9 @@ them; a correct attempt or explicit reveal does.
 
 Every authored path is relative to one filesystem root. The root defaults to
 the compiler's current working directory and does not itself need to be a Git
-repository. Override it when the lesson inputs live elsewhere:
+repository. It must, however, contain every repository that owns a Git-backed
+path: a root inside a repository fails with `repository.owner_above_root`.
+Override it when the lesson inputs live elsewhere:
 
 ```console
 learnc check --root /path/to/workspace lesson.json
