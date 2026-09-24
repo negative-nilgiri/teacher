@@ -891,14 +891,14 @@ fn select_lines(content: &str, lines: Option<LineRange>) -> Result<String, Repos
     };
     if lines.start == 0 || lines.end < lines.start {
         return Err(RepositoryError::new(
-            RepositoryErrorKind::InvalidPath,
+            RepositoryErrorKind::LineRange,
             "line ranges must be one-based, inclusive, and non-empty",
         ));
     }
     let values: Vec<_> = content.split_inclusive('\n').collect();
     if lines.end as usize > values.len() {
         return Err(RepositoryError::new(
-            RepositoryErrorKind::EmptySelection,
+            RepositoryErrorKind::LineRange,
             format!(
                 "line range {}-{} exceeds the source's {} lines",
                 lines.start,

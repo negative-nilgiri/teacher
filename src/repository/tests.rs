@@ -630,3 +630,18 @@ fn root_below_repository_top_reports_owner_above_root() {
         .unwrap_err();
     assert_eq!(error.kind(), RepositoryErrorKind::OwnerAboveRoot);
 }
+
+#[test]
+fn line_range_past_end_of_file_reports_line_range_error() {
+    let temp = TempRepo::new();
+    temp.write("file.txt", "one\ntwo\n");
+    let repository = Repository::at_root(temp.path(), None).unwrap();
+    let error = repository
+        .read_file(
+            &RepoPath::parse("file.txt").unwrap(),
+            Some(LineRange::new(1, 5).unwrap()),
+        )
+        .unwrap_err();
+    assert_eq!(error.kind(), RepositoryErrorKind::LineRange);
+    assert_eq!(error.code(), "repository.invalid_line_range");
+}

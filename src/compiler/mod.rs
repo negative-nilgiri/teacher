@@ -724,6 +724,9 @@ fn repository_diagnostic(pointer: &str, error: RepositoryError) -> Diagnostic {
         RepositoryErrorKind::MixedRepositories => {
             Some("Split the selected paths into one diff block per owning repository or submodule.")
         }
+        RepositoryErrorKind::LineRange => {
+            Some("Adjust `lines` to fall within the file's current line count.")
+        }
         RepositoryErrorKind::UnchangedPath => Some(
             "Check the path spelling and the base/target pair, or remove the file from this diff.",
         ),

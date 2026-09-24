@@ -17,7 +17,7 @@ impl LineRange {
     pub fn new(start: u32, end: u32) -> Result<Self, RepositoryError> {
         if start == 0 || end < start {
             return Err(RepositoryError::new(
-                RepositoryErrorKind::InvalidPath,
+                RepositoryErrorKind::LineRange,
                 "line ranges must be one-based, inclusive, and non-empty",
             ));
         }
