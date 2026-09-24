@@ -24,15 +24,6 @@ pub fn source_json_schema_for(version: SchemaVersion) -> serde_json::Value {
     .expect("generated lesson source schema must serialize")
 }
 
-pub fn source_json_schema_pretty() -> String {
-    source_json_schema_pretty_for(SchemaVersion::CURRENT)
-}
-
-pub fn source_json_schema_pretty_for(version: SchemaVersion) -> String {
-    serde_json::to_string_pretty(&source_json_schema_for(version))
-        .expect("generated lesson source schema must serialize")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -56,7 +47,7 @@ mod tests {
 
     #[test]
     fn schema_names_all_four_block_types_and_current_version() {
-        let schema = source_json_schema_pretty();
+        let schema = source_json_schema().to_string();
         for expected in ["markdown", "code", "diff", "multiple_choice", "2.1.0"] {
             assert!(schema.contains(expected), "schema omitted {expected}");
         }

@@ -1,0 +1,13 @@
+{
+  "schema_version": "2.0.0",
+  "title": "Markdown prompt source",
+  "blocks": [
+    {
+      "type": "multiple_choice",
+      "id": "fifo",
+      "prompt": { "kind": "file", "path": "examples/repository-fixture/questions/fifo.md" },
+      "choices": [{ "content": "Oldest first", "correct": true }, { "content": "Newest first" }],
+      "explanation": "A FIFO queue removes the oldest item first."
+    }
+  ]
+}

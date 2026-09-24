@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.1.0",
+  "title": "Explicit code language",
+  "blocks": [
+    {
+      "type": "code",
+      "id": "pop",
+      "language": "rs",
+      "source": { "kind": "inline", "content": "queue.pop_front()" }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "order",
+      "prompt": "Which end does `pop_front` remove from?",
+      "choices": [{ "content": "The front", "correct": true }, { "content": "The back" }],
+      "explanation": "`pop_front` removes the oldest item."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.2.0",
+  "title": "Captioned diagram",
+  "blocks": [
+    {
+      "type": "code",
+      "id": "flow",
+      "language": "mermaid",
+      "caption": "Only the happy path is shown.",
+      "source": { "kind": "inline", "content": "flowchart LR\n  A --> B" }
+    }
+  ]
+}

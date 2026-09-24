@@ -21,6 +21,15 @@ pub enum ArtifactVersion {
 }
 
 impl ArtifactVersion {
+    /// Every artifact version the runtime can load.
+    pub const SUPPORTED: [Self; 2] = [Self::V1_0_0, Self::V1_1_0];
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::SUPPORTED
+            .into_iter()
+            .find(|version| version.as_str() == value)
+    }
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::V1_0_0 => "1.0.0",
@@ -177,7 +186,8 @@ pub struct PresentedChoice {
 }
 
 /// Generated, artifact-local choice identity. Values are dense across the
-/// artifact in authored question and choice order.
+/// artifact in authored question order and, within a question, in the
+/// compiler's shuffled presentation order.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ChoiceId(u32);

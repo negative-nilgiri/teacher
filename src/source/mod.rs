@@ -14,8 +14,5 @@ pub use model::{
     GitDiffTarget, GitRevision, HighlightColor, LessonSource, LineRange, MarkdownBlock,
     MarkdownSource, MultipleChoiceBlock, RepoPath, SchemaVersion,
 };
-pub use schema::{
-    source_json_schema, source_json_schema_for, source_json_schema_pretty,
-    source_json_schema_pretty_for,
-};
+pub use schema::{source_json_schema, source_json_schema_for};
 pub use validate::{ValidatedLesson, parse_and_validate, validate};

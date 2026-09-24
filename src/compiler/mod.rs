@@ -352,13 +352,8 @@ fn resolve_code(
 ) -> Result<CompiledNodeContent, Diagnostic> {
     match source {
         CodeSource::Inline { content } => {
-            if !authored_highlights.is_empty() {
-                return Err(Diagnostic::error(
-                    "compiler.code.highlights.inline",
-                    format!("{block_pointer}/highlights"),
-                    "line highlights require a file-backed code source",
-                ));
-            }
+            // Source validation rejects inline highlights before compilation.
+            debug_assert!(authored_highlights.is_empty());
             let language = authored_language
                 .map(Language::from_authored)
                 .unwrap_or_default();

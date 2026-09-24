@@ -34,7 +34,9 @@ impl Config {
 
 fn required_env(name: &'static str, missing: PickError) -> Result<String, PickError> {
     match env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
+        // A trailing newline from `$(cat key-file)` would otherwise make the
+        // Authorization header invalid.
+        Ok(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
         Ok(_) | Err(env::VarError::NotPresent) => Err(missing),
         Err(env::VarError::NotUnicode(_)) => Err(PickError::InvalidConfiguration(name)),
     }
@@ -42,7 +44,7 @@ fn required_env(name: &'static str, missing: PickError) -> Result<String, PickEr
 
 fn optional_env(name: &'static str, fallback: &str) -> Result<String, PickError> {
     match env::var(name) {
-        Ok(value) if !value.trim().is_empty() => Ok(value),
+        Ok(value) if !value.trim().is_empty() => Ok(value.trim().to_owned()),
         Ok(_) => Err(PickError::InvalidConfiguration(name)),
         Err(env::VarError::NotPresent) => Ok(fallback.to_owned()),
         Err(env::VarError::NotUnicode(_)) => Err(PickError::InvalidConfiguration(name)),

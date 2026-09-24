@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use crate::artifact::CURRENT_ARTIFACT_VERSION;
-use crate::artifact::{ChoiceId, CompiledLesson, CompiledNodeContent, validate_artifact};
+use crate::artifact::{
+    ArtifactVersion, ChoiceId, CompiledLesson, CompiledNodeContent, validate_artifact,
+};
 use crate::repository::{DiffLine, ResolvedDiff};
 use crate::source::NodeId;
 
@@ -32,10 +34,12 @@ fn decode_artifact(bytes: &[u8]) -> Result<CompiledLesson, ArtifactLoadError> {
         .get("artifact_version")
         .and_then(serde_json::Value::as_str)
         .ok_or(ArtifactLoadError::MissingVersion)?;
-    if !matches!(found_version, "1.0.0" | "1.1.0") {
+    if ArtifactVersion::parse(found_version).is_none() {
         return Err(ArtifactLoadError::UnsupportedVersion {
             found: found_version.to_owned(),
-            supported: "1.0.0 or 1.1.0",
+            supported: ArtifactVersion::SUPPORTED
+                .map(ArtifactVersion::as_str)
+                .join(" or "),
         });
     }
 
@@ -59,7 +63,7 @@ pub enum ArtifactLoadError {
     MissingVersion,
     UnsupportedVersion {
         found: String,
-        supported: &'static str,
+        supported: String,
     },
     InvalidStructure {
         source: serde_json::Error,

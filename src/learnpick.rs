@@ -89,7 +89,7 @@ impl PickError {
             Self::EmptyUnit => Some("Provide one concise teaching-unit description."),
             Self::MissingApiKey => Some("Set TYPESAFE_API_KEY and run learnpick again."),
             Self::InvalidConfiguration(_) => Some(
-                "Use a non-empty TYPESAFE_BASE_URL and TYPESAFE_DEFAULT_MODEL, or unset them to use the defaults.",
+                "Set the variable to a non-empty UTF-8 value; TYPESAFE_BASE_URL and TYPESAFE_DEFAULT_MODEL may instead be unset to use the defaults.",
             ),
             Self::Transport(_) | Self::Api { .. } => {
                 Some("Choose the lesson block manually or retry the optional adviser later.")
@@ -107,7 +107,7 @@ impl fmt::Display for PickError {
             Self::EmptyUnit => formatter.write_str("teaching unit must not be empty or whitespace"),
             Self::MissingApiKey => formatter.write_str("TYPESAFE_API_KEY is not set or is empty"),
             Self::InvalidConfiguration(name) => {
-                write!(formatter, "{name} is set but empty")
+                write!(formatter, "{name} is set but empty or not valid UTF-8")
             }
             Self::Transport(message) => write!(formatter, "TypeSafe request failed: {message}"),
             Self::Api { status } => write!(formatter, "TypeSafe API returned HTTP {status}"),

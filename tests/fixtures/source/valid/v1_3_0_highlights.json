@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.3.0",
+  "title": "Highlighted file excerpt",
+  "blocks": [
+    {
+      "type": "code",
+      "id": "queue",
+      "highlights": [{ "lines": [{ "start": 2, "end": 2 }], "color": "green" }],
+      "source": {
+        "kind": "file",
+        "path": "examples/repository-fixture/src/queue.rs",
+        "lines": { "start": 1, "end": 3 }
+      }
+    }
+  ]
+}

@@ -730,7 +730,7 @@ pub struct RepoPath(
     #[schemars(
         length(min = 1),
         regex(
-            pattern = r"^(?!/)(?![A-Za-z]:)(?!.*\\)(?!.*//)(?!.*\/$)(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/|$))[^\u0000-\u001F\u007F]+$"
+            pattern = r"^(?!/)(?![A-Za-z]:)(?!.*\\)(?!.*//)(?!.*\/$)(?!\.{1,2}(?:/|$))(?!.*\/\.{1,2}(?:/|$))[^\u0000-\u001F\u007F-\u009F]+$"
         )
     )]
     String,
@@ -786,7 +786,7 @@ fn validate_repo_path(path: &str) -> Result<(), &'static str> {
 pub struct GitRevision(
     #[schemars(
         length(min = 1),
-        regex(pattern = r"^(?!-)(?=\S)(?=.*\S$)[^\u0000-\u001F\u007F]+$")
+        regex(pattern = r"^(?!-)(?=\S)(?=.*\S$)[^\u0000-\u001F\u007F-\u009F]+$")
     )]
     String,
 );

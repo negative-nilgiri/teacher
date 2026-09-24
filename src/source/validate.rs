@@ -35,11 +35,26 @@ impl ValidatedLesson {
 
 /// Parses one JSON source document and runs all non-I/O semantic checks.
 pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic>> {
+    // Report malformed JSON directly; otherwise a syntax error would surface
+    // as a shape error from whichever decoder the fallback selected.
+    // Trailing data is left for the strict decoder, which reports it with its
+    // own code.
     let mut version_deserializer = serde_json::Deserializer::from_str(input);
-    let version = serde_json::Value::deserialize(&mut version_deserializer)
-        .ok()
-        .and_then(|value| value.get("schema_version")?.as_str().map(str::to_owned));
-    let source = match version.as_deref() {
+    let document = serde_json::Value::deserialize(&mut version_deserializer).map_err(|error| {
+        vec![Diagnostic::error(
+            "source.deserialize",
+            "",
+            format!(
+                "invalid JSON at line {}, column {}: {error}",
+                error.line(),
+                error.column()
+            ),
+        )]
+    })?;
+    let version = document
+        .get("schema_version")
+        .and_then(|value| value.as_str());
+    let source = match version {
         Some("1.0.0") => deserialize_source::<LessonSourceV1_0_0>(input).map(Into::into),
         Some("1.1.0") => deserialize_source::<LessonSourceV1_1_0>(input).map(Into::into),
         Some("1.2.0") => deserialize_source::<LessonSourceV1_2_0>(input).map(Into::into),
@@ -979,6 +994,18 @@ mod tests {
             "/blocks/2/source/path"
         );
         assert_eq!(serde_path_to_json_pointer("."), "");
+    }
+
+    #[test]
+    fn reports_json_syntax_errors_before_shape_errors() {
+        let input = r#"{"schema_version":"1.0.0","title":"T","blocks":[{"id":"q","type":"multiple_choice","prompt":"p","choices":[{"content":"a","correct":true},{"content":"b"}],}]}"#;
+        let diagnostics = parse_and_validate(input).unwrap_err();
+        assert_eq!(diagnostics.len(), 1);
+        assert!(
+            diagnostics[0].message.starts_with("invalid JSON at line 1"),
+            "{}",
+            diagnostics[0].message
+        );
     }
 
     #[test]

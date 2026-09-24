@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 pub struct SourceId(
     #[schemars(
         length(min = 1),
-        regex(pattern = r"^(?=\S)(?=.*\S$)[^\u0000-\u001F\u007F]+$")
+        regex(pattern = r"^(?=\S)(?=.*\S$)[^\u0000-\u001F\u007F-\u009F]+$")
     )]
     String,
 );
