@@ -126,8 +126,63 @@ pub fn parse_unified_diff(patch: &str) -> Result<ResolvedDiff, RepositoryError> 
         }
     };
 
+    // Lines still owed to the current hunk by its header. While either side is
+    // nonzero, every line is hunk body, even one that resembles a file header
+    // (for example a deleted SQL comment `-- note` renders as `--- note`).
+    let mut old_remaining = 0u32;
+    let mut new_remaining = 0u32;
+
     for (index, line) in patch.lines().enumerate() {
         let line_number = index + 1;
+        if let Some(hunk) = current_hunk.as_mut()
+            && (old_remaining > 0 || new_remaining > 0)
+        {
+            let (kind, old_line, new_line) = match line.as_bytes().first().copied() {
+                // `diff.suppressBlankEmpty` emits blank context lines without a space.
+                Some(b' ') | None if old_remaining > 0 && new_remaining > 0 => {
+                    old_remaining -= 1;
+                    new_remaining -= 1;
+                    old_cursor += 1;
+                    new_cursor += 1;
+                    (
+                        DiffLineKind::Context,
+                        Some(old_cursor - 1),
+                        Some(new_cursor - 1),
+                    )
+                }
+                Some(b'+') if new_remaining > 0 => {
+                    new_remaining -= 1;
+                    new_cursor += 1;
+                    (DiffLineKind::Addition, None, Some(new_cursor - 1))
+                }
+                Some(b'-') if old_remaining > 0 => {
+                    old_remaining -= 1;
+                    old_cursor += 1;
+                    (DiffLineKind::Deletion, Some(old_cursor - 1), None)
+                }
+                Some(b'\\') => continue,
+                Some(b' ' | b'+' | b'-') | None => {
+                    return Err(invalid_patch(
+                        line_number,
+                        "hunk body line counts do not match its header",
+                    ));
+                }
+                _ => {
+                    return Err(invalid_patch(
+                        line_number,
+                        "hunk line has no context/addition/deletion prefix",
+                    ));
+                }
+            };
+            hunk.lines.push(DiffLine {
+                kind,
+                content: line.get(1..).unwrap_or_default().to_owned(),
+                old_line,
+                new_line,
+            });
+            continue;
+        }
+
         if line.starts_with("diff --git ") {
             flush_hunk(&mut current_file, &mut current_hunk);
             flush_file(&mut files, &mut current_file);
@@ -208,6 +263,8 @@ pub fn parse_unified_diff(patch: &str) -> Result<ResolvedDiff, RepositoryError> 
                 .ok_or_else(|| invalid_patch(line_number, "invalid unified-diff hunk header"))?;
             old_cursor = old_start;
             new_cursor = new_start;
+            old_remaining = old_lines;
+            new_remaining = new_lines;
             current_hunk = Some(ResolvedDiffHunk {
                 old_start,
                 old_lines,
@@ -216,39 +273,17 @@ pub fn parse_unified_diff(patch: &str) -> Result<ResolvedDiff, RepositoryError> 
                 heading,
                 lines: Vec::new(),
             });
-        } else if let Some(hunk) = current_hunk.as_mut() {
-            let (kind, content, old_line, new_line) = match line.as_bytes().first().copied() {
-                Some(b' ') => {
-                    let old = old_cursor;
-                    let new = new_cursor;
-                    old_cursor += 1;
-                    new_cursor += 1;
-                    (DiffLineKind::Context, &line[1..], Some(old), Some(new))
-                }
-                Some(b'+') => {
-                    let new = new_cursor;
-                    new_cursor += 1;
-                    (DiffLineKind::Addition, &line[1..], None, Some(new))
-                }
-                Some(b'-') => {
-                    let old = old_cursor;
-                    old_cursor += 1;
-                    (DiffLineKind::Deletion, &line[1..], Some(old), None)
-                }
-                Some(b'\\') => continue,
-                _ => {
-                    return Err(invalid_patch(
-                        line_number,
-                        "hunk line has no context/addition/deletion prefix",
-                    ));
-                }
-            };
-            hunk.lines.push(DiffLine {
-                kind,
-                content: content.to_owned(),
-                old_line,
-                new_line,
-            });
+        } else if current_hunk.is_some()
+            && line != "-- "
+            && matches!(line.as_bytes().first(), Some(b' ' | b'+' | b'-'))
+        {
+            // The header's counts are exhausted, so this line cannot belong to
+            // the hunk. `-- ` alone is the `git format-patch` signature trailer;
+            // other unprefixed text (such as commit messages) is ignored.
+            return Err(invalid_patch(
+                line_number,
+                "hunk body line counts do not match its header",
+            ));
         }
     }
 
@@ -329,20 +364,29 @@ pub fn select_diff_ranges(
     }
 
     for request in requests {
-        if (request.before_lines.is_some() || request.after_lines.is_some())
-            && !files
-                .iter()
-                .any(|file| file.display_path() == Some(request.path.as_str()))
+        if files
+            .iter()
+            .any(|file| file.display_path() == Some(request.path.as_str()))
         {
-            return Err(RepositoryError::at_path(
-                RepositoryErrorKind::EmptySelection,
-                "selected line range intersects no changed lines",
-                request.path.to_path_buf(),
-            ));
+            continue;
         }
+        return Err(
+            if request.before_lines.is_some() || request.after_lines.is_some() {
+                RepositoryError::at_path(
+                    RepositoryErrorKind::EmptySelection,
+                    "selected line range intersects no changed lines",
+                    request.path.to_path_buf(),
+                )
+            } else {
+                RepositoryError::at_path(
+                    RepositoryErrorKind::UnchangedPath,
+                    "selected path has no changes between the compared states",
+                    request.path.to_path_buf(),
+                )
+            },
+        );
     }
 
-    // A requested path may legitimately have no diff when no ranges were used.
     Ok(ResolvedDiff { files })
 }
 
@@ -763,5 +807,66 @@ mod tests {
                 .kind(),
             RepositoryErrorKind::InvalidPatch
         );
+    }
+
+    #[test]
+    fn header_like_content_lines_stay_in_their_hunk() {
+        // Deleting `-- note` and adding `++ counter` produce body lines that
+        // start with `--- ` and `+++ `.
+        let patch = "--- a/q.sql\n+++ b/q.sql\n@@ -1,3 +1,3 @@\n select 1;\n--- note\n+++ counter\n select 2;\n";
+        let parsed = parse_unified_diff(patch).unwrap();
+        assert_eq!(parsed.files.len(), 1);
+        let lines = &parsed.files[0].hunks[0].lines;
+        assert_eq!(lines[1].kind, DiffLineKind::Deletion);
+        assert_eq!(lines[1].content, "-- note");
+        assert_eq!(lines[2].kind, DiffLineKind::Addition);
+        assert_eq!(lines[2].content, "++ counter");
+    }
+
+    #[test]
+    fn accepts_blank_context_and_format_patch_trailer() {
+        let patch = "Subject: [PATCH] demo\n\n---\ndiff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n\n-b\n+B\n\\ No newline at end of file\n-- \n2.45.0\n";
+        let parsed = parse_unified_diff(patch).unwrap();
+        let lines = &parsed.files[0].hunks[0].lines;
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[1].kind, DiffLineKind::Context);
+        assert_eq!(lines[1].content, "");
+    }
+
+    #[test]
+    fn rejects_hunk_bodies_that_disagree_with_their_header() {
+        for patch in [
+            "--- a/f\n+++ b/f\n@@ -1,2 +1,2 @@\n a\n",
+            "--- a/f\n+++ b/f\n@@ -1 +1 @@\n-a\n+b\n+extra\n",
+            "--- a/f\n+++ b/f\n@@ -1,2 +1,1 @@\n a\n+b\n",
+        ] {
+            assert_eq!(
+                parse_unified_diff(patch).unwrap_err().kind(),
+                RepositoryErrorKind::InvalidPatch,
+                "{patch:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_selected_path_without_changes() {
+        let error = select_diff_ranges(
+            parse_unified_diff(PATCH).unwrap(),
+            &[
+                DiffFileRequest {
+                    path: RepoPath::parse("src/lib.rs").unwrap(),
+                    before_lines: None,
+                    after_lines: None,
+                },
+                DiffFileRequest {
+                    path: RepoPath::parse("src/typo.rs").unwrap(),
+                    before_lines: None,
+                    after_lines: None,
+                },
+            ],
+            3,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), RepositoryErrorKind::UnchangedPath);
     }
 }

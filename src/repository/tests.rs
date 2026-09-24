@@ -553,3 +553,80 @@ fn snapshot_guard_detects_ownership_boundary_changes() {
         "unchanged\n"
     );
 }
+
+fn worktree_diff(path: &str) -> DiffRequest {
+    DiffRequest {
+        base: "HEAD".to_owned(),
+        target: DiffTarget::Worktree,
+        files: vec![selected(path)],
+        context_lines: 3,
+    }
+}
+
+#[test]
+fn generated_diff_keeps_deleted_comment_lines_that_resemble_headers() {
+    let temp = TempRepo::new();
+    temp.write("q.sql", "select 1;\n-- comment\nselect 2;\n");
+    temp.commit_all("base");
+    temp.write("q.sql", "select 1;\nselect 2;\n++ added\n");
+
+    let repository = Repository::at_root(temp.path(), None).unwrap();
+    let diff = repository.resolve_diff(&worktree_diff("q.sql")).unwrap();
+    let lines = &diff.files[0].hunks[0].lines;
+    assert!(
+        lines
+            .iter()
+            .any(|line| { line.kind == DiffLineKind::Deletion && line.content == "-- comment" })
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| { line.kind == DiffLineKind::Addition && line.content == "++ added" })
+    );
+}
+
+#[test]
+fn generated_diff_ignores_prefix_and_relative_configuration() {
+    let temp = TempRepo::new();
+    temp.write("dir/file.txt", "one\n");
+    temp.commit_all("base");
+    temp.write("dir/file.txt", "two\n");
+    temp.git(["config", "diff.noprefix", "true"]);
+    temp.git(["config", "diff.mnemonicPrefix", "true"]);
+    temp.git(["config", "diff.relative", "true"]);
+
+    let repository = Repository::at_root(temp.path(), None).unwrap();
+    let diff = repository
+        .resolve_diff(&worktree_diff("dir/file.txt"))
+        .unwrap();
+    assert_eq!(diff.files[0].new_path.as_deref(), Some("dir/file.txt"));
+}
+
+#[test]
+fn generated_diff_rejects_unchanged_and_directory_selections() {
+    let temp = TempRepo::new();
+    temp.write("dir/file.txt", "one\n");
+    temp.commit_all("base");
+
+    let repository = Repository::at_root(temp.path(), None).unwrap();
+    let unchanged = repository
+        .resolve_diff(&worktree_diff("dir/file.txt"))
+        .unwrap_err();
+    assert_eq!(unchanged.kind(), RepositoryErrorKind::UnchangedPath);
+    let directory = repository.resolve_diff(&worktree_diff("dir")).unwrap_err();
+    assert_eq!(directory.kind(), RepositoryErrorKind::InvalidPath);
+}
+
+#[test]
+fn root_below_repository_top_reports_owner_above_root() {
+    let temp = TempRepo::new();
+    temp.write("sub/file.txt", "one\n");
+    temp.commit_all("base");
+    temp.write("sub/file.txt", "two\n");
+
+    let repository = Repository::at_root(&temp.path().join("sub"), None).unwrap();
+    let error = repository
+        .resolve_diff(&worktree_diff("file.txt"))
+        .unwrap_err();
+    assert_eq!(error.kind(), RepositoryErrorKind::OwnerAboveRoot);
+}

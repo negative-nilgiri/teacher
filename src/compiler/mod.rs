@@ -21,7 +21,7 @@ use crate::diagnostics::Diagnostic;
 use crate::language::Language;
 use crate::repository::{
     self, DiffFileRequest, DiffRequest, DiffTarget, Repository, RepositoryError,
-    ResourceProvenance as RepositoryResourceProvenance, SnapshotGuard,
+    RepositoryErrorKind, ResourceProvenance as RepositoryResourceProvenance, SnapshotGuard,
 };
 use crate::source::{
     self, Block, CodeHighlight, CodeSource, DiffSource, GitDiffTarget, LessonSource, LineRange,
@@ -725,10 +725,20 @@ fn repository_diagnostic(pointer: &str, error: RepositoryError) -> Diagnostic {
     let code = error.code();
     let message = error.to_string();
     let mut diagnostic = Diagnostic::error(code, pointer, message);
-    if code == "repository.mixed_owners" {
-        diagnostic = diagnostic.with_suggestion(
-            "Split the selected paths into one diff block per owning repository or submodule.",
-        );
+    let suggestion = match error.kind() {
+        RepositoryErrorKind::MixedRepositories => {
+            Some("Split the selected paths into one diff block per owning repository or submodule.")
+        }
+        RepositoryErrorKind::UnchangedPath => Some(
+            "Check the path spelling and the base/target pair, or remove the file from this diff.",
+        ),
+        RepositoryErrorKind::OwnerAboveRoot => {
+            Some("Rerun with --root set to the repository's top-level directory.")
+        }
+        _ => None,
+    };
+    if let Some(suggestion) = suggestion {
+        diagnostic = diagnostic.with_suggestion(suggestion);
     }
     diagnostic
 }

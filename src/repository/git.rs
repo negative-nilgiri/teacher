@@ -390,6 +390,15 @@ impl Repository {
             ));
         }
         let paths: Vec<_> = request.files.iter().map(|file| file.path.clone()).collect();
+        for path in &paths {
+            if self.resolve_path(path).is_dir() {
+                return Err(RepositoryError::at_path(
+                    RepositoryErrorKind::InvalidPath,
+                    "Git diff selections must name files, not directories",
+                    path.to_path_buf(),
+                ));
+            }
+        }
         // Observe ownership before selecting the group used by the diff. If a
         // nested repository appears or disappears after this point, final
         // verification detects the ownership-boundary change.
@@ -440,6 +449,13 @@ impl Repository {
             OsString::from("--no-ext-diff"),
             OsString::from("--no-color"),
             OsString::from("--no-renames"),
+            // Pin output details that user configuration can otherwise change:
+            // textconv drivers, `diff.noprefix`/`diff.mnemonicPrefix`, and
+            // `diff.relative`.
+            OsString::from("--no-textconv"),
+            OsString::from("--src-prefix=a/"),
+            OsString::from("--dst-prefix=b/"),
+            OsString::from("--no-relative"),
             OsString::from("--text"),
             OsString::from(format!("--unified={}", request.context_lines)),
             OsString::from(base.as_str()),
@@ -648,8 +664,11 @@ impl Repository {
             })?;
         if !owner.starts_with(&self.root) {
             return Err(RepositoryError::at_path(
-                RepositoryErrorKind::InvalidPath,
-                "path resolves outside the selected root",
+                RepositoryErrorKind::OwnerAboveRoot,
+                format!(
+                    "the owning Git repository {} is above the selected root; pass that repository (or a directory containing it) as the root",
+                    owner.display()
+                ),
                 path.to_path_buf(),
             ));
         }
@@ -760,6 +779,17 @@ where
         .arg("-C")
         .arg(directory)
         .args(args)
+        // A parent Git process (for example a hook running `learnc`) exports
+        // repository-selecting variables that would override per-path owner
+        // discovery.
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_NAMESPACE")
+        .env_remove("GIT_PREFIX")
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("LC_ALL", "C")
         .output()

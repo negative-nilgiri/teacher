@@ -17,6 +17,8 @@ pub enum RepositoryErrorKind {
     MissingFile,
     InvalidPatch,
     EmptySelection,
+    UnchangedPath,
+    OwnerAboveRoot,
     SnapshotChanged,
 }
 
@@ -68,6 +70,8 @@ impl RepositoryError {
             RepositoryErrorKind::MissingFile => "repository.missing_file",
             RepositoryErrorKind::InvalidPatch => "repository.invalid_patch",
             RepositoryErrorKind::EmptySelection => "repository.empty_diff_selection",
+            RepositoryErrorKind::UnchangedPath => "repository.path_unchanged",
+            RepositoryErrorKind::OwnerAboveRoot => "repository.owner_above_root",
             RepositoryErrorKind::SnapshotChanged => "repository.snapshot_changed",
         }
     }
