@@ -9,7 +9,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rand::seq::SliceRandom;
 use sha2::{Digest, Sha256};
 
 use crate::artifact::{
@@ -126,10 +125,12 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                 let mut choices = Vec::with_capacity(block.choices.len());
                 let mut correct = None;
                 let mut overflow = None;
-                let mut authored_choices =
-                    block.choices.into_iter().enumerate().collect::<Vec<_>>();
-                authored_choices.shuffle(&mut rand::rng());
-                for (choice_index, choice) in authored_choices {
+                let order = presentation_order(&source_id, &prompt, &block.choices);
+                let mut authored_choices = block.choices.into_iter().map(Some).collect::<Vec<_>>();
+                for choice_index in order {
+                    let choice = authored_choices[choice_index]
+                        .take()
+                        .expect("presentation order is a permutation");
                     let Ok(raw_choice_id) = u32::try_from(next_choice_id) else {
                         overflow = Some(
                             Diagnostic::error(
@@ -768,6 +769,31 @@ fn resource_provenance(value: RepositoryResourceProvenance) -> ResourceProvenanc
     }
 }
 
+/// Scramble a question's choices so authored position does not reveal the
+/// answer, while keeping the order a pure function of the question. Rebuilding
+/// unchanged input then yields an identical artifact, and editing one question
+/// reshuffles only that question.
+fn presentation_order(source_id: &str, prompt: &str, choices: &[source::Choice]) -> Vec<usize> {
+    let mut seed = Sha256::new();
+    for part in [source_id, prompt]
+        .into_iter()
+        .chain(choices.iter().map(|choice| choice.content.as_str()))
+    {
+        // Length prefixes keep ("ab", "c") and ("a", "bc") distinct.
+        seed.update((part.len() as u64).to_le_bytes());
+        seed.update(part.as_bytes());
+    }
+    let seed = seed.finalize();
+    let mut order = (0..choices.len()).collect::<Vec<_>>();
+    order.sort_by_cached_key(|index| {
+        Sha256::new()
+            .chain_update(seed)
+            .chain_update((*index as u64).to_le_bytes())
+            .finalize()
+    });
+    order
+}
+
 fn sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -777,6 +803,36 @@ fn sha256(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn rebuilding_identical_input_yields_identical_artifacts() {
+        let options = CompileOptions::new(".");
+        let first = serde_json::to_string(&compile(INLINE_LESSON, &options).unwrap()).unwrap();
+        let second = serde_json::to_string(&compile(INLINE_LESSON, &options).unwrap()).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn presentation_order_is_a_stable_scrambling_permutation() {
+        let choices = ["A", "B", "C", "D"]
+            .map(|content| source::Choice {
+                content: content.to_owned(),
+                correct: content == "A",
+            })
+            .to_vec();
+        let orders = (0..32)
+            .map(|question| presentation_order(&format!("q{question}"), "Pick", &choices))
+            .collect::<Vec<_>>();
+        for order in &orders {
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, [0, 1, 2, 3]);
+        }
+        assert_eq!(orders[0], presentation_order("q0", "Pick", &choices));
+        // The correct choice must not stay first; 32 questions all keeping it
+        // first would have probability 4^-32 under a fair scramble.
+        assert!(orders.iter().any(|order| order[0] != 0));
+    }
 
     const INLINE_LESSON: &str = r##"{
         "schema_version":"1.0.0",

@@ -222,7 +222,9 @@ The concrete orchestration starts in
    invoke Git.
 4. Markdown, code, diff, and quiz blocks are lowered in authored block order.
    Code languages are normalized or inferred from source paths during lowering;
-   choices inside each quiz are shuffled before dense choice IDs are assigned.
+   choices inside each quiz are scrambled before dense choice IDs are assigned.
+   The order is a keyed hash of the question's source ID, prompt, and choices,
+   never a random seed, so identical input always builds an identical artifact.
    Mermaid code is checked with `mermaid-svg` 0.7.0's parse-only API on the
    exact resolved content. This is a partial syntax check, not a guarantee that
    the browser's Mermaid parser will render every accepted diagram. Resolver

@@ -405,9 +405,10 @@ commands or Git argument arrays in the lesson.
 
 A multiple-choice block needs at least two Markdown choices and exactly one
 `correct: true`. Omitting `correct` means false. Do not give choices IDs.
-`learnc` randomizes the presented choice order during compilation, assigns IDs
-to that shuffled order, and freezes both the order and matching private answer
-in the `.learn` artifact. Write choices for semantic quality rather than trying
+`learnc` scrambles the presented choice order during compilation, assigns IDs
+to that order, and freezes both the order and matching private answer in the
+`.learn` artifact. The order is derived from the question's ID, prompt, and
+choices, so rebuilding an unchanged lesson produces an identical artifact. Write choices for semantic quality rather than trying
 to vary where the correct answer appears; `learn` preserves the compiled order
 across refreshes.
 
