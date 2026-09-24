@@ -5,7 +5,7 @@ artifacts and serves them as a local interactive experience.
 
 The project ships three Rust binaries from one Cargo package:
 
-- `learnc` validates and compiles lesson sources.
+- `learnc` validates, lints, and compiles lesson sources.
 - `learn` serves a compiled artifact and owns learner-session state.
 - `learnpick` optionally recommends one block type for one teaching unit.
 
@@ -28,6 +28,7 @@ binaries:
 ```sh
 just install
 just lesson-check path/to/lesson.json
+just lesson-lint path/to/lesson.json
 just lesson-build path/to/lesson.json --output path/to/lesson.learn
 just serve path/to/lesson.learn --open
 ```
@@ -35,7 +36,7 @@ just serve path/to/lesson.learn --open
 For local development, `just run --open --text` rebuilds the UI, compiles
 `examples/inline-lesson.json` to `target/dev-lesson.learn`, and serves it while
 forwarding every supplied option to `learn serve`.
-All `lesson-check`, `lesson-build`, and `serve` arguments are forwarded without
+All `lesson-check`, `lesson-lint`, `lesson-build`, and `serve` arguments are forwarded without
 interpretation. `just learnc ...` and `just learn ...` expose completely raw
 passthroughs to either core binary. `just learnpick ...` does the same for the
 optional adviser; see [`docs/LEARNPICK.md`](docs/LEARNPICK.md).
@@ -47,6 +48,13 @@ Commands emit JSON by default for agent use, including help, version, invalid
 usage, and warnings. Pass `--text` or `-t` for human-readable output; for
 example, `learnc -t --help`. `learn serve` binds to a random loopback port and
 opens a browser only when `--open` is supplied.
+
+`learnc lint` first runs the same validity checks as `learnc check`, then reports
+separate authoring-policy findings. Its findings never change `check` or `build`
+results. Pass `--config path/to/lint.toml` for a partial config file, or set
+individual thresholds with flags such as `--max-code-lines 40`; CLI flags take
+precedence over the file. See [`config.example.toml`](config.example.toml) for
+all settings and [`docs/LINT_DESIGN.md`](docs/LINT_DESIGN.md) for the rules.
 
 ## Package contract
 

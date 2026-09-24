@@ -9,6 +9,7 @@ publish = false
 include = [
     "/Cargo.toml",
     "/Cargo.lock",
+    "/config.example.toml",
     "/build.rs",
     "/README.md",
     "/DESIGN_REVIEW.md",
@@ -39,6 +40,7 @@ path = "src/bin/learnpick.rs"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 mime_guess = "2"
+mermaid-svg = "=0.7.0"
 rand = "0.9"
 rust-embed = "8"
 schemars = { version = "1", features = ["derive"] }
@@ -47,5 +49,6 @@ serde_json = "1"
 serde_path_to_error = "0.1"
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync"] }
+toml = "0.8"
 ureq = { version = "3.4", features = ["json"] }
 webbrowser = "1"

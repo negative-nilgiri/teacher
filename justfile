@@ -65,6 +65,10 @@ learnpick *args: web-build
 lesson-check *args: web-build
     cargo run --quiet --bin learnc -- check "$@"
 
+# Report authoring-policy findings, forwarding every argument after `lint`.
+lesson-lint *args: web-build
+    cargo run --quiet --bin learnc -- lint "$@"
+
 # Compile an authored lesson, forwarding every argument after `build`.
 lesson-build *args: web-build
     cargo run --quiet --bin learnc -- build "$@"

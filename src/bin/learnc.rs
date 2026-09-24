@@ -9,8 +9,9 @@ use agent_teacher::compiler::{
     CompileOptions, compile_file, default_artifact_path, write_artifact_atomic,
 };
 use agent_teacher::diagnostics::Diagnostic;
+use agent_teacher::lint::{LintConfig, LintReport, Severity, lint_file};
 use agent_teacher::source::{SchemaVersion, source_json_schema_for};
-use clap::{CommandFactory, Parser, Subcommand, error::ErrorKind};
+use clap::{Args, CommandFactory, Parser, Subcommand, error::ErrorKind};
 use serde_json::{Value, json};
 
 #[derive(Debug, Parser)]
@@ -38,6 +39,25 @@ enum Command {
         #[arg(long)]
         root: Option<PathBuf>,
     },
+    /// Check authoring policy after the complete compilation checks pass.
+    Lint {
+        /// Authored JSON lesson document.
+        lesson: PathBuf,
+        /// Filesystem root used to resolve relative lesson paths.
+        #[arg(long)]
+        root: Option<PathBuf>,
+        /// Explicit TOML file overriding lint thresholds.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[command(flatten)]
+        overrides: LintOverrides,
+        /// Lowest lint category that causes a nonzero exit status.
+        #[arg(long, default_value = "error")]
+        warning_as_error: Severity,
+        /// Omit lint findings below this category.
+        #[arg(long)]
+        ignore_below: Option<Severity>,
+    },
     /// Compile an authored JSON lesson into a self-contained `.learn` artifact.
     Build {
         /// Authored JSON lesson document.
@@ -57,9 +77,91 @@ enum Command {
     },
 }
 
+#[derive(Debug, Args)]
+struct LintOverrides {
+    /// Maximum displayed lines before a code block is considered long.
+    #[arg(long)]
+    max_code_lines: Option<usize>,
+    /// Highlighted-line ratio that triggers a coverage warning (0 to 1).
+    #[arg(long)]
+    highlight_coverage_ratio: Option<f64>,
+    /// Minimum displayed lines for a highlight coverage warning.
+    #[arg(long)]
+    highlight_coverage_min_lines: Option<usize>,
+    /// Number of highlight ranges that triggers an info finding.
+    #[arg(long)]
+    many_highlight_ranges: Option<usize>,
+    /// Minimum lines before suggesting highlights on a code block.
+    #[arg(long)]
+    suggest_highlights_min_lines: Option<usize>,
+    /// Minimum blocks between a filename mention and its code block.
+    #[arg(long)]
+    filename_reference_gap: Option<usize>,
+    /// Maximum proportional difference between answer choice lengths.
+    #[arg(long)]
+    max_choice_length_spread: Option<f64>,
+    /// Minimum character difference between answer choice lengths.
+    #[arg(long)]
+    min_choice_length_gap_chars: Option<usize>,
+    /// Minimum proportion of lesson blocks that should be questions (0 to 1).
+    #[arg(long)]
+    min_question_ratio: Option<f64>,
+    /// Maximum decoded characters in an inline code or diff source.
+    #[arg(long)]
+    max_inline_code_diff_chars: Option<usize>,
+    /// Maximum decoded characters in an inline Markdown source or quiz prompt.
+    #[arg(long)]
+    max_inline_prose_chars: Option<usize>,
+}
+
+impl LintOverrides {
+    fn apply(self, config: &mut LintConfig) {
+        if let Some(value) = self.max_code_lines {
+            config.max_code_lines = value;
+        }
+        if let Some(value) = self.highlight_coverage_ratio {
+            config.highlight_coverage_ratio = value;
+        }
+        if let Some(value) = self.highlight_coverage_min_lines {
+            config.highlight_coverage_min_lines = value;
+        }
+        if let Some(value) = self.many_highlight_ranges {
+            config.many_highlight_ranges = value;
+        }
+        if let Some(value) = self.suggest_highlights_min_lines {
+            config.suggest_highlights_min_lines = value;
+        }
+        if let Some(value) = self.filename_reference_gap {
+            config.filename_reference_gap = value;
+        }
+        if let Some(value) = self.max_choice_length_spread {
+            config.max_choice_length_spread = value;
+        }
+        if let Some(value) = self.min_choice_length_gap_chars {
+            config.min_choice_length_gap_chars = value;
+        }
+        if let Some(value) = self.min_question_ratio {
+            config.min_question_ratio = value;
+        }
+        if let Some(value) = self.max_inline_code_diff_chars {
+            config.max_inline_code_diff_chars = value;
+        }
+        if let Some(value) = self.max_inline_prose_chars {
+            config.max_inline_prose_chars = value;
+        }
+    }
+}
+
 enum Success {
     Json(Value),
     Schema(Value),
+    Lint(LintReport),
+}
+
+impl Success {
+    fn is_fatal(&self) -> bool {
+        matches!(self, Self::Lint(report) if report.is_fatal())
+    }
 }
 
 fn main() -> ExitCode {
@@ -124,8 +226,13 @@ fn main() -> ExitCode {
 
     match execute(cli.command, &current_dir) {
         Ok(success) => {
+            let fatal = success.is_fatal();
             emit_success(cli.text, success);
-            ExitCode::SUCCESS
+            if fatal {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
         }
         Err(diagnostics) => {
             emit_failure(cli.text, &diagnostics);
@@ -147,6 +254,26 @@ fn execute(command: Command, current_dir: &Path) -> Result<Success, Vec<Diagnost
                 "nodes": artifact.presentation.nodes.len(),
                 "questions": artifact.private.answers.len()
             })))
+        }
+        Command::Lint {
+            lesson,
+            root,
+            config,
+            overrides,
+            warning_as_error,
+            ignore_below,
+        } => {
+            let config = LintConfig::load_with_overrides(config.as_deref(), |config| {
+                overrides.apply(config);
+            })
+            .map_err(|error| vec![error])?;
+            let options = compile_options(current_dir, root);
+            let findings = lint_file(&lesson, &options, &config)?;
+            Ok(Success::Lint(LintReport::from_findings(
+                findings,
+                ignore_below,
+                warning_as_error,
+            )))
         }
         Command::Build {
             lesson,
@@ -204,6 +331,13 @@ fn compile_options(current_dir: &Path, root: Option<PathBuf>) -> CompileOptions 
 
 fn emit_success(text: bool, success: Success) {
     match success {
+        Success::Lint(report) if text => print!("{}", report.text()),
+        Success::Lint(report) => {
+            println!(
+                "{}",
+                serde_json::to_string(&report).expect("lint report serializes")
+            );
+        }
         Success::Schema(schema) => {
             // The schema command's JSON value is its exact output contract, not
             // wrapped in a command-status envelope.

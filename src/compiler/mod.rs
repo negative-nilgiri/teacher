@@ -359,11 +359,13 @@ fn resolve_code(
                     "line highlights require a file-backed code source",
                 ));
             }
+            let language = authored_language
+                .map(Language::from_authored)
+                .unwrap_or_default();
+            validate_mermaid(language, &content, pointer)?;
             Ok(CompiledNodeContent::Code {
                 provenance: inline_provenance(content.as_bytes()),
-                language: authored_language
-                    .map(Language::from_authored)
-                    .unwrap_or_default(),
+                language,
                 caption,
                 highlights: Vec::new(),
                 content,
@@ -386,6 +388,7 @@ fn resolve_code(
                         .map_err(|error| repository_diagnostic(pointer, error))?,
                 )
                 .map_err(|error| repository_diagnostic(pointer, error))?;
+            validate_mermaid(language, &resource.content, pointer)?;
             let highlights = compile_code_highlights(
                 &authored_highlights,
                 source_start,
@@ -422,6 +425,7 @@ fn resolve_code(
                         .map_err(|error| repository_diagnostic(pointer, error))?,
                 )
                 .map_err(|error| repository_diagnostic(pointer, error))?;
+            validate_mermaid(language, &resource.content, pointer)?;
             let highlights = compile_code_highlights(
                 &authored_highlights,
                 source_start,
@@ -437,6 +441,21 @@ fn resolve_code(
             })
         }
     }
+}
+
+fn validate_mermaid(language: Language, content: &str, pointer: &str) -> Result<(), Diagnostic> {
+    if language != Language::Mermaid {
+        return Ok(());
+    }
+    mermaid_svg::parse(content).map_err(|error| {
+        Diagnostic::error(
+            "compiler.mermaid.syntax",
+            pointer,
+            format!("Mermaid syntax was rejected by the Rust parser: {error}"),
+        )
+        .with_suggestion("Correct the Mermaid source and check the diagram in the lesson UI.")
+    })?;
+    Ok(())
 }
 
 fn reject_mermaid_highlights(
@@ -887,6 +906,52 @@ mod tests {
         assert_eq!(encoded["presentation"]["nodes"][0]["language"], "rust");
         assert_eq!(encoded["presentation"]["nodes"][1]["language"], "mermaid");
         assert_eq!(encoded["presentation"]["nodes"][2]["language"], "text");
+    }
+
+    #[test]
+    fn rejects_invalid_resolved_mermaid_and_accepts_sequence_diagrams() {
+        let valid = r#"{
+            "schema_version":"2.1.0",
+            "title":"Sequence",
+            "blocks":[{"type":"code","id":"sequence","language":"mermaid",
+                "source":{"kind":"inline","content":"sequenceDiagram\n  participant A as Agent\n  participant C as Compiler\n  A->>C: Build lesson\n  C-->>A: Return artifact"}}]
+        }"#;
+        compile(valid, &CompileOptions::new(".")).unwrap();
+
+        let invalid = r#"{
+            "schema_version":"2.1.0",
+            "title":"Invalid diagram",
+            "blocks":[{"type":"code","id":"diagram","language":"mermaid",
+                "source":{"kind":"inline","content":"flowchart SIDEWAYS\n  A --> B"}}]
+        }"#;
+        let errors = compile(invalid, &CompileOptions::new(".")).unwrap_err();
+        assert_eq!(errors[0].code, "compiler.mermaid.syntax");
+        assert_eq!(errors[0].pointer, "/blocks/0/source");
+    }
+
+    #[test]
+    fn validates_mermaid_inferred_from_a_file_path() {
+        let unique = format!(
+            "agent-teacher-mermaid-test-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let directory = std::env::temp_dir().join(unique);
+        fs::create_dir(&directory).unwrap();
+        fs::write(
+            directory.join("diagram.mmd"),
+            "flowchart LR\n  A[unclosed\n",
+        )
+        .unwrap();
+        let lesson = r#"{
+            "schema_version":"2.1.0",
+            "title":"File diagram",
+            "blocks":[{"type":"code","id":"diagram",
+                "source":{"kind":"file","path":"diagram.mmd"}}]
+        }"#;
+        let errors = compile(lesson, &CompileOptions::new(&directory)).unwrap_err();
+        assert_eq!(errors[0].code, "compiler.mermaid.syntax");
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

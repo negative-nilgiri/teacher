@@ -105,13 +105,14 @@ artifacts, or study sessions.
 
 | Path | Responsibility |
 | --- | --- |
-| [`src/bin/learnc.rs`](../src/bin/learnc.rs) | Compiler CLI, JSON/text reporting, `check`, `build`, and `schema`. |
+| [`src/bin/learnc.rs`](../src/bin/learnc.rs) | Compiler CLI, JSON/text reporting, `check`, `lint`, `build`, and `schema`. |
 | [`src/cli.rs`](../src/cli.rs) | Shared Clap-driven output-mode detection and structured JSON help/version descriptions. |
 | [`src/source/`](../src/source) | Authored model, `SourceId`/`NodeId`, JSON Schema, and source-only validation. |
 | [`src/language.rs`](../src/language.rs) | Canonical code-language normalization, path inference, aliases, and plain-text fallback. |
 | [`src/diagnostics.rs`](../src/diagnostics.rs) | Stable diagnostic codes, JSON Pointers, related locations, and suggestions. |
 | [`src/repository/`](../src/repository) | Validated repository paths, Git execution, content resolution, diff parsing, and consistency guards. |
 | [`src/compiler/mod.rs`](../src/compiler/mod.rs) | Adapts source types to repository requests and lowers resolved blocks into an artifact. |
+| [`src/lint/`](../src/lint) | Separate authoring-policy rules, thresholds, editable source spans, and lint diagnostics. |
 | [`src/artifact/mod.rs`](../src/artifact/mod.rs) | Versioned serialized contract shared by compiler and runtime. |
 | [`src/bin/learn.rs`](../src/bin/learn.rs) | Runtime CLI and startup/error output. |
 | [`src/bin/learnpick.rs`](../src/bin/learnpick.rs) | Optional adviser CLI and JSON/text result projection. |
@@ -185,8 +186,10 @@ The concrete orchestration starts in
 4. Markdown, code, diff, and quiz blocks are lowered in authored block order.
    Code languages are normalized or inferred from source paths during lowering;
    choices inside each quiz are shuffled before dense choice IDs are assigned.
-   Resolver errors are collected where possible instead of stopping at the
-   first block.
+   Mermaid code is checked with `mermaid-svg` 0.7.0's parse-only API on the
+   exact resolved content. This is a partial syntax check, not a guarantee that
+   the browser's Mermaid parser will render every accepted diagram. Resolver
+   errors are collected where possible instead of stopping at the first block.
 5. Every symbolic revision observed by a blob or diff is re-resolved in its
    owning repository, then every selected repository snapshot is rechecked. A
    moved ref or changed input aborts the entire compile before an artifact is
@@ -488,6 +491,22 @@ produces one error; semantic validation collects independent failures.
 Repository errors map stable `RepositoryErrorKind` values into the same compiler
 diagnostic envelope.
 
+`learnc lint` calls the complete compile pipeline in memory before applying
+authoring-policy rules. It retains the original JSON for pointer-to-span mapping
+and inspects frozen artifact content for resolved text, languages, highlights,
+and structured diffs. Its diagnostic type is separate from compiler diagnostics:
+each finding has an intrinsic severity, computed `fatal`, block ID (or `null`
+for a lesson-wide finding), pointer, editable `location` with one-based
+`path`/`start`/`end`, suggestion, and optional related locations. Original JSON
+string spans account for escapes; file-backed Mermaid style spans use source
+line numbers, while revision-backed content points primarily to `lesson.json`.
+Lint filters findings before computing fatality. Its optional flat TOML config
+is loaded only with `--config`; no configuration is discovered automatically.
+Each threshold also has an explicit kebab-case CLI flag. Effective thresholds
+come from defaults, then the selected config file, then CLI flags. The root
+`config.example.toml` documents every threshold and ships in the Cargo package.
+Neither lint rules nor lint config is called by `check` or `build`.
+
 `learn serve` prints and flushes one startup record only after the artifact has
 loaded and a loopback port has been reserved. Process integrations can read that
 line to discover the random URL before waiting on the long-running server.
@@ -509,6 +528,7 @@ line to discover the random URL before waiting on the long-running server.
 | `just learn [args...]` | Passes arbitrary arguments directly to the runtime binary. |
 | `just learnpick [args...]` | Passes arbitrary arguments directly to the optional adviser. |
 | `just lesson-check [args...]` | Runs `learnc check` with untouched arguments and options. |
+| `just lesson-lint [args...]` | Runs `learnc lint` with untouched arguments and options. |
 | `just lesson-build [args...]` | Runs `learnc build` with untouched arguments and options. |
 | `just serve [args...]` | Runs `learn serve` with untouched arguments and options. |
 | `just run [serve-args...]` | Rebuilds the UI, compiles the inline example, and forwards all arguments to `learn serve`. |
@@ -538,6 +558,9 @@ Tests are layered so failures identify the responsible boundary:
 
 - Source/schema/diagnostics tests are colocated under
   [`src/source/`](../src/source).
+- Lint rule, threshold, source-span, and text-projection tests live under
+  [`src/lint/`](../src/lint); [`tests/lint_contract.rs`](../tests/lint_contract.rs)
+  checks the command output, exit behavior, config, and compiler boundary.
 - Patch parsing and range-selection tests live in
   [`src/repository/diff.rs`](../src/repository/diff.rs#L623).
 - Real Git worktree, sibling-repository, submodule, revision, ref-movement,

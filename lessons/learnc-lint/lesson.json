@@ -1,0 +1,176 @@
+{
+  "schema_version": "2.1.0",
+  "title": "How learnc lint checks a lesson",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "boundary",
+      "source": { "kind": "file", "path": "lessons/learnc-lint/01-boundary.md" }
+    },
+    {
+      "type": "code",
+      "id": "lint-sequence",
+      "language": "mermaid",
+      "source": {
+        "kind": "inline",
+        "content": "sequenceDiagram\n  participant A as Author\n  participant L as Lint CLI\n  participant C as Compiler\n  A->>L: Run learnc lint\n  L->>C: Validate and resolve\n  C-->>L: Frozen lesson\n  L-->>A: Findings and exit status"
+      }
+    },
+    {
+      "type": "code",
+      "id": "lint-pipeline",
+      "highlights": [
+        {
+          "lines": [{ "start": 42, "end": 44 }],
+          "annotation": "Policy starts only after compilation succeeds; it reads the same in-memory artifact that `check` would discard."
+        },
+        {
+          "lines": [{ "start": 58, "end": 64 }],
+          "color": "blue",
+          "annotation": "The rule pass receives both authored structure and frozen content, while source spans stay separate from the artifact."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/lint/mod.rs",
+        "lines": { "start": 20, "end": 65 }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "boundary-question",
+      "prompt": { "kind": "inline", "content": "Why does `learnc lint` compile before running its policy rules?" },
+      "choices": [
+        { "content": "So rules inspect resolved, validated lesson content.", "correct": true },
+        { "content": "So rules can rewrite source files before the build." },
+        { "content": "So rules can assign learner progress identifiers." }
+      ],
+      "hints": ["Consider which data the rules use and what happens when compilation fails."],
+      "explanation": "Compilation establishes a trustworthy, frozen view of the lesson. A failure stops lint before authoring-policy rules inspect unreliable input."
+    },
+    {
+      "type": "markdown",
+      "id": "mermaid-explanation",
+      "source": { "kind": "file", "path": "lessons/learnc-lint/02-mermaid.md" }
+    },
+    {
+      "type": "code",
+      "id": "mermaid-check",
+      "source": {
+        "kind": "file",
+        "path": "src/compiler/mod.rs",
+        "lines": { "start": 446, "end": 459 }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "mermaid-question",
+      "prompt": { "kind": "inline", "content": "Which Mermaid condition must stop `learnc check` and `learnc build`?" },
+      "choices": [
+        { "content": "The Rust parser rejects the resolved diagram.", "correct": true },
+        { "content": "A flowchart uses a purposeful `subgraph`." },
+        { "content": "A diagram has no `classDef` legend entries." }
+      ],
+      "hints": ["Separate parser rejection from an authoring-style warning."],
+      "explanation": "The partial Rust syntax gate is a compiler check. Flowchart grouping and styling are lint policy, where intentional exceptions are possible."
+    },
+    {
+      "type": "markdown",
+      "id": "locations-explanation",
+      "source": { "kind": "file", "path": "lessons/learnc-lint/03-locations.md" }
+    },
+    {
+      "type": "code",
+      "id": "string-span-mapping",
+      "source": {
+        "kind": "file",
+        "path": "src/lint/span.rs",
+        "lines": { "start": 92, "end": 109 }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "location-question",
+      "prompt": { "kind": "inline", "content": "Where should a lint finding about content frozen from a Git revision primarily point?" },
+      "choices": [
+        { "content": "The editable source declaration in `lesson.json`.", "correct": true },
+        { "content": "The frozen content inside the `.learn` artifact." },
+        { "content": "The current worktree file with the same path." }
+      ],
+      "hints": ["The primary location should be something the author can edit to change the lesson."],
+      "explanation": "A revision's content is historical and may differ from the current worktree. The lesson's source declaration is the reliable edit target."
+    },
+    {
+      "type": "markdown",
+      "id": "rules-explanation",
+      "source": { "kind": "file", "path": "lessons/learnc-lint/04-rules.md" }
+    },
+    {
+      "type": "code",
+      "id": "highlight-coverage",
+      "highlights": [
+        {
+          "lines": [{ "start": 260, "end": 268 }],
+          "annotation": "The set counts each displayed line once, then applies both the minimum-line and coverage-ratio thresholds."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/lint/rules.rs",
+        "lines": { "start": 260, "end": 292 }
+      }
+    },
+    {
+      "type": "code",
+      "id": "filter-before-fatal",
+      "source": {
+        "kind": "file",
+        "path": "src/lint/mod.rs",
+        "lines": { "start": 155, "end": 176 }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "filter-question",
+      "prompt": { "kind": "inline", "content": "Can a warning hidden by `--ignore-below critical` still make lint exit nonzero?" },
+      "choices": [
+        { "content": "No; filtering happens before fatality is computed.", "correct": true },
+        { "content": "Yes; `--warning-as-error info` restores hidden warnings." },
+        { "content": "Yes; any warning is fatal whenever an error also exists." }
+      ],
+      "hints": ["Look at the order of the filter and map operations in `LintReport`."],
+      "explanation": "Suppressed findings never enter the report's fatality calculation. Compiler-validation failures are separate and cannot be suppressed by this flag."
+    },
+    {
+      "type": "markdown",
+      "id": "cli-explanation",
+      "source": { "kind": "file", "path": "lessons/learnc-lint/05-cli.md" }
+    },
+    {
+      "type": "code",
+      "id": "lint-cli-branch",
+      "source": {
+        "kind": "file",
+        "path": "src/bin/learnc.rs",
+        "lines": { "start": 258, "end": 277 }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "config-question",
+      "prompt": { "kind": "inline", "content": "What does an explicit lint TOML file change?" },
+      "choices": [
+        { "content": "Only lint rule thresholds for that invocation.", "correct": true },
+        { "content": "The source schema accepted by check and build." },
+        { "content": "The intrinsic severity assigned to every rule." }
+      ],
+      "hints": ["Distinguish a threshold override from validity or severity."],
+      "explanation": "TOML keys override numeric lint thresholds, and matching CLI flags take precedence over TOML. Rule severities stay intrinsic, while `--warning-as-error` controls which reported findings are fatal."
+    },
+    {
+      "type": "markdown",
+      "id": "recap",
+      "source": { "kind": "file", "path": "lessons/learnc-lint/06-recap.md" }
+    }
+  ]
+}

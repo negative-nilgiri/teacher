@@ -1,0 +1,30 @@
+# Example configuration for `learnc lint --config config.example.toml lesson.json`.
+# Delete any setting you do not want to override; omitted settings use defaults.
+# CLI flags such as --max-code-lines 40 take precedence over this file.
+
+# Warn when a displayed code block has more than this many lines.
+max_code_lines = 60
+
+# Warn when highlighted lines reach this fraction of a code block (0 to 1).
+highlight_coverage_ratio = 0.70
+# Apply the coverage warning only to blocks with at least this many lines.
+highlight_coverage_min_lines = 20
+# Report many separate highlight ranges at or above this count (minimum 1).
+many_highlight_ranges = 3
+# Suggest highlights on eligible code blocks at or above this line count.
+suggest_highlights_min_lines = 30
+
+# Report a distant filename mention when this many blocks separate it from code.
+filename_reference_gap = 3
+
+# Report answer choices whose relative length spread exceeds this value.
+max_choice_length_spread = 0.30
+# Require at least this many characters of difference between choices.
+min_choice_length_gap_chars = 10
+# Suggest more questions below this share of all lesson blocks (0 to 1).
+min_question_ratio = 0.20
+
+# Error when inline code or diff content exceeds this many decoded characters.
+max_inline_code_diff_chars = 256
+# Error when inline Markdown or quiz prompt content exceeds this many characters.
+max_inline_prose_chars = 512

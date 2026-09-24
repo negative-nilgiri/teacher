@@ -10,6 +10,7 @@ Use the compiler as the source of truth:
 ```console
 learnc schema --version 2.1.0
 learnc check lesson.json
+learnc lint lesson.json
 learnc build lesson.json
 learn serve lesson.learn
 ```
@@ -29,9 +30,9 @@ authoritative. See [`docs/LEARNPICK.md`](LEARNPICK.md) for its exact contract.
 Commands emit JSON by default, including `--help`, `--version`, and invalid
 usage. Add `--text` or `-t` for human-readable output; use `learnc -t --help`
 for the normal Clap help page.
-`check` runs the complete parse, validation, repository, Git, and diff pipeline
-without writing a `.learn` file. Never edit a generated `.learn` artifact; change
-the source or referenced inputs and rebuild it.
+`check` runs the complete parse, validation, repository, Git, diff, and partial
+Mermaid syntax pipeline without writing a `.learn` file. Never edit a generated
+`.learn` artifact; change the source or referenced inputs and rebuild it.
 
 ## Document shape
 
@@ -103,6 +104,39 @@ therefore enforced only by `learnc check` and `learnc build`. These include:
 
 Passing generic JSON Schema validation is useful but not sufficient. Always run
 `learnc check` against the intended repository state before building.
+
+### Authoring-policy lint
+
+Run `learnc lint lesson.json` after `check` to get advice about presentation
+choices. Lint runs the compilation checks first and reports their failures
+unchanged. Its own findings never affect `check` or `build`. An inline code or
+diff source over 256 decoded characters, inline Markdown or quiz prompt over
+512 characters, or a diff that presents a new file is a lint `error` by default.
+Other rules cover code language and length, highlights, filename context,
+answer-choice balance, question frequency, and Mermaid flowchart styling. The
+complete rule and threshold table is in [`LINT_DESIGN.md`](LINT_DESIGN.md).
+
+Lint emits `{"diagnostics":[]}` for a clean JSON run, or no text with `-t`.
+Findings include a stable code, intrinsic severity, fatality, block ID, JSON
+pointer, suggestion, and a one-based editable file span. Lesson-wide findings
+have `block_id: null`. By default only lint `error` findings make the command
+exit nonzero. `--warning-as-error warning` also makes `warning` and `critical`
+findings fatal; `--ignore-below critical` omits `warning` and `info` before
+fatality is calculated. These options do not affect compilation validity.
+
+Thresholds can be overridden with CLI flags, an explicitly selected TOML file,
+or both:
+
+```console
+learnc lint --config lint.toml --max-code-lines 40 --warning-as-error warning lesson.json
+```
+
+The root [`config.example.toml`](../config.example.toml) lists every setting
+and its default. A file may contain only the settings you want to override.
+CLI flags take precedence over that file; omitted settings keep their defaults.
+For example, `--max-code-lines 40` changes only the large-code warning
+threshold. Unknown config keys are errors. Config files are not discovered
+automatically.
 
 The complete, repository-independent
 [`inline-lesson.json`](../examples/inline-lesson.json) demonstrates all four

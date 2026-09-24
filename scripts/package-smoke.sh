@@ -27,6 +27,7 @@ cargo package --list --allow-dirty >"$package_list"
 for required in \
     Cargo.toml \
     Cargo.lock \
+    config.example.toml \
     examples/create-repository-lesson.sh \
     examples/repository-fixture/changes/queue.after.rs \
     examples/repository-fixture/changes/queue.patch \
