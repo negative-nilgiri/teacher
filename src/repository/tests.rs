@@ -624,7 +624,7 @@ fn root_below_repository_top_reports_owner_above_root() {
     temp.commit_all("base");
     temp.write("sub/file.txt", "two\n");
 
-    let repository = Repository::at_root(&temp.path().join("sub"), None).unwrap();
+    let repository = Repository::at_root(temp.path().join("sub"), None).unwrap();
     let error = repository
         .resolve_diff(&worktree_diff("file.txt"))
         .unwrap_err();

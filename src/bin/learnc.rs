@@ -85,7 +85,7 @@ struct LintOverrides {
     /// Highlighted-line ratio that triggers a coverage warning (0 to 1).
     #[arg(long)]
     highlight_coverage_ratio: Option<f64>,
-    /// Minimum displayed lines for a highlight coverage warning.
+    /// Minimum distinct highlighted lines for a highlight coverage warning.
     #[arg(long)]
     highlight_coverage_min_lines: Option<usize>,
     /// Number of highlight ranges that triggers an info finding.

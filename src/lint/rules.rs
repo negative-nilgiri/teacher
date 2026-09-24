@@ -312,7 +312,9 @@ impl Rules<'_> {
             .iter()
             .enumerate()
             .filter_map(|(other_index, node)| match &node.content {
-                CompiledNodeContent::Markdown { content, .. } if content.contains(filename) => {
+                CompiledNodeContent::Markdown { content, .. }
+                    if mentions_filename(content, filename) =>
+                {
                     Some(other_index)
                 }
                 _ => None,
@@ -343,60 +345,47 @@ impl Rules<'_> {
     fn mermaid_style(&mut self, index: usize, source: &CodeSource, content: &str) {
         if !matches!(
             mermaid_svg::parse(content),
-            Ok(mermaid_svg::Diagram::Flowchart(_))
+            Ok(mermaid_svg::Diagram::Flowchart(_) | mermaid_svg::Diagram::Class(_))
         ) {
             return;
         }
         let pointer = format!("/blocks/{index}/source/content");
         let source_pointer = format!("/blocks/{index}/source");
-        let mut byte_offset = 0;
-        for (line_index, line) in content.split_inclusive('\n').enumerate() {
-            let trimmed = line.trim_start_matches([' ', '\t']);
-            let leading_bytes = line.len() - trimmed.len();
-            let keyword = ["subgraph", "style"].into_iter().find(|keyword| {
-                trimmed.starts_with(keyword)
-                    && trimmed[keyword.len()..]
-                        .chars()
-                        .next()
-                        .is_none_or(char::is_whitespace)
-            });
-            if let Some(keyword) = keyword {
-                let start_byte = byte_offset + leading_bytes;
-                let start_char = content[..start_byte].chars().count();
-                let column = line[..leading_bytes].chars().count() + 1;
-                let (primary_pointer, location) = match source {
-                    CodeSource::Inline { .. } => (
+        for keyword in mermaid_style_keywords(content) {
+            let (primary_pointer, location) = match source {
+                CodeSource::Inline { .. } => {
+                    let start_char = content[..keyword.byte_offset].chars().count();
+                    (
                         pointer.as_str(),
                         self.spans.string_range(
                             &pointer,
                             start_char,
-                            start_char + keyword.chars().count(),
+                            start_char + keyword.text.len(),
                         ),
+                    )
+                }
+                CodeSource::File { path, lines } => (
+                    source_pointer.as_str(),
+                    SourceLocation::file_line(
+                        self.root.join(path.as_str()),
+                        lines.map_or(1, |range| range.start) as usize + keyword.line_index,
+                        keyword.column,
+                        keyword.column + keyword.text.len(),
                     ),
-                    CodeSource::File { path, lines } => (
-                        source_pointer.as_str(),
-                        SourceLocation::file_line(
-                            self.root.join(path.as_str()),
-                            lines.map_or(1, |range| range.start) as usize + line_index,
-                            column,
-                            column + keyword.len(),
-                        ),
-                    ),
-                    CodeSource::GitBlob { .. } => (
-                        source_pointer.as_str(),
-                        self.spans.location(&source_pointer),
-                    ),
-                };
-                self.add(
-                    Some(index),
-                    "lint.mermaid.flowchart_style",
-                    primary_pointer,
-                    format!("flowchart uses `{keyword}`"),
-                    "If this expresses a semantic distinction, consider reusable `classDef` and `class` assignments; keep `subgraph` when actual grouping is intended.",
-                    Some(location),
-                );
-            }
-            byte_offset += line.len();
+                ),
+                CodeSource::GitBlob { .. } => (
+                    source_pointer.as_str(),
+                    self.spans.location(&source_pointer),
+                ),
+            };
+            self.add(
+                Some(index),
+                "lint.mermaid.style_or_subgraph",
+                primary_pointer,
+                format!("diagram uses `{}`", keyword.text),
+                "If this expresses a semantic distinction, consider reusable `classDef` and `class` assignments; keep `subgraph` when actual grouping is intended.",
+                Some(location),
+            );
         }
     }
 
@@ -476,13 +465,95 @@ fn severity_for_code(code: &str) -> Severity {
         | "lint.code.too_many_lines"
         | "lint.code.highlight_coverage"
         | "lint.question.uneven_choice_lengths"
-        | "lint.mermaid.flowchart_style" => Severity::Warning,
+        | "lint.mermaid.style_or_subgraph" => Severity::Warning,
         "lint.code.no_highlights"
         | "lint.code.many_highlight_ranges"
         | "lint.code.filename_reference_far"
         | "lint.lesson.few_questions" => Severity::Info,
         _ => unreachable!("every lint rule has an intrinsic severity"),
     }
+}
+
+/// Whether `content` names `filename` as a whole name, so `data.rs` does not
+/// count as a mention of `a.rs`. Path separators and punctuation may surround
+/// the name.
+fn mentions_filename(content: &str, filename: &str) -> bool {
+    let is_name_char = |character: char| character.is_alphanumeric() || "_-.".contains(character);
+    content.match_indices(filename).any(|(start, _)| {
+        let boundary_before = !content[..start]
+            .chars()
+            .next_back()
+            .is_some_and(is_name_char);
+        let mut after = content[start + filename.len()..].chars();
+        let boundary_after = match after.next() {
+            None => true,
+            // A sentence-ending period still ends the name; `a.rs.bak` does not.
+            Some('.') => !after.next().is_some_and(is_name_char),
+            Some(character) => !is_name_char(character),
+        };
+        boundary_before && boundary_after
+    })
+}
+
+/// A `subgraph` or `style` keyword that begins a Mermaid statement.
+struct MermaidKeyword {
+    text: &'static str,
+    byte_offset: usize,
+    line_index: usize,
+    /// One-based Unicode-scalar column.
+    column: usize,
+}
+
+/// Find `subgraph`/`style` as the first word of a statement. Statements end at
+/// a newline or an unquoted `;`; quoted text, bracketed labels and class
+/// bodies, and `%%` comments are skipped.
+fn mermaid_style_keywords(content: &str) -> Vec<MermaidKeyword> {
+    let mut found = Vec::new();
+    let mut line_start = 0;
+    let mut depth = 0usize;
+    for (line_index, line) in content.split_inclusive('\n').enumerate() {
+        let mut in_quote = false;
+        let mut statement_start = depth == 0;
+        for (offset, character) in line.char_indices() {
+            if in_quote {
+                in_quote = character != '"';
+                continue;
+            }
+            if statement_start && matches!(character, ' ' | '\t') {
+                continue;
+            }
+            if statement_start {
+                statement_start = false;
+                let rest = &line[offset..];
+                if rest.starts_with("%%") {
+                    break;
+                }
+                if let Some(text) = ["subgraph", "style"].into_iter().find(|keyword| {
+                    rest.starts_with(keyword)
+                        && rest[keyword.len()..]
+                            .chars()
+                            .next()
+                            .is_none_or(|next| next.is_whitespace() || next == ';')
+                }) {
+                    found.push(MermaidKeyword {
+                        text,
+                        byte_offset: line_start + offset,
+                        line_index,
+                        column: line[..offset].chars().count() + 1,
+                    });
+                }
+            }
+            match character {
+                '"' => in_quote = true,
+                '[' | '(' | '{' => depth += 1,
+                ']' | ')' | '}' => depth = depth.saturating_sub(1),
+                ';' if depth == 0 => statement_start = true,
+                _ => {}
+            }
+        }
+        line_start += line.len();
+    }
+    found
 }
 
 #[cfg(test)]
@@ -641,7 +712,7 @@ mod tests {
         let found = findings(lesson, &root, &LintConfig::default());
         let style = found
             .iter()
-            .filter(|f| f.code == "lint.mermaid.flowchart_style")
+            .filter(|f| f.code == "lint.mermaid.style_or_subgraph")
             .collect::<Vec<_>>();
         assert_eq!(style.len(), 2);
         assert_eq!(style[0].location.start.line, 3);
@@ -651,6 +722,54 @@ mod tests {
             style[0].location.path,
             root.join("diagram.mmd").to_string_lossy()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn filename_mentions_match_whole_names_only() {
+        assert!(mentions_filename("See `src/a.rs`.", "a.rs"));
+        assert!(mentions_filename("Open a.rs.", "a.rs"));
+        assert!(mentions_filename("a.rs: the entry point", "a.rs"));
+        assert!(!mentions_filename("See data.rs for details", "a.rs"));
+        assert!(!mentions_filename("See a.rs.bak instead", "a.rs"));
+        assert!(!mentions_filename("my_a.rs", "a.rs"));
+    }
+
+    #[test]
+    fn finds_style_keywords_as_first_word_of_each_statement() {
+        let content = "flowchart LR\n  A-->C; style C fill:#0f0\n  B[\"label; style x\"]\n  %% style in a comment\n  stylish --> D\n  subgraph;\n";
+        let found = mermaid_style_keywords(content)
+            .into_iter()
+            .map(|keyword| (keyword.text, keyword.line_index, keyword.column))
+            .collect::<Vec<_>>();
+        assert_eq!(found, [("style", 1, 10), ("subgraph", 5, 3)]);
+    }
+
+    #[test]
+    fn skips_class_members_named_style() {
+        let content = "classDiagram\n  class Theme {\n    style\n  }\n  style Theme fill:#f9f\n";
+        let found = mermaid_style_keywords(content)
+            .into_iter()
+            .map(|keyword| keyword.line_index)
+            .collect::<Vec<_>>();
+        assert_eq!(found, [4]);
+    }
+
+    #[test]
+    fn reports_style_in_inline_class_diagram() {
+        let root = temp_root();
+        let lesson = json!({
+            "schema_version":"2.1.0", "title":"Classes", "blocks":[
+                {"type":"code","id":"classes","language":"mermaid","source":{"kind":"inline","content":"classDiagram\n  class A\n  class B\n  A <|-- B; style B fill:#f9f"}}
+            ]
+        });
+        let found = findings(lesson, &root, &LintConfig::default());
+        let style = found
+            .iter()
+            .filter(|f| f.code == "lint.mermaid.style_or_subgraph")
+            .collect::<Vec<_>>();
+        assert_eq!(style.len(), 1);
+        assert_eq!(style[0].block_id.as_deref(), Some("classes"));
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -7,7 +7,7 @@ max_code_lines = 60
 
 # Warn when highlighted lines reach this fraction of a code block (0 to 1).
 highlight_coverage_ratio = 0.70
-# Apply the coverage warning only to blocks with at least this many lines.
+# Apply the coverage warning only when at least this many distinct lines are highlighted.
 highlight_coverage_min_lines = 20
 # Report many separate highlight ranges at or above this count (minimum 1).
 many_highlight_ranges = 3

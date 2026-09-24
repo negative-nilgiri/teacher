@@ -40,10 +40,6 @@ impl Default for LintConfig {
 }
 
 impl LintConfig {
-    pub fn from_file(path: &Path) -> Result<Self, Diagnostic> {
-        Self::load_with_overrides(Some(path), |_| {})
-    }
-
     pub fn load_with_overrides(
         path: Option<&Path>,
         apply: impl FnOnce(&mut Self),
@@ -86,20 +82,24 @@ impl LintConfig {
             (
                 "highlight_coverage_ratio",
                 self.highlight_coverage_ratio,
-                1.0,
+                Some(1.0),
             ),
-            ("min_question_ratio", self.min_question_ratio, 1.0),
+            ("min_question_ratio", self.min_question_ratio, Some(1.0)),
             (
                 "max_choice_length_spread",
                 self.max_choice_length_spread,
-                f64::MAX,
+                None,
             ),
         ] {
-            if !value.is_finite() || value < 0.0 || value > max {
+            if !value.is_finite() || value < 0.0 || max.is_some_and(|max| value > max) {
+                let range = match max {
+                    Some(max) => format!("between 0 and {max}"),
+                    None => "at least 0".to_owned(),
+                };
                 return Err(Diagnostic::error(
                     "lint.config.threshold.invalid",
                     "",
-                    format!("{key} must be a finite number between 0 and {max}"),
+                    format!("{key} must be a finite number {range}"),
                 ));
             }
         }

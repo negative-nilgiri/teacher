@@ -137,14 +137,6 @@ impl LintDiagnostic {
             related: Vec::new(),
         }
     }
-
-    pub fn with_related(mut self, message: impl Into<String>, location: SourceLocation) -> Self {
-        self.related.push(RelatedLintLocation {
-            message: message.into(),
-            location,
-        });
-        self
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -196,9 +188,10 @@ impl LintReport {
                     .column
                     .saturating_sub(finding.location.start.column)
                     .clamp(1, 80);
+                let number = finding.location.start.line.to_string();
+                let gutter = " ".repeat(number.len());
                 output.push_str(&format!(
-                    "  |\n{:>3} | {}\n  | {}{}\n",
-                    finding.location.start.line,
+                    "{gutter} |\n{number} | {}\n{gutter} | {}{}\n",
                     line,
                     " ".repeat(finding.location.start.column.saturating_sub(1)),
                     "^".repeat(width),
