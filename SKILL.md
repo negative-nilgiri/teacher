@@ -18,7 +18,11 @@ browser. Use the installed `learnc` binary, not `cargo run` or a substitute.
    default: the current directory), not to the lesson file.
 3. Run `learnc check` until it succeeds.
 4. Run `learnc lint`. Fix every `error`. Fix each `critical` and `warning`, or
-   tell the user why the exception is intentional. Treat `info` as advice.
+   tell the user why the exception is intentional. Treat `info` as advice:
+   read each finding, because some are real mistakes (for example a name in
+   prose or a question that no code block shows). If an `info` rule only
+   produces noise for this lesson, rerun with `--ignore-code <CODE>` for that
+   code and mention it to the user. Only `info` codes can be ignored this way.
 5. Run `learnc build`, report the lesson and artifact paths, and stop.
 
 Keep every diagnostic's code, pointer, message, and suggestion when reporting a
