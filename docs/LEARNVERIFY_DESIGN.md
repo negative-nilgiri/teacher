@@ -80,13 +80,42 @@ Where a question concerns one specific hint or choice, the answer options
 include that item so the finding can point at it (for example, the choice ID
 of the implausible distractor), not only at the whole question.
 
+### Second set: highlight checks
+
+Lint already judges how much is highlighted (coverage, number of ranges,
+missing highlights on long excerpts). These checks judge whether a highlight
+is actually *explained*. One request per code block that has highlights asks
+the questions below for every highlight group, keyed by group
+(`group_0_annotation_does_not_explain`, ...) so each finding points at its
+group.
+
+| Code | Applies to | Question | "Yes" means | Suggestion |
+| --- | --- | --- | --- | --- |
+| `verify.annotation_does_not_explain` | Annotated group | Does the annotation fail to explain what the highlighted lines do or why they matter? | It restates the code, stays vague ("the important part", "see here"), or only names the color or line numbers. | Say what these lines do and why the learner should look at them. |
+| `verify.annotation_contradicts_code` | Annotated group | Does the annotation describe behavior the highlighted lines do not have? | The annotation is factually wrong about the code it points at (for example, it names another function or the opposite condition). | Correct the annotation, or move the highlight to the lines it describes. |
+| `verify.highlight_unexplained` | Group without annotation | Is it unclear why these lines are highlighted, given the caption and the adjacent Markdown? | Nothing near the block says why these lines matter, so the highlight directs attention without a reason. | Add an `annotation`, or explain the lines in the Markdown next to the block. |
+
+Findings point at the group's `annotation` in `lesson.json`, or at the
+group's `lines` when it has no annotation. The request's `state` holds:
+
+- the displayed code with its source-file line numbers (`first_line`) and
+  language;
+- each highlight group: color, ranges in source-file lines, the text of the
+  highlighted lines, and the annotation (or `null`);
+- the block's caption and the Markdown blocks immediately before and after it,
+  since an unannotated highlight is often explained there.
+
+Of the three, `verify.annotation_contradicts_code` matters most: a wrong
+annotation teaches something false, while the other two only waste the
+learner's attention. Whether it deserves a lower warning threshold than the
+other checks is an open question.
+
 ### Later candidates
 
 These need more thought about which context to send:
 
 - prose that describes code differently from the code shown next to it;
 - a code or diff caption that only narrates visible content;
-- a highlight annotation that does not explain why its lines matter;
 - an explanation that restates the answer without teaching the reasoning;
 - a distractor explanation that does not actually say why that choice is
   wrong, or that contradicts the correct answer.
@@ -132,6 +161,9 @@ check as a choice question with explicit criteria:
   holds the resolved text, so no repository access is needed.
 - Criteria wording is versioned in the binary (`check_version`), because
   changing it changes answers and must invalidate the cache.
+- Highlight checks use the same envelope with a different `state` (see
+  [Second set: highlight checks](#second-set-highlight-checks)): one code block
+  and its highlight groups instead of one quiz.
 
 ## Severity
 
@@ -169,11 +201,12 @@ from flickering between runs.
 - **Location:** `std::env::temp_dir()/learnverify-<user>/`. On macOS
   `$TMPDIR` is already per-user; on Linux `/tmp` is shared, so the directory is
   created with `0700` permissions and ignored if it is owned by another user.
-  It holds quiz text, so it must not be world-readable. Quizzes are not long
+  It holds lesson text and code, so it must not be world-readable. Quizzes are not long
   lived; losing the cache on reboot or temp cleanup only costs a new request.
 - **Key:** SHA-256 of `check_version`, the resolved model, and the exact
-  `state` sent (quiz plus context). Builds are reproducible, so an unchanged
-  quiz always produces the same key.
+  `state` sent (one quiz plus its context, or one code block plus its
+  highlights and neighbouring prose). Builds are reproducible, so an unchanged
+  quiz or code block always produces the same key.
 - **Value:** the raw Jev answers (probabilities per question), not findings.
   Changing a threshold or `ignore_codes` re-grades cached answers without new
   requests.
@@ -204,8 +237,9 @@ would break `learnc lint`. The settings also mean different things
 
 ## Privacy
 
-Quiz text and the code or diff excerpts in its local context are sent to the
-TypeSafe API. `learnverify` is opt-in and never runs as part of `learnc`;
+Quiz text with the code or diff excerpts of its local context, and highlighted
+code blocks with their annotations, caption, and neighbouring Markdown, are
+sent to the TypeSafe API. `learnverify` is opt-in and never runs as part of `learnc`;
 `--help` and the skill state what leaves the machine. The API key is only sent
 in the `Authorization` header.
 
@@ -240,3 +274,6 @@ skipped.
   the model so results stay comparable.
 - **Later checks.** Which of the candidates above to add next, and what context
   each needs.
+- **Per-check thresholds.** Whether some checks, such as
+  `verify.annotation_contradicts_code`, should reach `warning` at a lower
+  probability than the global `min_warning_probability`.
