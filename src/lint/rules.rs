@@ -108,6 +108,7 @@ pub(super) fn collect(
                     );
                 }
                 rules.choice_lengths(index, block);
+                rules.missing_hints(index, block);
             }
             _ => unreachable!("compiled nodes retain the source block order and kind"),
         }
@@ -389,6 +390,25 @@ impl Rules<'_> {
                 format!("diagram uses `{}`", keyword.text),
                 "If this expresses a semantic distinction, consider reusable `classDef` and `class` assignments; keep `subgraph` when actual grouping is intended.",
                 Some(location),
+            );
+        }
+    }
+
+    /// A wrong attempt reveals nothing, so without hints a stuck learner can
+    /// only retry or reveal. Two-choice questions are skipped: after one wrong
+    /// attempt a single option remains and a hint cannot help.
+    fn missing_hints(&mut self, index: usize, block: &crate::source::MultipleChoiceBlock) {
+        let choices = block.choices.len();
+        if choices >= 3 && block.hints.is_empty() {
+            self.add(
+                Some(index),
+                "lint.question.no_hints",
+                &format!("/blocks/{index}"),
+                format!(
+                    "question has {choices} choices but no hints; after a wrong attempt the learner can only retry or reveal the answer"
+                ),
+                "Consider a hint that points toward the relevant code or reasoning without giving the answer away.",
+                None,
             );
         }
     }
@@ -838,6 +858,7 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.code.many_highlight_ranges"
         | "lint.code.filename_reference_far"
         | "lint.lesson.few_questions"
+        | "lint.question.no_hints"
         | "lint.markdown.unshown_code_reference" => Severity::Info,
         _ => return None,
     })
@@ -1268,6 +1289,34 @@ mod tests {
                 .iter()
                 .all(|f| f.code != "lint.markdown.unshown_code_reference")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reports_questions_with_three_or_more_choices_and_no_hints() {
+        let root = temp_root();
+        let question = |id: &str, choices: &[&str], hints: &[&str]| {
+            json!({"type":"multiple_choice","id":id,
+                "prompt":{"kind":"inline","content":"Pick one."},
+                "choices":choices.iter().enumerate()
+                    .map(|(i, c)| json!({"content":c,"correct":i == 0})).collect::<Vec<_>>(),
+                "hints":hints,
+                "explanation":"Because."})
+        };
+        let lesson = json!({"schema_version":"2.1.0","title":"Hints","blocks":[
+            question("two", &["Yes", "No"], &[]),
+            question("three", &["Red", "Green", "Blue"], &[]),
+            question("hinted", &["Red", "Green", "Blue"], &["Think about **light**."])
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let flagged = found
+            .iter()
+            .filter(|f| f.code == "lint.question.no_hints")
+            .collect::<Vec<_>>();
+        assert_eq!(flagged.len(), 1);
+        assert_eq!(flagged[0].block_id.as_deref(), Some("three"));
+        assert_eq!(flagged[0].severity, Severity::Info);
+        assert_eq!(flagged[0].pointer, "/blocks/1");
         fs::remove_dir_all(root).unwrap();
     }
 

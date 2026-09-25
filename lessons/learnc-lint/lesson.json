@@ -110,14 +110,14 @@
       "id": "highlight-coverage",
       "highlights": [
         {
-          "lines": [{ "start": 264, "end": 272 }],
+          "lines": [{ "start": 265, "end": 273 }],
           "annotation": "The set counts each displayed line once, then applies both the minimum-line and coverage-ratio thresholds."
         }
       ],
       "source": {
         "kind": "file",
         "path": "src/lint/rules.rs",
-        "lines": { "start": 264, "end": 296 }
+        "lines": { "start": 265, "end": 297 }
       }
     },
     {
