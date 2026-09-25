@@ -59,7 +59,7 @@
       "source": {
         "kind": "file",
         "path": "src/compiler/mod.rs",
-        "lines": { "start": 446, "end": 459 }
+        "lines": { "start": 442, "end": 455 }
       }
     },
     {
@@ -110,14 +110,14 @@
       "id": "highlight-coverage",
       "highlights": [
         {
-          "lines": [{ "start": 260, "end": 268 }],
+          "lines": [{ "start": 264, "end": 272 }],
           "annotation": "The set counts each displayed line once, then applies both the minimum-line and coverage-ratio thresholds."
         }
       ],
       "source": {
         "kind": "file",
         "path": "src/lint/rules.rs",
-        "lines": { "start": 260, "end": 292 }
+        "lines": { "start": 264, "end": 296 }
       }
     },
     {
@@ -152,7 +152,7 @@
       "source": {
         "kind": "file",
         "path": "src/bin/learnc.rs",
-        "lines": { "start": 258, "end": 277 }
+        "lines": { "start": 262, "end": 281 }
       }
     },
     {
