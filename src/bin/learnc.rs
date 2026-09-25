@@ -50,7 +50,7 @@ enum Command {
         #[arg(long)]
         config: Option<PathBuf>,
         #[command(flatten)]
-        overrides: LintOverrides,
+        overrides: Box<LintOverrides>,
         /// Lowest lint category that causes a nonzero exit status.
         #[arg(long, default_value = "error")]
         warning_as_error: Severity,
@@ -112,6 +112,9 @@ struct LintOverrides {
     /// Maximum decoded characters in an inline Markdown source or quiz prompt.
     #[arg(long)]
     max_inline_prose_chars: Option<usize>,
+    /// Suppress one info finding code; repeat for several. Adds to ignore_codes.
+    #[arg(long = "ignore-code", value_name = "CODE")]
+    ignore_codes: Vec<String>,
 }
 
 impl LintOverrides {
@@ -149,6 +152,7 @@ impl LintOverrides {
         if let Some(value) = self.max_inline_prose_chars {
             config.max_inline_prose_chars = value;
         }
+        config.ignore_codes.extend(self.ignore_codes);
     }
 }
 

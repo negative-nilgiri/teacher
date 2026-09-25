@@ -114,7 +114,8 @@ unchanged. Its own findings never affect `check` or `build`. An inline code or
 diff source over 256 decoded characters, inline Markdown or quiz prompt over
 512 characters, or a diff that presents a new file is a lint `error` by default.
 Other rules cover code language and length, highlights, filename context,
-answer-choice balance, question frequency, and Mermaid `subgraph`/`style` use in
+answer-choice balance, question frequency, names formatted as code in prose but
+never shown in a code or diff block, and Mermaid `subgraph`/`style` use in
 flowcharts and class diagrams. The
 complete rule and threshold table is in [`LINT_DESIGN.md`](LINT_DESIGN.md).
 
@@ -124,7 +125,9 @@ pointer, suggestion, and a one-based editable file span. Lesson-wide findings
 have `block_id: null`. By default only lint `error` findings make the command
 exit nonzero. `--warning-as-error warning` also makes `warning` and `critical`
 findings fatal; `--ignore-below critical` omits `warning` and `info` before
-fatality is calculated. These options do not affect compilation validity.
+fatality is calculated. Individual `info` rules can be switched off with
+`--ignore-code <CODE>` or the TOML `ignore_codes` list; other severities cannot
+be ignored by code. These options do not affect compilation validity.
 
 Thresholds can be overridden with CLI flags, an explicitly selected TOML file,
 or both:

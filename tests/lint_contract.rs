@@ -193,6 +193,22 @@ fn cli_thresholds_override_file_values_and_validate_effective_config() {
         "lint.lesson.few_questions"
     );
 
+    let ignored = root.learnc(&[
+        "lint",
+        "--min-question-ratio",
+        "0.6",
+        "--ignore-code",
+        "lint.lesson.few_questions",
+        "lesson.json",
+    ]);
+    assert_eq!(json_output(&ignored), serde_json::json!({"diagnostics":[]}));
+    let not_info = root.learnc(&["lint", "--ignore-code", "lint.diff.new_file", "lesson.json"]);
+    assert!(!not_info.status.success());
+    assert_eq!(
+        json_output(&not_info)["diagnostics"][0]["code"],
+        "lint.config.ignore_code.invalid"
+    );
+
     root.write("lint.toml", "many_highlight_ranges = 0\n");
     let repaired = root.learnc(&[
         "lint",
@@ -228,6 +244,7 @@ fn lint_help_exposes_each_config_threshold_as_a_flag() {
         "--min-question-ratio",
         "--max-inline-code-diff-chars",
         "--max-inline-prose-chars",
+        "--ignore-code",
     ] {
         assert!(help.contains(flag), "missing {flag} from lint help");
     }

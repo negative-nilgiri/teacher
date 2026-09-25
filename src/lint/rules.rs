@@ -1,5 +1,5 @@
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::collections::{BTreeSet, HashSet};
+use std::path::{Path, PathBuf};
 
 use crate::artifact::{CompiledLesson, CompiledNodeContent};
 use crate::language::Language;
@@ -113,6 +113,10 @@ pub(super) fn collect(
         }
     }
     rules.question_ratio();
+    rules.unshown_code_references();
+    rules
+        .findings
+        .retain(|finding| !config.ignore_codes.contains(&finding.code));
     rules.findings
 }
 
@@ -460,6 +464,353 @@ impl Rules<'_> {
     }
 }
 
+/// Where a scanned piece of Markdown lives, so findings can point at it.
+enum TextPlace {
+    /// A decoded JSON string in `lesson.json`, addressed by pointer.
+    Json(String),
+    /// A whole Markdown file, addressed by root-joined path.
+    File(PathBuf),
+}
+
+impl Rules<'_> {
+    /// Report Markdown inline code that names something no code or diff block
+    /// shows. This is a guess, hence `info`: the name may be a standard type or
+    /// a concept. Choices and explanations are skipped because distractors
+    /// deliberately name things that do not exist.
+    fn unshown_code_references(&mut self) {
+        let mut shown = HashSet::new();
+        for node in &self.artifact.presentation.nodes {
+            match &node.content {
+                CompiledNodeContent::Code { content, .. } => {
+                    shown.extend(identifier_words(content))
+                }
+                CompiledNodeContent::Diff { diff, .. } => {
+                    for line in diff
+                        .files
+                        .iter()
+                        .flat_map(|file| &file.hunks)
+                        .flat_map(|hunk| &hunk.lines)
+                    {
+                        shown.extend(identifier_words(&line.content));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Choices and explanations are not scanned on their own, but when a
+        // flagged name also appears there it should be fixed in the same pass.
+        let mut quiz_texts = Vec::new();
+        for (index, block) in self.source.blocks.iter().enumerate() {
+            if let Block::MultipleChoice(block) = block {
+                for (choice, value) in block.choices.iter().enumerate() {
+                    quiz_texts.push((
+                        format!("/blocks/{index}/choices/{choice}/content"),
+                        "choice",
+                        &value.content,
+                    ));
+                }
+                quiz_texts.push((
+                    format!("/blocks/{index}/explanation"),
+                    "explanation",
+                    &block.explanation,
+                ));
+            }
+        }
+
+        let texts = self.scanned_texts();
+        for (index, text, place) in texts {
+            let mut reported = HashSet::new();
+            for span in inline_code_spans(&text) {
+                let Some(name) = code_reference_name(span.content) else {
+                    continue;
+                };
+                if identifier_segments(name).all(|segment| shown.contains(segment))
+                    || !reported.insert(name.to_owned())
+                {
+                    continue;
+                }
+                let (pointer, location) = match &place {
+                    TextPlace::Json(pointer) => (
+                        pointer.clone(),
+                        self.spans.string_range(
+                            pointer,
+                            span.start_char,
+                            span.start_char + span.content.chars().count(),
+                        ),
+                    ),
+                    TextPlace::File(path) => (
+                        format!("/blocks/{index}"),
+                        SourceLocation::file_line(
+                            path.clone(),
+                            span.line,
+                            span.column,
+                            span.column + span.content.chars().count(),
+                        ),
+                    ),
+                };
+                let related = quiz_texts
+                    .iter()
+                    .flat_map(|(quiz_pointer, kind, quiz_text)| {
+                        inline_code_spans(quiz_text)
+                            .into_iter()
+                            .filter(|quiz_span| {
+                                code_reference_name(quiz_span.content) == Some(name)
+                            })
+                            .map(|quiz_span| super::RelatedLintLocation {
+                                message: format!("also used in a quiz {kind}"),
+                                location: self.spans.string_range(
+                                    quiz_pointer,
+                                    quiz_span.start_char,
+                                    quiz_span.start_char + quiz_span.content.chars().count(),
+                                ),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+                self.add(
+                    Some(index),
+                    "lint.markdown.unshown_code_reference",
+                    &pointer,
+                    format!("`{name}` is formatted as code but appears in no code or diff block"),
+                    "If the learner needs to see it, show the relevant code; otherwise check the name, or drop the code formatting if it names a concept.",
+                    Some(location),
+                )
+                .related
+                .extend(related);
+            }
+        }
+    }
+
+    /// Markdown the learner reads alongside code: Markdown blocks, captions,
+    /// highlight annotations, quiz prompts, and hints.
+    fn scanned_texts(&self) -> Vec<(usize, String, TextPlace)> {
+        let legacy_prompt = matches!(
+            self.source.schema_version,
+            SchemaVersion::V1_0_0
+                | SchemaVersion::V1_1_0
+                | SchemaVersion::V1_2_0
+                | SchemaVersion::V1_3_0
+        );
+        let mut texts = Vec::new();
+        for (index, (block, node)) in self
+            .source
+            .blocks
+            .iter()
+            .zip(&self.artifact.presentation.nodes)
+            .enumerate()
+        {
+            let base = format!("/blocks/{index}");
+            let markdown_place = |source: &MarkdownSource, pointer: String| match source {
+                MarkdownSource::Inline { .. } => TextPlace::Json(pointer),
+                MarkdownSource::File { path } => TextPlace::File(self.root.join(path.as_str())),
+            };
+            match (block, &node.content) {
+                (Block::Markdown(block), CompiledNodeContent::Markdown { content, .. }) => {
+                    texts.push((
+                        index,
+                        content.clone(),
+                        markdown_place(&block.source, format!("{base}/source/content")),
+                    ));
+                }
+                (Block::Code(block), _) => {
+                    if let Some(caption) = &block.caption {
+                        texts.push((
+                            index,
+                            caption.clone(),
+                            TextPlace::Json(format!("{base}/caption")),
+                        ));
+                    }
+                    for (group, highlight) in block.highlights.iter().enumerate() {
+                        if let Some(annotation) = &highlight.annotation {
+                            texts.push((
+                                index,
+                                annotation.clone(),
+                                TextPlace::Json(format!("{base}/highlights/{group}/annotation")),
+                            ));
+                        }
+                    }
+                }
+                (Block::Diff(block), _) => {
+                    if let Some(caption) = &block.caption {
+                        texts.push((
+                            index,
+                            caption.clone(),
+                            TextPlace::Json(format!("{base}/caption")),
+                        ));
+                    }
+                }
+                (
+                    Block::MultipleChoice(block),
+                    CompiledNodeContent::MultipleChoice { prompt, .. },
+                ) => {
+                    let pointer = if legacy_prompt {
+                        format!("{base}/prompt")
+                    } else {
+                        format!("{base}/prompt/content")
+                    };
+                    texts.push((
+                        index,
+                        prompt.clone(),
+                        markdown_place(&block.prompt, pointer),
+                    ));
+                    for (hint_index, hint) in block.hints.iter().enumerate() {
+                        texts.push((
+                            index,
+                            hint.clone(),
+                            TextPlace::Json(format!("{base}/hints/{hint_index}")),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        texts
+    }
+}
+
+/// Every identifier-like word (`[A-Za-z0-9_]+`) in displayed code.
+fn identifier_words(content: &str) -> impl Iterator<Item = String> + '_ {
+    content
+        .split(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .filter(|word| !word.is_empty())
+        .map(str::to_owned)
+}
+
+/// Segments of a qualified name such as `Queue::push`, `self.head`, or
+/// `node->next`.
+fn identifier_segments(name: &str) -> impl Iterator<Item = &str> {
+    name.split("::")
+        .flat_map(|part| part.split("->"))
+        .flat_map(|part| part.split('.'))
+}
+
+/// The name an inline code span refers to, if it looks like a code
+/// identifier. Commands, expressions, literals, paths, and filenames return
+/// `None`.
+fn code_reference_name(span: &str) -> Option<&str> {
+    let name = span.trim().strip_suffix("()").unwrap_or(span.trim());
+    let is_identifier = |segment: &str| {
+        let mut characters = segment.chars();
+        characters
+            .next()
+            .is_some_and(|first| first.is_alphabetic() || first == '_')
+            && characters.all(|character| character.is_alphanumeric() || character == '_')
+    };
+    if !identifier_segments(name).all(is_identifier) {
+        return None;
+    }
+    if matches!(
+        name,
+        "true" | "false" | "null" | "nil" | "None" | "undefined"
+    ) {
+        return None;
+    }
+    // `queue.rs` and `lesson.json` are filenames, not member access.
+    if let Some((_, extension)) = name.rsplit_once('.') {
+        let extension = extension.to_ascii_lowercase();
+        if Language::from_authored(&extension) != Language::Text
+            || matches!(
+                extension.as_str(),
+                "txt"
+                    | "text"
+                    | "lock"
+                    | "log"
+                    | "csv"
+                    | "ini"
+                    | "cfg"
+                    | "conf"
+                    | "env"
+                    | "learn"
+                    | "patch"
+                    | "diff"
+            )
+        {
+            return None;
+        }
+    }
+    Some(name)
+}
+
+struct InlineCodeSpan<'a> {
+    content: &'a str,
+    /// Unicode-scalar offset of `content` in the scanned text.
+    start_char: usize,
+    /// One-based line and column of `content` in the scanned text.
+    line: usize,
+    column: usize,
+}
+
+/// Backtick code spans outside fenced code blocks. Spans are matched within a
+/// line, which covers how agents write inline code.
+fn inline_code_spans(text: &str) -> Vec<InlineCodeSpan<'_>> {
+    let mut spans = Vec::new();
+    let mut fence: Option<&str> = None;
+    let mut line_start = 0;
+    for (line_index, line) in text.split_inclusive('\n').enumerate() {
+        let trimmed = line.trim_start();
+        let marker = ["```", "~~~"]
+            .into_iter()
+            .find(|marker| trimmed.starts_with(marker));
+        match (fence, marker) {
+            (None, Some(marker)) => fence = Some(marker),
+            (Some(open), Some(marker)) if open == marker => fence = None,
+            (None, None) => {
+                let bytes = line.as_bytes();
+                let mut cursor = 0;
+                while let Some(offset) = line[cursor..].find('`') {
+                    let open = cursor + offset;
+                    let run = bytes[open..]
+                        .iter()
+                        .take_while(|byte| **byte == b'`')
+                        .count();
+                    let content_start = open + run;
+                    let delimiter = &line[open..content_start];
+                    let Some(close) = find_closing_run(&line[content_start..], delimiter) else {
+                        break;
+                    };
+                    let content_end = content_start + close;
+                    let content = &line[content_start..content_end];
+                    if !content.trim().is_empty() {
+                        // Only the name matters; drop padding around it.
+                        let leading = content.len() - content.trim_start().len();
+                        let start = content_start + leading;
+                        let content = content.trim();
+                        spans.push(InlineCodeSpan {
+                            content,
+                            start_char: text[..line_start + start].chars().count(),
+                            line: line_index + 1,
+                            column: line[..start].chars().count() + 1,
+                        });
+                    }
+                    cursor = content_end + run;
+                }
+            }
+            (Some(_), _) => {}
+        }
+        line_start += line.len();
+    }
+    spans
+}
+
+/// Offset of the next backtick run exactly as long as `delimiter`.
+fn find_closing_run(rest: &str, delimiter: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    let mut cursor = 0;
+    while let Some(offset) = rest[cursor..].find(delimiter) {
+        let start = cursor + offset;
+        let run = bytes[start..]
+            .iter()
+            .take_while(|byte| **byte == b'`')
+            .count();
+        if run == delimiter.len() {
+            return Some(start);
+        }
+        cursor = start + run;
+    }
+    None
+}
+
 /// Format a ratio as a percentage with at most one decimal (`0.2` -> `20%`,
 /// `1.0 / 6.0` -> `16.7%`).
 fn percent(ratio: f64) -> String {
@@ -468,7 +819,12 @@ fn percent(ratio: f64) -> String {
 }
 
 fn severity_for_code(code: &str) -> Severity {
-    match code {
+    known_severity(code).expect("every lint rule has an intrinsic severity")
+}
+
+/// The intrinsic severity of a lint code, or `None` for an unknown code.
+pub(super) fn known_severity(code: &str) -> Option<Severity> {
+    Some(match code {
         "lint.inline.prose.too_large"
         | "lint.inline.code_diff.too_large"
         | "lint.diff.new_file" => Severity::Error,
@@ -481,9 +837,10 @@ fn severity_for_code(code: &str) -> Severity {
         "lint.code.no_highlights"
         | "lint.code.many_highlight_ranges"
         | "lint.code.filename_reference_far"
-        | "lint.lesson.few_questions" => Severity::Info,
-        _ => unreachable!("every lint rule has an intrinsic severity"),
-    }
+        | "lint.lesson.few_questions"
+        | "lint.markdown.unshown_code_reference" => Severity::Info,
+        _ => return None,
+    })
 }
 
 /// Whether `content` names `filename` as a whole name, so `data.rs` does not
@@ -811,6 +1168,105 @@ mod tests {
         assert_eq!(
             ratio.message,
             "0 of 3 blocks are multiple-choice questions (0%); lint reports lessons under 20% (min_question_ratio)"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn inline_code_spans_skip_fences_and_trim_padding() {
+        let text = "Use `head` and `` a`b ``.\n```rust\nlet `x` = 1;\n```\nThen ` tail `.";
+        let spans = inline_code_spans(text)
+            .into_iter()
+            .map(|span| (span.content, span.line, span.column, span.start_char))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            spans,
+            [("head", 1, 6, 5), ("a`b", 1, 19, 18), ("tail", 5, 8, 58)]
+        );
+    }
+
+    #[test]
+    fn code_reference_names_are_identifier_like() {
+        for (span, expected) in [
+            ("count", Some("count")),
+            ("pop_front()", Some("pop_front")),
+            ("Queue::push", Some("Queue::push")),
+            ("self.head", Some("self.head")),
+            ("node->next", Some("node->next")),
+            ("learnc check", None),
+            ("queue.rs", None),
+            ("lesson.json", None),
+            ("src/lib", None),
+            ("42", None),
+            ("a + b", None),
+            ("true", None),
+        ] {
+            assert_eq!(code_reference_name(span), expected, "{span}");
+        }
+    }
+
+    #[test]
+    fn reports_names_missing_from_code_with_related_quiz_mentions() {
+        let root = temp_root();
+        let lesson = json!({
+            "schema_version":"2.1.0", "title":"Queue", "blocks":[
+                {"type":"markdown","id":"intro","source":{"kind":"inline","content":"We `push` onto `head_ptr`; see `queue.rs`."}},
+                {"type":"code","id":"impl","language":"rust","source":{"kind":"inline","content":"fn push(queue: &mut Queue) {}"}},
+                {"type":"multiple_choice","id":"quiz",
+                 "prompt":{"kind":"inline","content":"What does `tail_ptr` track?"},
+                 "choices":[
+                     {"content":"The newest item","correct":true},
+                     {"content":"The same thing as `head_ptr`"},
+                     {"content":"A `ghost` pointer"}
+                 ],
+                 "explanation":"Unlike `head_ptr`, it tracks the newest item."}
+            ]
+        });
+        let found = findings(lesson, &root, &LintConfig::default());
+        let unshown = found
+            .iter()
+            .filter(|f| f.code == "lint.markdown.unshown_code_reference")
+            .collect::<Vec<_>>();
+        let names = unshown
+            .iter()
+            .map(|f| {
+                (
+                    f.block_id.as_deref().unwrap(),
+                    f.message.split('`').nth(1).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        // `push` is shown, `queue.rs` is a filename, and `ghost` appears only
+        // in a choice.
+        assert_eq!(names, [("intro", "head_ptr"), ("quiz", "tail_ptr")]);
+        assert_eq!(unshown[0].severity, Severity::Info);
+        let related = unshown[0]
+            .related
+            .iter()
+            .map(|related| related.message.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            related,
+            [
+                "also used in a quiz choice",
+                "also used in a quiz explanation"
+            ]
+        );
+
+        let ignored = findings(
+            json!({"schema_version":"2.1.0","title":"T","blocks":[
+                {"type":"markdown","id":"m","source":{"kind":"inline","content":"`missing`"}}
+            ]}),
+            &root,
+            &LintConfig {
+                ignore_codes: vec!["lint.markdown.unshown_code_reference".to_owned()],
+                ..LintConfig::default()
+            },
+        );
+        assert!(
+            ignored
+                .iter()
+                .all(|f| f.code != "lint.markdown.unshown_code_reference")
         );
         fs::remove_dir_all(root).unwrap();
     }

@@ -28,3 +28,7 @@ min_question_ratio = 0.20
 max_inline_code_diff_chars = 256
 # Error when inline Markdown or quiz prompt content exceeds this many characters.
 max_inline_prose_chars = 512
+
+# Info finding codes to suppress, such as "lint.markdown.unshown_code_reference".
+# Only info codes are accepted; --ignore-code CODE adds to this list.
+ignore_codes = []

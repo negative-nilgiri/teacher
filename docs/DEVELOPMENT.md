@@ -551,7 +551,10 @@ line numbers, while revision-backed content points primarily to `lesson.json`.
 Lint filters findings before computing fatality. Its optional flat TOML config
 is loaded only with `--config`; no configuration is discovered automatically.
 Each threshold also has an explicit kebab-case CLI flag. Effective thresholds
-come from defaults, then the selected config file, then CLI flags. The root
+come from defaults, then the selected config file, then CLI flags. The
+`ignore_codes` list (and repeatable `--ignore-code`) removes chosen `info` codes
+after rules run and before fatality; config validation rejects any code that is
+unknown or not `info`, using the same severity table as the rules. The root
 `config.example.toml` documents every threshold and ships in the Cargo package.
 Neither lint rules nor lint config is called by `check` or `build`.
 

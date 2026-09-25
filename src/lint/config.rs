@@ -19,6 +19,9 @@ pub struct LintConfig {
     pub min_question_ratio: f64,
     pub max_inline_code_diff_chars: usize,
     pub max_inline_prose_chars: usize,
+    /// `info` codes to suppress. Only `info` findings are guesses weak enough
+    /// to switch off per rule; stronger findings are filtered by severity.
+    pub ignore_codes: Vec<String>,
 }
 
 impl Default for LintConfig {
@@ -35,6 +38,7 @@ impl Default for LintConfig {
             min_question_ratio: 0.20,
             max_inline_code_diff_chars: 256,
             max_inline_prose_chars: 512,
+            ignore_codes: Vec::new(),
         }
     }
 }
@@ -71,6 +75,32 @@ impl LintConfig {
     }
 
     fn validate(&self) -> Result<(), Diagnostic> {
+        for code in &self.ignore_codes {
+            match super::rules::known_severity(code) {
+                Some(super::Severity::Info) => {}
+                Some(severity) => {
+                    return Err(Diagnostic::error(
+                        "lint.config.ignore_code.invalid",
+                        "",
+                        format!(
+                            "{code} is a {} finding; only info codes can be ignored",
+                            severity.as_str()
+                        ),
+                    )
+                    .with_suggestion(
+                        "Remove it from ignore_codes, or use --ignore-below to hide findings by severity.",
+                    ));
+                }
+                None => {
+                    return Err(Diagnostic::error(
+                        "lint.config.ignore_code.invalid",
+                        "",
+                        format!("{code} is not a lint code"),
+                    )
+                    .with_suggestion("Copy the exact `code` from a lint finding."));
+                }
+            }
+        }
         if self.many_highlight_ranges == 0 {
             return Err(Diagnostic::error(
                 "lint.config.threshold.invalid",
@@ -120,5 +150,22 @@ mod tests {
         let example: LintConfig =
             toml::from_str(include_str!("../../config.example.toml")).unwrap();
         assert_eq!(example, LintConfig::default());
+    }
+
+    #[test]
+    fn ignore_codes_accept_only_known_info_codes() {
+        let config = |codes: &[&str]| LintConfig {
+            ignore_codes: codes.iter().map(|code| (*code).to_owned()).collect(),
+            ..LintConfig::default()
+        };
+        assert!(
+            config(&["lint.markdown.unshown_code_reference"])
+                .validate()
+                .is_ok()
+        );
+        for code in ["lint.code.plain_text", "lint.diff.new_file", "lint.nope"] {
+            let error = config(&[code]).validate().unwrap_err();
+            assert_eq!(error.code, "lint.config.ignore_code.invalid", "{code}");
+        }
     }
 }
