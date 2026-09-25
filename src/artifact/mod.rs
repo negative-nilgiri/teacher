@@ -10,7 +10,7 @@ use crate::repository::ResolvedDiff;
 use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_2_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_3_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
@@ -21,11 +21,14 @@ pub enum ArtifactVersion {
     /// Adds `first_line` to file- and Git-blob-backed code nodes.
     #[serde(rename = "1.2.0")]
     V1_2_0,
+    /// Adds private per-distractor `choice_explanations` to quiz answers.
+    #[serde(rename = "1.3.0")]
+    V1_3_0,
 }
 
 impl ArtifactVersion {
     /// Every artifact version the runtime can load.
-    pub const SUPPORTED: [Self; 3] = [Self::V1_0_0, Self::V1_1_0, Self::V1_2_0];
+    pub const SUPPORTED: [Self; 4] = [Self::V1_0_0, Self::V1_1_0, Self::V1_2_0, Self::V1_3_0];
 
     pub fn parse(value: &str) -> Option<Self> {
         Self::SUPPORTED
@@ -38,6 +41,7 @@ impl ArtifactVersion {
             Self::V1_0_0 => "1.0.0",
             Self::V1_1_0 => "1.1.0",
             Self::V1_2_0 => "1.2.0",
+            Self::V1_3_0 => "1.3.0",
         }
     }
 }
@@ -229,6 +233,16 @@ pub struct QuizAnswer {
     pub node_id: NodeId,
     pub correct_choice_id: ChoiceId,
     /// Markdown revealed after success or an explicit reveal action.
+    pub explanation: String,
+    /// Why individual distractors are wrong, revealed with `explanation`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choice_explanations: Vec<ChoiceExplanation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChoiceExplanation {
+    pub choice_id: ChoiceId,
     pub explanation: String,
 }
 
@@ -424,6 +438,20 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
                 answer.node_id, answer.correct_choice_id
             )));
         }
+        let mut explained = BTreeSet::new();
+        for entry in &answer.choice_explanations {
+            if entry.choice_id == answer.correct_choice_id
+                || !question_choices
+                    .iter()
+                    .any(|choice| choice.choice_id == entry.choice_id)
+                || !explained.insert(entry.choice_id)
+            {
+                return Err(ArtifactValidationError::new(format!(
+                    "choice explanation for node {} must name a distinct distractor, found choice {}",
+                    answer.node_id, entry.choice_id
+                )));
+            }
+        }
     }
 
     if answered.len() != questions.len() {
@@ -488,6 +516,7 @@ mod tests {
                     node_id: NodeId::new(0),
                     correct_choice_id: ChoiceId::new(1),
                     explanation: "Because B".into(),
+                    choice_explanations: Vec::new(),
                 }],
             },
             provenance: BuildProvenance {
@@ -587,6 +616,24 @@ mod tests {
         let mut artifact = quiz_artifact();
         artifact.private.answers[0].correct_choice_id = ChoiceId::new(99);
         assert!(validate_artifact(&artifact).is_err());
+    }
+
+    #[test]
+    fn rejects_choice_explanations_for_the_correct_or_absent_choice() {
+        for choice_id in [1, 99] {
+            let mut artifact = quiz_artifact();
+            artifact.private.answers[0].choice_explanations = vec![ChoiceExplanation {
+                choice_id: ChoiceId::new(choice_id),
+                explanation: "Not a distractor.".into(),
+            }];
+            assert!(validate_artifact(&artifact).is_err(), "choice {choice_id}");
+        }
+        let mut artifact = quiz_artifact();
+        artifact.private.answers[0].choice_explanations = vec![ChoiceExplanation {
+            choice_id: ChoiceId::new(0),
+            explanation: "A is wrong.".into(),
+        }];
+        assert!(validate_artifact(&artifact).is_ok());
     }
 
     #[test]

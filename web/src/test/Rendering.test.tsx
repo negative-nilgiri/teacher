@@ -5,6 +5,7 @@ import { CodeBlock } from "../components/CodeBlock";
 import { DiffBlock } from "../components/DiffBlock";
 import { LessonNodeView } from "../components/LessonNodeView";
 import { Markdown } from "../components/Markdown";
+import { MultipleChoiceBlock } from "../components/MultipleChoiceBlock";
 
 const mermaidMocks = vi.hoisted(() => ({
   initialize: vi.fn(),
@@ -194,6 +195,56 @@ describe("semantic source rendering", () => {
     expect(screen.getByText("Blue · Line 43")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Show annotation for line 43" })).toBeInTheDocument();
     expect(screen.getByText(/Highlighted line 43 in blue/)).toBeInTheDocument();
+  });
+
+  it("shows distractor explanations only once the question is resolved", () => {
+    const node = {
+      choices: [
+        { choice_id: 0, content: "Front" },
+        { choice_id: 1, content: "Back" },
+        { choice_id: 2, content: "Middle" },
+      ],
+      hints: [],
+      node_id: 5,
+      prompt: "Which end does `pop_front` use?",
+      source_id: "ends",
+      type: "multiple_choice" as const,
+    };
+    const noop = async () => {};
+    const { rerender } = render(
+      <MultipleChoiceBlock
+        busy={false}
+        node={node}
+        onReveal={noop}
+        onSubmit={noop}
+        state={{ attempts: [{ choice_id: 1, correct: false }], completed: false, revealed: false }}
+      />,
+    );
+    expect(screen.queryByText("Why not")).not.toBeInTheDocument();
+
+    rerender(
+      <MultipleChoiceBlock
+        busy={false}
+        node={node}
+        onReveal={noop}
+        onSubmit={noop}
+        state={{
+          answer: {
+            choice_explanations: [{ choice_id: 1, explanation: "That is **pop_back**." }],
+            choice_id: 0,
+            explanation: "The name says it.",
+          },
+          attempts: [{ choice_id: 1, correct: false }],
+          completed: false,
+          revealed: true,
+        }}
+      />,
+    );
+    expect(screen.getAllByText("Why not")).toHaveLength(1);
+    expect(screen.getByText("pop_back").tagName).toBe("STRONG");
+    expect(screen.getByText("Back").closest(".choice-body")).toHaveTextContent(
+      "Why notThat is pop_back.",
+    );
   });
 
   it("keeps a single gutter for inline code", () => {

@@ -26,6 +26,9 @@ export function MultipleChoiceBlock({
   const latestAttempt = state?.attempts.at(-1);
   const answer = state?.answer;
   const isResolved = state?.completed || state?.revealed;
+  const choiceExplanations = new Map(
+    (answer?.choice_explanations ?? []).map((entry) => [entry.choice_id, entry.explanation]),
+  );
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -45,6 +48,7 @@ export function MultipleChoiceBlock({
           <div className="choices">
             {node.choices.map((choice) => {
               const isAnswer = answer?.choice_id === choice.choice_id;
+              const whyNot = choiceExplanations.get(choice.choice_id);
               return (
                 <label
                   className={`choice${isAnswer ? " choice-answer" : ""}`}
@@ -57,7 +61,15 @@ export function MultipleChoiceBlock({
                     type="radio"
                     value={choice.choice_id}
                   />
-                  <Markdown>{choice.content}</Markdown>
+                  <div className="choice-body">
+                    <Markdown>{choice.content}</Markdown>
+                    {whyNot ? (
+                      <div className="choice-explanation">
+                        <span className="choice-explanation-label">Why not</span>
+                        <Markdown>{whyNot}</Markdown>
+                      </div>
+                    ) : null}
+                  </div>
                 </label>
               );
             })}

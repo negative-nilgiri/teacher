@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::artifact::ChoiceId;
 use crate::source::NodeId;
 
-use super::model::{Attempt, LessonProgress, QuestionState, RevealedAnswer, RuntimeLesson};
+use super::model::{Attempt, LessonProgress, QuestionState, RuntimeLesson};
 
 #[derive(Clone, Debug)]
 pub(crate) struct Session {
@@ -50,10 +50,7 @@ impl Session {
         question.attempts.push(Attempt { choice_id, correct });
         if correct {
             question.completed = true;
-            question.answer = Some(RevealedAnswer {
-                choice_id: answer.correct_choice_id,
-                explanation: answer.explanation.clone(),
-            });
+            question.answer = Some(answer.revealed());
         }
         Ok(question.clone())
     }
@@ -69,10 +66,7 @@ impl Session {
             .ok_or(SessionError::QuestionNotFound { node_id })?;
         let question = self.questions.entry(node_id).or_default();
         question.revealed = true;
-        question.answer = Some(RevealedAnswer {
-            choice_id: answer.correct_choice_id,
-            explanation: answer.explanation.clone(),
-        });
+        question.answer = Some(answer.revealed());
         Ok(question.clone())
     }
 }
@@ -110,7 +104,10 @@ mod tests {
             .unwrap();
         assert!(correct.completed);
         assert_eq!(correct.attempts.len(), 2);
-        assert_eq!(correct.answer.unwrap().choice_id, ChoiceId::new(1));
+        let answer = correct.answer.unwrap();
+        assert_eq!(answer.choice_id, ChoiceId::new(1));
+        // Distractor explanations arrive with the answer, never after a miss.
+        assert_eq!(answer.choice_explanations[0].choice_id, ChoiceId::new(0));
         assert_eq!(session.progress().completed_questions, 1);
     }
 
@@ -121,7 +118,10 @@ mod tests {
         let revealed = session.reveal(&lesson, NodeId::new(0)).unwrap();
         assert!(revealed.revealed);
         assert!(!revealed.completed);
-        assert!(revealed.answer.is_some());
+        assert_eq!(
+            revealed.answer.unwrap().choice_explanations[0].explanation,
+            "No ignores the question"
+        );
         assert_eq!(session.progress().completed_questions, 0);
     }
 

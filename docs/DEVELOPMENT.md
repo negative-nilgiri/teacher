@@ -296,9 +296,9 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.11.0` | [`Cargo.toml`](../Cargo.toml) |
-| Authored schema | `2.1.0` | [`SchemaVersion`](../src/source/model.rs) |
-| Artifact schema | `1.2.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
+| Cargo package | `1.12.0` | [`Cargo.toml`](../Cargo.toml) |
+| Authored schema | `2.2.0` | [`SchemaVersion`](../src/source/model.rs) |
+| Artifact schema | `1.3.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -718,7 +718,10 @@ highlights. Artifact `1.1.0` preserves each group's ranges, color, and optional
 annotation; the runtime also decodes legacy `1.0.0` flat highlight ranges into
 single-range groups. Artifact `1.2.0` adds `first_line`, the source-file line of
 a file- or Git-blob-backed code fragment's first line; older artifacts omit it
-and render with only the excerpt index.
+and render with only the excerpt index. Source schema `2.2.0` adds optional
+per-distractor `explanation` fields to choices; artifact `1.3.0` keeps them in
+the private answer table as `choice_explanations` keyed by generated choice ID,
+and the runtime returns them with the answer after a correct attempt or reveal.
 
 ### Change package contents
 

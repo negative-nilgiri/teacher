@@ -63,7 +63,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "2.1.0",
+  "schema_version": "2.2.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -79,7 +79,8 @@ documents, but their closed schemas reject fields introduced later. Source
 schema `2.0.0` changes the multiple-choice `prompt` from a string to a Markdown
 source object so it can be inline or file-backed. This is a breaking source
 shape. Source schema `2.1.0` adds optional Markdown annotations to code
-highlight groups. Use `2.1.0` for new lessons.
+highlight groups, and `2.2.0` adds optional per-choice explanations for
+distractors. Use `2.2.0` for new lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -115,7 +116,7 @@ diff source over 256 decoded characters, inline Markdown or quiz prompt over
 512 characters, or a diff that presents a new file is a lint `error` by default.
 Other rules cover code language and length, highlights, filename context,
 answer-choice balance, question frequency, questions with three or more choices
-but no hints, names formatted as code in prose but
+but no hints or with unexplained distractors, names formatted as code in prose but
 never shown in a code or diff block, and Mermaid `subgraph`/`style` use in
 flowcharts and class diagrams. The
 complete rule and threshold table is in [`LINT_DESIGN.md`](LINT_DESIGN.md).
@@ -426,12 +427,23 @@ across refreshes.
   },
   "choices": [
     { "content": "`pop_front`", "correct": true },
-    { "content": "`pop_back`" }
+    {
+      "content": "`pop_back`",
+      "explanation": "That removes the newest value, which is stack (LIFO) behavior."
+    }
   ],
   "hints": ["FIFO means first in, first out."],
   "explanation": "Removing from the front returns the oldest queued value."
 }
 ```
+
+Since source schema `2.2.0`, a distractor may carry its own Markdown
+`explanation` saying why it is wrong. Like the block `explanation`, it stays in
+the artifact's private answer data and appears under its choice only after the
+question is answered correctly or the answer is revealed; a wrong attempt never
+shows it. The correct choice cannot have one (`source.quiz.choice_explanation.on_correct`):
+its reasoning belongs in the block `explanation`. Lint reports questions with
+three or more choices where some distractor has no explanation.
 
 In source schema `2.0.0`, only the prompt uses a Markdown source object. Choices,
 hints, and explanations remain inline Markdown strings. Use a file source when

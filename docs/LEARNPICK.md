@@ -38,7 +38,7 @@ A successful JSON response has this shape:
 ```json
 {
   "ok": true,
-  "source_schema_version": "2.1.0",
+  "source_schema_version": "2.2.0",
   "model": "jev-1.13.0",
   "block_type": "code",
   "confidence": 0.91,

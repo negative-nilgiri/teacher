@@ -109,6 +109,7 @@ pub(super) fn collect(
                 }
                 rules.choice_lengths(index, block);
                 rules.missing_hints(index, block);
+                rules.unexplained_distractors(index, block);
             }
             _ => unreachable!("compiled nodes retain the source block order and kind"),
         }
@@ -413,6 +414,52 @@ impl Rules<'_> {
         }
     }
 
+    /// Distractor explanations tell the learner why a tempting answer fails.
+    /// Two-choice questions are skipped: the block explanation already covers
+    /// the only distractor by contrast.
+    fn unexplained_distractors(
+        &mut self,
+        index: usize,
+        block: &crate::source::MultipleChoiceBlock,
+    ) {
+        if block.choices.len() < 3 {
+            return;
+        }
+        let unexplained = block
+            .choices
+            .iter()
+            .enumerate()
+            .filter(|(_, choice)| !choice.correct && choice.explanation.is_none())
+            .map(|(choice_index, _)| choice_index)
+            .collect::<Vec<_>>();
+        if unexplained.is_empty() {
+            return;
+        }
+        let distractors = block.choices.len() - 1;
+        let related = unexplained
+            .iter()
+            .map(|choice_index| super::RelatedLintLocation {
+                message: "distractor without an explanation".to_owned(),
+                location: self
+                    .spans
+                    .location(&format!("/blocks/{index}/choices/{choice_index}/content")),
+            })
+            .collect::<Vec<_>>();
+        self.add(
+            Some(index),
+            "lint.question.unexplained_distractors",
+            &format!("/blocks/{index}"),
+            format!(
+                "{} of {distractors} distractors have no explanation of why they are wrong",
+                unexplained.len()
+            ),
+            "Consider adding an `explanation` to each distractor saying why it is wrong; it is shown after the question is answered or revealed.",
+            None,
+        )
+        .related
+        .extend(related);
+    }
+
     fn choice_lengths(&mut self, index: usize, block: &crate::source::MultipleChoiceBlock) {
         let Some((shortest_index, shortest)) = block
             .choices
@@ -529,6 +576,13 @@ impl Rules<'_> {
                         "choice",
                         &value.content,
                     ));
+                    if let Some(explanation) = &value.explanation {
+                        quiz_texts.push((
+                            format!("/blocks/{index}/choices/{choice}/explanation"),
+                            "choice explanation",
+                            explanation,
+                        ));
+                    }
                 }
                 quiz_texts.push((
                     format!("/blocks/{index}/explanation"),
@@ -859,6 +913,7 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.code.filename_reference_far"
         | "lint.lesson.few_questions"
         | "lint.question.no_hints"
+        | "lint.question.unexplained_distractors"
         | "lint.markdown.unshown_code_reference" => Severity::Info,
         _ => return None,
     })
@@ -1317,6 +1372,49 @@ mod tests {
         assert_eq!(flagged[0].block_id.as_deref(), Some("three"));
         assert_eq!(flagged[0].severity, Severity::Info);
         assert_eq!(flagged[0].pointer, "/blocks/1");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reports_questions_with_unexplained_distractors() {
+        let root = temp_root();
+        let question = |id: &str, choices: Value| {
+            json!({"type":"multiple_choice","id":id,
+                "prompt":{"kind":"inline","content":"Pick one."},
+                "choices":choices,"hints":["Think."],"explanation":"Because."})
+        };
+        let lesson = json!({"schema_version":"2.2.0","title":"Distractors","blocks":[
+            question("two", json!([{"content":"Yes","correct":true},{"content":"No"}])),
+            question("partial", json!([
+                {"content":"Red","correct":true},
+                {"content":"Green","explanation":"Green is `wavelength` 530."},
+                {"content":"Blue"}
+            ])),
+            question("complete", json!([
+                {"content":"Red","correct":true},
+                {"content":"Green","explanation":"Too short."},
+                {"content":"Blue","explanation":"Shorter still."}
+            ]))
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let flagged = found
+            .iter()
+            .filter(|f| f.code == "lint.question.unexplained_distractors")
+            .collect::<Vec<_>>();
+        assert_eq!(flagged.len(), 1);
+        assert_eq!(flagged[0].block_id.as_deref(), Some("partial"));
+        assert_eq!(
+            flagged[0].message,
+            "1 of 2 distractors have no explanation of why they are wrong"
+        );
+        assert_eq!(flagged[0].related.len(), 1);
+        assert_eq!(flagged[0].severity, Severity::Info);
+        // Choice explanations are not scanned for unshown code on their own.
+        assert!(
+            found
+                .iter()
+                .all(|f| f.code != "lint.markdown.unshown_code_reference")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

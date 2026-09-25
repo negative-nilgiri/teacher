@@ -9,7 +9,7 @@ use super::{
     LineRange, MarkdownSource, RepoPath, SourceId, SymbolTable,
     model::{
         LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
-        LessonSourceV2_0_0, LessonSourceV2_1_0,
+        LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0,
     },
 };
 
@@ -61,6 +61,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
         Some("1.3.0") => deserialize_source::<LessonSourceV1_3_0>(input).map(Into::into),
         Some("2.0.0") => deserialize_source::<LessonSourceV2_0_0>(input).map(Into::into),
         Some("2.1.0") => deserialize_source::<LessonSourceV2_1_0>(input).map(Into::into),
+        Some("2.2.0") => deserialize_source::<LessonSourceV2_2_0>(input).map(Into::into),
         _ => deserialize_source::<LessonSource>(input),
     }?;
     validate(source)
@@ -465,6 +466,23 @@ fn validate_multiple_choice(
             "choice content",
             diagnostics,
         );
+        if let Some(explanation) = &choice.explanation {
+            let pointer = format!("{base}/choices/{index}/explanation");
+            if choice.correct {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "source.quiz.choice_explanation.on_correct",
+                        &pointer,
+                        "the correct choice cannot have its own explanation",
+                    )
+                    .with_suggestion(
+                        "Move this text into the question's `explanation`; choice explanations say why a distractor is wrong.",
+                    ),
+                );
+            } else {
+                nonempty(explanation, &pointer, "choice explanation", diagnostics);
+            }
+        }
     }
     for (index, hint) in block.hints.iter().enumerate() {
         nonempty(hint, &format!("{base}/hints/{index}"), "hint", diagnostics);
@@ -856,6 +874,55 @@ mod tests {
         let diagnostics = parse_and_validate(invalid_source).expect_err("prompt path escapes root");
         assert_eq!(diagnostics[0].code, "source.path.invalid");
         assert_eq!(diagnostics[0].pointer, "/blocks/0/prompt/path");
+    }
+
+    #[test]
+    fn choice_explanations_begin_in_source_2_2_and_only_explain_distractors() {
+        let quiz = |version: &str, choices: &str| {
+            format!(
+                r#"{{"schema_version":"{version}","title":"Quiz","blocks":[{{
+                    "type":"multiple_choice","id":"q",
+                    "prompt":{{"kind":"inline","content":"Pick one."}},
+                    "choices":{choices},
+                    "explanation":"A is right."
+                }}]}}"#
+            )
+        };
+        let legacy = quiz(
+            "2.1.0",
+            r#"[{"content":"A","correct":true},{"content":"B","explanation":"B is wrong."}]"#,
+        );
+        let diagnostics = parse_and_validate(&legacy).expect_err("2.1 rejects choice explanations");
+        assert_eq!(diagnostics[0].code, "source.deserialize");
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unknown field `explanation`")
+        );
+
+        let valid = quiz(
+            "2.2.0",
+            r#"[{"content":"A","correct":true},{"content":"B","explanation":"B is wrong."}]"#,
+        );
+        let lesson = parse_and_validate(&valid).expect("distractor explanations are valid");
+        let Block::MultipleChoice(block) = &lesson.source().blocks[0] else {
+            panic!("expected a question")
+        };
+        assert_eq!(block.choices[1].explanation.as_deref(), Some("B is wrong."));
+
+        let invalid = quiz(
+            "2.2.0",
+            r#"[{"content":"A","correct":true,"explanation":"Duplicate."},{"content":"B","explanation":"  "}]"#,
+        );
+        let diagnostics = parse_and_validate(&invalid).expect_err("invalid explanations");
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "source.quiz.choice_explanation.on_correct"
+                && diagnostic.pointer == "/blocks/0/choices/0/explanation"
+        }));
+        assert!(diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "source.content.empty"
+                && diagnostic.pointer == "/blocks/0/choices/1/explanation"
+        }));
     }
 
     #[test]

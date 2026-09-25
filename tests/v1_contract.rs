@@ -54,7 +54,7 @@ impl Drop for TempDir {
 
 #[test]
 fn emitted_schema_and_valid_fixtures_match_the_decoder() {
-    let output = output_success(Command::new(learnc()).args(["schema", "--version", "2.1.0"]));
+    let output = output_success(Command::new(learnc()).args(["schema", "--version", "2.2.0"]));
     let emitted: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(emitted, agent_teacher::source::source_json_schema());
     let default_output = output_success(Command::new(learnc()).arg("schema"));
@@ -169,8 +169,11 @@ fn compiler_freezes_file_backed_question_prompts() {
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(root.path().join("lesson.learn")).unwrap()).unwrap();
     assert_eq!(artifact.provenance.source_schema_version.as_str(), "2.1.0");
-    assert_eq!(artifact.artifact_version.as_str(), "1.2.0");
-    assert_eq!(artifact.provenance.compiler_version, "1.11.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.3.0");
+    assert_eq!(
+        artifact.provenance.compiler_version,
+        env!("CARGO_PKG_VERSION")
+    );
     assert!(matches!(
         &artifact.presentation.nodes[0].content,
         CompiledNodeContent::MultipleChoice { prompt, .. }
@@ -309,7 +312,7 @@ fn cli_help_version_and_usage_errors_follow_the_output_mode() {
         let version: serde_json::Value = serde_json::from_slice(&version.stdout).unwrap();
         assert_eq!(version["ok"], true);
         assert_eq!(version["kind"], "version");
-        assert_eq!(version["version"], "1.11.0");
+        assert_eq!(version["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(version["name"], name);
 
         let human = output_success(Command::new(binary).args(["-t", "--help"]));

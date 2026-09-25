@@ -90,9 +90,16 @@ export interface Attempt {
   correct: boolean;
 }
 
+export interface ChoiceExplanation {
+  choice_id: ChoiceId;
+  explanation: string;
+}
+
 export interface RevealedAnswer {
   choice_id: ChoiceId;
   explanation: string;
+  /** Why individual distractors are wrong; only sent once resolved. */
+  choice_explanations?: ChoiceExplanation[];
 }
 
 export interface QuestionState {

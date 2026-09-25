@@ -12,9 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sha2::{Digest, Sha256};
 
 use crate::artifact::{
-    BuildProvenance, CURRENT_ARTIFACT_VERSION, ChoiceId, CompiledCodeHighlight, CompiledLesson,
-    CompiledLineRange, CompiledNode, CompiledNodeContent, FrozenDiffTarget, LessonPresentation,
-    PresentedChoice, PrivateLesson, QuizAnswer, ResourceProvenance,
+    BuildProvenance, CURRENT_ARTIFACT_VERSION, ChoiceExplanation, ChoiceId, CompiledCodeHighlight,
+    CompiledLesson, CompiledLineRange, CompiledNode, CompiledNodeContent, FrozenDiffTarget,
+    LessonPresentation, PresentedChoice, PrivateLesson, QuizAnswer, ResourceProvenance,
 };
 use crate::diagnostics::Diagnostic;
 use crate::language::Language;
@@ -123,6 +123,7 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                 };
                 let choice_start = next_choice_id;
                 let mut choices = Vec::with_capacity(block.choices.len());
+                let mut choice_explanations = Vec::new();
                 let mut correct = None;
                 let mut overflow = None;
                 let order = presentation_order(&source_id, &prompt, &block.choices);
@@ -147,6 +148,12 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                     if choice.correct {
                         correct = Some(choice_id);
                     }
+                    if let Some(explanation) = choice.explanation {
+                        choice_explanations.push(ChoiceExplanation {
+                            choice_id,
+                            explanation,
+                        });
+                    }
                     choices.push(PresentedChoice {
                         choice_id,
                         content: choice.content,
@@ -162,6 +169,7 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                         node_id,
                         correct_choice_id,
                         explanation: block.explanation,
+                        choice_explanations,
                     });
                     Ok(CompiledNodeContent::MultipleChoice {
                         prompt,
@@ -816,11 +824,45 @@ mod tests {
     }
 
     #[test]
+    fn choice_explanations_follow_their_choice_into_private_answers() {
+        let lesson = r#"{"schema_version":"2.2.0","title":"Quiz","blocks":[{
+            "type":"multiple_choice","id":"q",
+            "prompt":{"kind":"inline","content":"Which end does `pop_front` use?"},
+            "choices":[
+                {"content":"Front","correct":true},
+                {"content":"Back","explanation":"That is `pop_back`."},
+                {"content":"Middle"}
+            ],
+            "explanation":"The name says it."
+        }]}"#;
+        let artifact = compile(lesson, &CompileOptions::new(".")).unwrap();
+        let CompiledNodeContent::MultipleChoice { choices, .. } =
+            &artifact.presentation.nodes[0].content
+        else {
+            panic!("expected compiled question")
+        };
+        let answer = &artifact.private.answers[0];
+        assert_eq!(answer.choice_explanations.len(), 1);
+        let explained = choices
+            .iter()
+            .find(|choice| choice.choice_id == answer.choice_explanations[0].choice_id)
+            .unwrap();
+        assert_eq!(explained.content, "Back");
+        assert_eq!(
+            answer.choice_explanations[0].explanation,
+            "That is `pop_back`."
+        );
+        let presentation = serde_json::to_string(&artifact.presentation).unwrap();
+        assert!(!presentation.contains("pop_back"));
+    }
+
+    #[test]
     fn presentation_order_is_a_stable_scrambling_permutation() {
         let choices = ["A", "B", "C", "D"]
             .map(|content| source::Choice {
                 content: content.to_owned(),
                 correct: content == "A",
+                explanation: None,
             })
             .to_vec();
         let orders = (0..32)
@@ -932,7 +974,10 @@ mod tests {
             artifact.provenance.source_schema_version,
             crate::source::SchemaVersion::V2_0_0
         );
-        assert_eq!(artifact.provenance.compiler_version, "1.11.0");
+        assert_eq!(
+            artifact.provenance.compiler_version,
+            env!("CARGO_PKG_VERSION")
+        );
 
         fs::remove_dir_all(directory).unwrap();
     }

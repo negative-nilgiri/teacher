@@ -66,8 +66,9 @@ or is ambiguous, choose manually. Never call it to confirm an obvious choice.
 - **Questions** should be hard because the alternatives are plausible (real
   misconceptions, nearby APIs, believable consequences), never because they are
   ambiguous. Exactly one choice must be defensibly correct, and the full
-  reasoning goes in `explanation`. Hints should nudge toward the reasoning,
-  never name the answer. Do not rotate the correct answer yourself; `learnc`
+  reasoning goes in `explanation`. Give each distractor its own `explanation`
+  saying why it is wrong; learners see it only after answering or revealing.
+  Hints should nudge toward the reasoning, never name the answer. Do not rotate the correct answer yourself; `learnc`
   shuffles choices.
 - **Mermaid** diagrams are inline code blocks with `language: "mermaid"`, never
   fences inside Markdown. Use `sequenceDiagram` for time-ordered calls and

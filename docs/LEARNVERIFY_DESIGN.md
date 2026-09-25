@@ -87,7 +87,9 @@ These need more thought about which context to send:
 - prose that describes code differently from the code shown next to it;
 - a code or diff caption that only narrates visible content;
 - a highlight annotation that does not explain why its lines matter;
-- an explanation that restates the answer without teaching the reasoning.
+- an explanation that restates the answer without teaching the reasoning;
+- a distractor explanation that does not actually say why that choice is
+  wrong, or that contradicts the correct answer.
 
 ## Request shape
 

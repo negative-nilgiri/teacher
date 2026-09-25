@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use crate::artifact::CURRENT_ARTIFACT_VERSION;
 use crate::artifact::{
-    ArtifactVersion, ChoiceId, CompiledLesson, CompiledNodeContent, validate_artifact,
+    ArtifactVersion, ChoiceExplanation, ChoiceId, CompiledLesson, CompiledNodeContent,
+    validate_artifact,
 };
 use crate::repository::{DiffLine, ResolvedDiff};
 use crate::source::NodeId;
@@ -140,6 +141,18 @@ pub(crate) struct RuntimeAnswer {
     pub valid_choices: BTreeSet<ChoiceId>,
     pub correct_choice_id: ChoiceId,
     pub explanation: String,
+    pub choice_explanations: Vec<ChoiceExplanation>,
+}
+
+impl RuntimeAnswer {
+    /// The answer material exposed after a correct attempt or explicit reveal.
+    pub fn revealed(&self) -> RevealedAnswer {
+        RevealedAnswer {
+            choice_id: self.correct_choice_id,
+            explanation: self.explanation.clone(),
+            choice_explanations: self.choice_explanations.clone(),
+        }
+    }
 }
 
 pub fn project_artifact(artifact: &CompiledLesson) -> PublicLesson {
@@ -158,6 +171,7 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                     valid_choices: BTreeSet::new(),
                     correct_choice_id: answer.correct_choice_id,
                     explanation: answer.explanation.clone(),
+                    choice_explanations: answer.choice_explanations.clone(),
                 },
             )
         })
@@ -364,6 +378,9 @@ pub struct Attempt {
 pub struct RevealedAnswer {
     pub choice_id: ChoiceId,
     pub explanation: String,
+    /// Why individual distractors are wrong; only present once resolved.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub choice_explanations: Vec<ChoiceExplanation>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -410,6 +427,10 @@ pub(crate) mod tests {
                     node_id: NodeId::new(0),
                     correct_choice_id: ChoiceId::new(1),
                     explanation: "Yes is correct".into(),
+                    choice_explanations: vec![crate::artifact::ChoiceExplanation {
+                        choice_id: ChoiceId::new(0),
+                        explanation: "No ignores the question".into(),
+                    }],
                 }],
             },
             provenance: BuildProvenance {
