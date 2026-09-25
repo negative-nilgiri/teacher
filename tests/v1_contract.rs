@@ -169,7 +169,7 @@ fn compiler_freezes_file_backed_question_prompts() {
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(root.path().join("lesson.learn")).unwrap()).unwrap();
     assert_eq!(artifact.provenance.source_schema_version.as_str(), "2.1.0");
-    assert_eq!(artifact.artifact_version.as_str(), "1.1.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.2.0");
     assert_eq!(artifact.provenance.compiler_version, "1.11.0");
     assert!(matches!(
         &artifact.presentation.nodes[0].content,

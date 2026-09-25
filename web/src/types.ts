@@ -17,6 +17,8 @@ export interface CodeNode extends LessonNodeBase {
   language: string;
   caption?: string;
   filename?: string;
+  /** Source-file line of the first displayed line; absent for inline code. */
+  first_line?: number;
   highlights?: CodeHighlight[];
 }
 

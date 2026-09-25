@@ -17,29 +17,49 @@ export function CodeBlock({ node }: { node: CodeNode }) {
         <LanguageLabel language={node.language} />
       </header>
       {node.caption ? <Markdown className="source-caption">{node.caption}</Markdown> : null}
-      <HighlightAnnotations highlights={highlights} />
+      <HighlightAnnotations highlights={highlights} lineOffset={lineOffset(node)} />
       {node.language === "mermaid" ? (
         <MermaidDiagram label={`Diagram: ${node.source_id}`} source={node.content} />
       ) : (
-        <CodeListing content={node.content} highlights={highlights} language={node.language} />
+        <CodeListing
+          content={node.content}
+          firstLine={node.first_line}
+          highlights={highlights}
+          language={node.language}
+        />
       )}
     </section>
   );
 }
 
+/**
+ * Highlight positions are fragment-relative; labels show source-file lines so
+ * they match the file, the main gutter, and the authored lesson.
+ */
+function lineOffset(node: CodeNode): number {
+  return (node.first_line ?? 1) - 1;
+}
+
 function CodeListing({
   content,
+  firstLine,
   highlights,
   language,
 }: {
   content: string;
+  firstLine?: number;
   highlights: CodeHighlight[];
   language: string;
 }) {
   const annotationIdPrefix = useId();
   const [activeAnnotation, setActiveAnnotation] = useState<string | null>(null);
   const lineCount = sourceLineCount(content);
+  const offset = (firstLine ?? 1) - 1;
   const lineNumbers = Array.from({ length: lineCount }, (_, index) => index + 1).join("\n");
+  const fileLineNumbers =
+    firstLine === undefined
+      ? null
+      : Array.from({ length: lineCount }, (_, index) => index + firstLine).join("\n");
   const markerLanes = new Map<number, number>();
   const annotationAnchors = highlights.flatMap((highlight, groupIndex) => {
     if (!highlight.annotation) return [];
@@ -63,7 +83,9 @@ function CodeListing({
     <>
       <div className="code-listing-shell">
         <pre className="code-listing">
-          <span className="code-listing-inner">
+          <span
+            className={`code-listing-inner${fileLineNumbers ? " code-listing-inner-with-file-lines" : ""}`}
+          >
             {highlights.flatMap((highlight, groupIndex) =>
               highlight.lines.map((range, rangeIndex) => {
                 const key = annotationKey(groupIndex, rangeIndex);
@@ -79,9 +101,20 @@ function CodeListing({
                 );
               }),
             )}
-            <span aria-hidden="true" className="code-line-numbers">
-              {lineNumbers}
-            </span>
+            {fileLineNumbers ? (
+              <>
+                <span aria-hidden="true" className="code-line-index">
+                  {lineNumbers}
+                </span>
+                <span aria-hidden="true" className="code-line-numbers">
+                  {fileLineNumbers}
+                </span>
+              </>
+            ) : (
+              <span aria-hidden="true" className="code-line-numbers">
+                {lineNumbers}
+              </span>
+            )}
             <SyntaxCode className="code-listing-source" language={language}>
               {content}
             </SyntaxCode>
@@ -100,7 +133,7 @@ function CodeListing({
                 <button
                   aria-controls={popoverId}
                   aria-expanded={active}
-                  aria-label={`${active ? "Hide" : "Show"} annotation for ${rangeLabel(range).toLowerCase()}`}
+                  aria-label={`${active ? "Hide" : "Show"} annotation for ${rangeLabel(range, offset).toLowerCase()}`}
                   className={`code-annotation-marker code-annotation-marker-${highlight.color}`}
                   onClick={() =>
                     setActiveAnnotation((current) => (current === key ? null : key))
@@ -128,7 +161,7 @@ function CodeListing({
       </div>
       {highlights.length > 0 ? (
         <span className="visually-hidden">
-          {highlights.map(highlightDescription).join("; ")}
+          {highlights.map((highlight) => highlightDescription(highlight, offset)).join("; ")}
         </span>
       ) : null}
     </>
@@ -145,7 +178,13 @@ function sourceLineCount(content: string): number {
   return withoutFinalNewline.split("\n").length;
 }
 
-function HighlightAnnotations({ highlights }: { highlights: CodeHighlight[] }) {
+function HighlightAnnotations({
+  highlights,
+  lineOffset,
+}: {
+  highlights: CodeHighlight[];
+  lineOffset: number;
+}) {
   const annotated = highlights.filter(
     (highlight): highlight is CodeHighlight & { annotation: string } =>
       Boolean(highlight.annotation),
@@ -158,10 +197,10 @@ function HighlightAnnotations({ highlights }: { highlights: CodeHighlight[] }) {
         {annotated.map((highlight, index) => (
           <li
             className={`highlight-annotation highlight-annotation-${highlight.color}`}
-            key={`${highlight.color}-${lineReferences(highlight)}-${index}`}
+            key={`${highlight.color}-${lineReferences(highlight, lineOffset)}-${index}`}
           >
             <span className="highlight-annotation-label">
-              {capitalize(highlight.color)} · {lineReferences(highlight)}
+              {capitalize(highlight.color)} · {lineReferences(highlight, lineOffset)}
             </span>
             <Markdown className="highlight-annotation-content">{highlight.annotation}</Markdown>
           </li>
@@ -199,21 +238,21 @@ function annotationPopoverStyle(
   };
 }
 
-function highlightDescription(highlight: CodeHighlight): string {
-  return `Highlighted ${lineReferences(highlight).toLowerCase()} in ${highlight.color}`;
+function highlightDescription(highlight: CodeHighlight, offset: number): string {
+  return `Highlighted ${lineReferences(highlight, offset).toLowerCase()} in ${highlight.color}`;
 }
 
-function lineReferences(highlight: CodeHighlight): string {
+function lineReferences(highlight: CodeHighlight, offset: number): string {
   const ranges = highlight.lines.map(({ start, end }) =>
-    start === end ? `${start}` : `${start}–${end}`,
+    start === end ? `${start + offset}` : `${start + offset}–${end + offset}`,
   );
   return `${ranges.length === 1 && highlight.lines[0].start === highlight.lines[0].end ? "Line" : "Lines"} ${ranges.join(", ")}`;
 }
 
-function rangeLabel(range: { start: number; end: number }): string {
+function rangeLabel(range: { start: number; end: number }, offset: number): string {
   return range.start === range.end
-    ? `Line ${range.start}`
-    : `Lines ${range.start}–${range.end}`;
+    ? `Line ${range.start + offset}`
+    : `Lines ${range.start + offset}–${range.end + offset}`;
 }
 
 function capitalize(value: string): string {

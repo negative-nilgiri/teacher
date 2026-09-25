@@ -179,12 +179,14 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                     language,
                     caption,
                     highlights,
+                    first_line,
                     provenance,
                 } => PublicLessonNodeContent::Code {
                     content: content.clone(),
                     language: *language,
                     caption: caption.clone(),
                     highlights: highlights.clone(),
+                    first_line: *first_line,
                     filename: provenance_basename(provenance),
                 },
                 CompiledNodeContent::Diff { diff, caption, .. } => PublicLessonNodeContent::Diff {
@@ -292,6 +294,9 @@ pub enum PublicLessonNodeContent {
         caption: Option<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         highlights: Vec<crate::artifact::CompiledCodeHighlight>,
+        /// Source-file line of the first displayed line, when known.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        first_line: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
         filename: Option<String>,
     },
@@ -436,6 +441,7 @@ pub(crate) mod tests {
                 language: crate::language::Language::Mermaid,
                 caption: Some("The edge represents an asynchronous handoff.".into()),
                 highlights: Vec::new(),
+                first_line: None,
                 provenance: crate::artifact::ResourceProvenance::Inline {
                     sha256: "0".repeat(64),
                 },
@@ -466,6 +472,7 @@ pub(crate) mod tests {
                     color: crate::source::HighlightColor::Blue,
                     annotation: None,
                 }],
+                first_line: Some(40),
                 provenance: crate::artifact::ResourceProvenance::GitBlob {
                     repository: ".".into(),
                     path: "src/compiler/parser.rs".into(),
@@ -479,6 +486,8 @@ pub(crate) mod tests {
 
         let projection = serde_json::to_value(project_artifact(&artifact)).unwrap();
         assert_eq!(projection["nodes"][1]["filename"], "parser.rs");
+        assert_eq!(projection["nodes"][1]["first_line"], 40);
+        assert!(projection["nodes"][0].get("first_line").is_none());
         assert_eq!(
             projection["nodes"][1]["highlights"][0]["lines"][0]["start"],
             1

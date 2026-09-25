@@ -298,7 +298,7 @@ Three SemVer values evolve independently:
 | --- | --- | --- |
 | Cargo package | `1.11.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.1.0` | [`SchemaVersion`](../src/source/model.rs) |
-| Artifact schema | `1.1.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
+| Artifact schema | `1.2.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -451,7 +451,11 @@ compact label and falls back to `Code` when no specific language is known:
 - [`CodeBlock`](../web/src/components/CodeBlock.tsx) syntax-highlights known
   languages beneath a visible normalized-language header. File and Git-blob
   code sources also show the basename derived from their frozen provenance;
-  inline code has no synthetic filename. Compiled highlight ranges add pastel
+  inline code has no synthetic filename. When the artifact records
+  `first_line`, the gutter shows a muted excerpt index followed by the real
+  source-file line, and highlight labels use source-file lines so they match
+  both the file and the authored highlights; inline code keeps one gutter.
+  Compiled highlight ranges add pastel
   full-line backgrounds and a stronger gutter accent without splitting the
   syntax highlighter's multiline token spans. Annotated ranges keep a
   persistent summary above the listing and expose line-local Markdown cards
@@ -712,7 +716,9 @@ the requested version, and `SchemaVersion::CURRENT` selects the default for new
 documents. Schema `2.1.0` adds group-level Markdown annotations to code
 highlights. Artifact `1.1.0` preserves each group's ranges, color, and optional
 annotation; the runtime also decodes legacy `1.0.0` flat highlight ranges into
-single-range groups.
+single-range groups. Artifact `1.2.0` adds `first_line`, the source-file line of
+a file- or Git-blob-backed code fragment's first line; older artifacts omit it
+and render with only the excerpt index.
 
 ### Change package contents
 

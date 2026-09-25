@@ -364,6 +364,7 @@ fn resolve_code(
                 language,
                 caption,
                 highlights: Vec::new(),
+                first_line: None,
                 content,
             })
         }
@@ -396,6 +397,7 @@ fn resolve_code(
                 language,
                 caption,
                 highlights,
+                first_line: Some(source_start),
                 provenance: resource_provenance(resource.provenance),
             })
         }
@@ -433,6 +435,7 @@ fn resolve_code(
                 language,
                 caption,
                 highlights,
+                first_line: Some(source_start),
                 provenance: resource_provenance(resource.provenance),
             })
         }
@@ -1107,6 +1110,17 @@ mod tests {
             ]
         }"#;
         let artifact = compile(lesson, &CompileOptions::new(&directory)).unwrap();
+        let first_lines = artifact
+            .presentation
+            .nodes
+            .iter()
+            .map(|node| match &node.content {
+                CompiledNodeContent::Code { first_line, .. } => *first_line,
+                _ => panic!("expected code node"),
+            })
+            .collect::<Vec<_>>();
+        // Both file and Git-blob excerpts start at source line 2.
+        assert_eq!(first_lines, [Some(2), Some(2)]);
 
         let CompiledNodeContent::Code { highlights, .. } = &artifact.presentation.nodes[0].content
         else {

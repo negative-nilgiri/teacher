@@ -170,6 +170,48 @@ describe("semantic source rendering", () => {
     expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
+  it("shows the excerpt index and source-file lines for file-backed code", () => {
+    const { container } = render(
+      <CodeBlock
+        node={{
+          content: "fn parse() {\n    lex()\n}\n",
+          filename: "parser.rs",
+          first_line: 42,
+          highlights: [
+            { annotation: "Lexing happens first.", color: "blue", lines: [{ end: 2, start: 2 }] },
+          ],
+          language: "rust",
+          node_id: 3,
+          source_id: "parser",
+          type: "code",
+        }}
+      />,
+    );
+
+    expect(container.querySelector(".code-line-index")).toHaveTextContent("1 2 3");
+    expect(container.querySelector(".code-line-numbers")).toHaveTextContent("42 43 44");
+    expect(container.querySelector(".code-highlight")).toHaveAttribute("data-start", "2");
+    expect(screen.getByText("Blue · Line 43")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show annotation for line 43" })).toBeInTheDocument();
+    expect(screen.getByText(/Highlighted line 43 in blue/)).toBeInTheDocument();
+  });
+
+  it("keeps a single gutter for inline code", () => {
+    const { container } = render(
+      <CodeBlock
+        node={{
+          content: "let x = 1;\n",
+          language: "rust",
+          node_id: 4,
+          source_id: "inline",
+          type: "code",
+        }}
+      />,
+    );
+    expect(container.querySelector(".code-line-index")).toBeNull();
+    expect(container.querySelector(".code-line-numbers")).toHaveTextContent("1");
+  });
+
   it("folds files independently in a multi-file diff", async () => {
     const user = userEvent.setup();
     render(

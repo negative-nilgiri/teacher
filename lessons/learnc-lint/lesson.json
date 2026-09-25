@@ -59,7 +59,7 @@
       "source": {
         "kind": "file",
         "path": "src/compiler/mod.rs",
-        "lines": { "start": 442, "end": 455 }
+        "lines": { "start": 445, "end": 458 }
       }
     },
     {

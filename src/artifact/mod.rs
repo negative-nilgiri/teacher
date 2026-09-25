@@ -10,7 +10,7 @@ use crate::repository::ResolvedDiff;
 use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_1_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_2_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
@@ -18,11 +18,14 @@ pub enum ArtifactVersion {
     V1_0_0,
     #[serde(rename = "1.1.0")]
     V1_1_0,
+    /// Adds `first_line` to file- and Git-blob-backed code nodes.
+    #[serde(rename = "1.2.0")]
+    V1_2_0,
 }
 
 impl ArtifactVersion {
     /// Every artifact version the runtime can load.
-    pub const SUPPORTED: [Self; 2] = [Self::V1_0_0, Self::V1_1_0];
+    pub const SUPPORTED: [Self; 3] = [Self::V1_0_0, Self::V1_1_0, Self::V1_2_0];
 
     pub fn parse(value: &str) -> Option<Self> {
         Self::SUPPORTED
@@ -34,6 +37,7 @@ impl ArtifactVersion {
         match self {
             Self::V1_0_0 => "1.0.0",
             Self::V1_1_0 => "1.1.0",
+            Self::V1_2_0 => "1.2.0",
         }
     }
 }
@@ -88,6 +92,10 @@ pub enum CompiledNodeContent {
         /// One-based inclusive positions in the compiled code fragment.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         highlights: Vec<CompiledCodeHighlight>,
+        /// Source-file line of the fragment's first line, for file and Git-blob
+        /// sources. Absent for inline code and artifacts before 1.2.0.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first_line: Option<u32>,
         provenance: ResourceProvenance,
     },
     Diff {
@@ -292,9 +300,16 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
             content,
             language,
             highlights,
+            first_line,
             ..
         } = &node.content
         {
+            if *first_line == Some(0) {
+                return Err(ArtifactValidationError::new(format!(
+                    "code node {} has first_line 0; source lines are one-based",
+                    node.node_id
+                )));
+            }
             if *language == Language::Mermaid && !highlights.is_empty() {
                 return Err(ArtifactValidationError::new(format!(
                     "Mermaid node {} cannot contain source-line highlights",
@@ -512,6 +527,7 @@ mod tests {
                 language: Language::Text,
                 caption: None,
                 highlights: Vec::new(),
+                first_line: None,
                 provenance: ResourceProvenance::Inline {
                     sha256: "0".repeat(64),
                 },
@@ -588,6 +604,7 @@ mod tests {
                     color: HighlightColor::Yellow,
                     annotation: None,
                 }],
+                first_line: None,
                 provenance: ResourceProvenance::Inline {
                     sha256: "0".repeat(64),
                 },
