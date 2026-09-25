@@ -442,17 +442,29 @@ impl Rules<'_> {
             .iter()
             .filter(|block| matches!(block, Block::MultipleChoice(_)))
             .count();
-        if questions as f64 / (total as f64) < self.config.min_question_ratio {
+        let ratio = questions as f64 / total as f64;
+        if ratio < self.config.min_question_ratio {
             self.add(
                 None,
                 "lint.lesson.few_questions",
                 "/blocks",
-                format!("{questions} of {total} blocks are multiple-choice questions"),
+                format!(
+                    "{questions} of {total} blocks are multiple-choice questions ({}); lint reports lessons under {} (min_question_ratio)",
+                    percent(ratio),
+                    percent(self.config.min_question_ratio),
+                ),
                 "If questions would serve the lesson's teaching goal, consider adding more.",
                 None,
             );
         }
     }
+}
+
+/// Format a ratio as a percentage with at most one decimal (`0.2` -> `20%`,
+/// `1.0 / 6.0` -> `16.7%`).
+fn percent(ratio: f64) -> String {
+    let formatted = format!("{:.1}", ratio * 100.0);
+    format!("{}%", formatted.strip_suffix(".0").unwrap_or(&formatted))
 }
 
 fn severity_for_code(code: &str) -> Severity {
@@ -796,6 +808,18 @@ mod tests {
             .unwrap();
         assert_eq!(ratio.block_id, None);
         assert_eq!(ratio.pointer, "/blocks");
+        assert_eq!(
+            ratio.message,
+            "0 of 3 blocks are multiple-choice questions (0%); lint reports lessons under 20% (min_question_ratio)"
+        );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn percent_keeps_at_most_one_decimal() {
+        assert_eq!(percent(0.2), "20%");
+        assert_eq!(percent(1.0 / 6.0), "16.7%");
+        assert_eq!(percent(0.125), "12.5%");
+        assert_eq!(percent(0.0), "0%");
     }
 }
