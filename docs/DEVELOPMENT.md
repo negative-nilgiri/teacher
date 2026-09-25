@@ -4,10 +4,10 @@ This guide maps the v1 implementation from authored lesson JSON to the browser.
 It describes the code that exists today, the invariants each layer owns, and the
 places that must change when the format or runtime grows.
 
-This guide, [`docs/AUTHORING.md`](AUTHORING.md) (the lesson format),
-[`docs/LINT_DESIGN.md`](LINT_DESIGN.md) (authoring-policy lint), and
-[`docs/LEARNPICK.md`](LEARNPICK.md) (the optional adviser) together define the
-accepted behavior. Lesson authors should use `AUTHORING.md`; this document is
+This guide, [`docs/AUTHORING.md`](AUTHORING.md) (the lesson format), and
+[`docs/LINT_DESIGN.md`](LINT_DESIGN.md) (authoring-policy lint) together define
+the accepted behavior. [`docs/LEARNVERIFY_DESIGN.md`](LEARNVERIFY_DESIGN.md)
+records a proposed, not yet implemented, model-backed lesson checker. Lesson authors should use `AUTHORING.md`; this document is
 for people changing the compiler, artifact, server, or frontend.
 
 ## Start here
@@ -18,9 +18,10 @@ The project is one Cargo package with three binaries:
   validates and freezes everything, and optionally writes a `.learn` artifact.
 - [`learn`](../src/bin/learn.rs) reads only a compiled artifact, owns the learner
   session, and serves the embedded React application on loopback.
-- [`learnpick`](../src/bin/learnpick.rs) is an optional network-backed adviser
-  that recommends one block type. Its library module is isolated from the core
-  binaries and subsystems; see [`docs/LEARNPICK.md`](LEARNPICK.md).
+- [`learnpick`](../src/bin/learnpick.rs) is a deprecated, optional
+  network-backed adviser that recommends one block type. Its library module is
+  isolated from the core binaries and subsystems. It is being redesigned as
+  `learnverify`; see [`docs/LEARNVERIFY_DESIGN.md`](LEARNVERIFY_DESIGN.md).
 
 For a first pass through the implementation, read these files in order:
 

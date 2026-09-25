@@ -15,18 +15,6 @@ learnc build lesson.json
 learn serve lesson.learn
 ```
 
-When the best presentation block is genuinely unclear, `learnpick` can advise
-on one teaching unit before authoring it:
-
-```console
-learnpick "Explain why this patch fixes the race"
-```
-
-Its `markdown`, `code`, `diff`, or `multiple_choice` result is optional guidance,
-not schema validation. If it is unavailable or uncertain, choose from the
-semantics below and continue; only `learnc schema` and `learnc check` are
-authoritative. See [`docs/LEARNPICK.md`](LEARNPICK.md) for its exact contract.
-
 Commands emit JSON by default, including `--help`, `--version`, and invalid
 usage. Add `--text` or `-t` for human-readable output; use `learnc -t --help`
 for the normal Clap help page.

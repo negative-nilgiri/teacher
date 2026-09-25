@@ -1,6 +1,6 @@
 ---
 name: learnc
-description: Author and compile interactive lesson DSL documents with the installed `learnc` binary, optionally using `learnpick` to choose a presentation block. Apply when an agent should turn code, diffs, explanations, or quiz material into a validated `.learn` artifact for the user to study later with `learn`; do not run the lesson runtime.
+description: Author and compile interactive lesson DSL documents with the installed `learnc` binary. Apply when an agent should turn code, diffs, explanations, or quiz material into a validated `.learn` artifact for the user to study later with `learn`; do not run the lesson runtime.
 ---
 
 # Learn Compiler
@@ -43,10 +43,6 @@ content.
   source over a hand-made patch. Any two revisions Git can resolve may be
   compared. Files owned by different repositories need separate diff blocks.
 - **Multiple choice** checks understanding at the point where it matters.
-
-If one teaching unit could plausibly use several block types, you may ask
-`learnpick "<one concise unit>"`. Treat its answer as advice only. If it fails
-or is ambiguous, choose manually. Never call it to confirm an obvious choice.
 
 ## Judgment lint cannot check
 

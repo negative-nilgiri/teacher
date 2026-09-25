@@ -1,8 +1,9 @@
 # `learnverify` design notes
 
 Status: **proposed, not implemented.** This records the agreed design so it can
-be reviewed and extended before implementation starts. Until then,
-[`LEARNPICK.md`](LEARNPICK.md) describes the binary that exists today.
+be reviewed and extended before implementation starts. The existing `learnpick`
+binary is deprecated and no longer documented; its code remains until this
+replacement is built.
 
 ## Purpose
 
@@ -107,8 +108,8 @@ group's `lines` when it has no annotation. The request's `state` holds:
 
 Of the three, `verify.annotation_contradicts_code` matters most: a wrong
 annotation teaches something false, while the other two only waste the
-learner's attention. Whether it deserves a lower warning threshold than the
-other checks is an open question.
+learner's attention. It therefore reaches `warning` at a lower probability
+than the other checks (see [Severity](#severity)).
 
 ### Later candidates
 
@@ -175,6 +176,10 @@ Each answer's probability for "yes" (a problem) maps to a severity:
 | from `min_info_probability` | `info` |
 | from `min_warning_probability` (default `0.85`) | `warning` |
 
+`verify.annotation_contradicts_code` is the one exception: it becomes a
+`warning` from `min_contradiction_warning_probability` (default `0.70`),
+because an annotation that is wrong about its code teaches something false.
+
 Verify findings are never `critical` or `error`: they are probabilistic
 judgments. With the default `--warning-as-error error`, they never make the
 command exit nonzero.
@@ -221,12 +226,14 @@ flags override file values.
 ```toml
 min_info_probability = 0.60
 min_warning_probability = 0.85
+min_contradiction_warning_probability = 0.70
 max_context_chars = 6000
 ignore_codes = []
 ```
 
-- `min_warning_probability` must be at least `min_info_probability`; both lie
-  in `[0, 1]`.
+- All probabilities lie in `[0, 1]`. `min_warning_probability` and
+  `min_contradiction_warning_probability` must each be at least
+  `min_info_probability`.
 - `ignore_codes` accepts only known `verify.` codes. Unlike lint, every verify
   code is ignorable, because none is stronger than `warning`.
 
@@ -257,8 +264,8 @@ skipped.
 - Remove block-type recommendation and its tests.
 - Keep the private HTTP client and its environment handling (including the
   trimming and configuration fixes already made).
-- Replace `LEARNPICK.md` with user-facing `LEARNVERIFY.md` when implemented;
-  this design note then becomes its rationale.
+- Write a user-facing `LEARNVERIFY.md` when implemented; this design note then
+  becomes its rationale.
 
 ## Open questions
 
@@ -274,6 +281,5 @@ skipped.
   the model so results stay comparable.
 - **Later checks.** Which of the candidates above to add next, and what context
   each needs.
-- **Per-check thresholds.** Whether some checks, such as
-  `verify.annotation_contradicts_code`, should reach `warning` at a lower
-  probability than the global `min_warning_probability`.
+- **More per-check thresholds.** `verify.annotation_contradicts_code` already
+  has its own warning threshold; whether other checks need one too.

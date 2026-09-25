@@ -7,7 +7,9 @@ The project ships three Rust binaries from one Cargo package:
 
 - `learnc` validates, lints, and compiles lesson sources.
 - `learn` serves a compiled artifact and owns learner-session state.
-- `learnpick` optionally recommends one block type for one teaching unit.
+- `learnpick` is a deprecated block-type adviser, to be replaced by the
+  `learnverify` lesson checker described in
+  [`docs/LEARNVERIFY_DESIGN.md`](docs/LEARNVERIFY_DESIGN.md).
 
 Agents generating lessons should start with the concise
 [`docs/AUTHORING.md`](docs/AUTHORING.md) guide and checked examples.
@@ -38,7 +40,7 @@ forwarding every supplied option to `learn serve`.
 All `lesson-check`, `lesson-lint`, `lesson-build`, and `serve` arguments are forwarded without
 interpretation. `just learnc ...` and `just learn ...` expose completely raw
 passthroughs to either core binary. `just learnpick ...` does the same for the
-optional adviser; see [`docs/LEARNPICK.md`](docs/LEARNPICK.md).
+deprecated adviser.
 The repository-backed example has real committed and dirty-worktree inputs;
 `just repository-example` creates that disposable Git fixture, compiles it, and
 serves it. See the [`examples` guide](examples/README.md) for the manual flow.
