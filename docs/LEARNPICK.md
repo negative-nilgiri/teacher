@@ -1,5 +1,8 @@
 # `learnpick` adviser
 
+> Planned replacement: `learnpick` is to become `learnverify`, a model-backed
+> lesson checker. See [`LEARNVERIFY_DESIGN.md`](LEARNVERIFY_DESIGN.md).
+
 `learnpick` is an optional agent-facing companion that recommends how one
 teaching unit should be represented in a lesson. It makes one TypeSafe System
 One Choice request and returns one of `markdown`, `code`, `diff`, or
