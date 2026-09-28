@@ -316,6 +316,14 @@ breaking change.
 - The cache key uses the requested model and the full request; entries expire
   after 24 hours (see [Cache](#cache)).
 - Every config key has a CLI flag; the request timeout stays at 10 seconds.
+- Four requests run at once, and a run's requests share a 20-second budget
+  (a constant, not a setting): the API is fast, so needing longer means
+  something went wrong. Requests not started by then, or cut off by it, are
+  reported in `verify.unavailable`; cache hits do not count. A 401 or 403
+  stops the rest.
+- No request cap: calls are cheap, so only time is bounded.
+- No model pinning: everything is experimental, and each finding already
+  records the resolved `model`.
 
 ## Open questions
 
@@ -323,12 +331,6 @@ breaking change.
   tables, each binary reading only its own table and staying strict inside it,
   would be safe. It would change the existing flat lint format, so it is left
   out unless a real need appears.
-- **Overall budget.** Four requests run at once with a 10-second timeout
-  each, and a 401 or 403 stops the rest. An overall time budget was left out;
-  add one if large lessons prove slow.
-- **Cost ceiling.** Whether to cap the number of requests per run.
-- **Model pinning.** `jev-latest` changes over time; whether to record or pin
-  the model so results stay comparable.
 - **Later checks.** Which of the candidates above to add next, and what context
   each needs.
 - **More per-check thresholds.** `verify.annotation_contradicts_code` already

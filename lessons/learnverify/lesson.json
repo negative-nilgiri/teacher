@@ -238,8 +238,8 @@
           "correct": true
         },
         {
-          "content": "Most learners would pick `choice_1` over the answer",
-          "explanation": "The probability is the model's confidence that `choice_1` has the problem, not a prediction of how learners answer."
+          "content": "The model thinks `choice_1` is the right answer",
+          "explanation": "Yes means the named target has the problem the question asks about; for `choice_N_implausible` that problem is being a giveaway, not being correct."
         },
         {
           "content": "`choice_1` could be defended as a right answer",
@@ -410,8 +410,8 @@
         {
           "lines": [
             {
-              "start": 219,
-              "end": 222
+              "start": 243,
+              "end": 246
             }
           ],
           "annotation": "At most four workers, each claiming the next request index, over one shared agent."
@@ -419,8 +419,22 @@
         {
           "lines": [
             {
-              "start": 226,
-              "end": 234
+              "start": 238,
+              "end": 238
+            },
+            {
+              "start": 250,
+              "end": 260
+            }
+          ],
+          "color": "blue",
+          "annotation": "One deadline per run: nothing starts after it, a running request gets only the time left, and a request cut off by it reports the budget."
+        },
+        {
+          "lines": [
+            {
+              "start": 262,
+              "end": 266
             }
           ],
           "color": "red",
@@ -429,8 +443,8 @@
         {
           "lines": [
             {
-              "start": 235,
-              "end": 235
+              "start": 267,
+              "end": 267
             }
           ],
           "color": "green",
@@ -441,8 +455,8 @@
         "kind": "file",
         "path": "src/learnverify/client.rs",
         "lines": {
-          "start": 214,
-          "end": 243
+          "start": 233,
+          "end": 276
         }
       }
     },
@@ -471,6 +485,32 @@
         "What does a worker check before calling `self.send`?"
       ],
       "explanation": "The first 401 or 403 is stored in `rejected`; every worker checks it before sending, so later requests get the same error, and grading reports them together in `verify.unavailable`."
+    },
+    {
+      "type": "multiple_choice",
+      "id": "run-budget",
+      "prompt": {
+        "kind": "inline",
+        "content": "Six requests miss the cache and the API never answers any of them. When does the run end, and how are the six blocks reported?"
+      },
+      "choices": [
+        {
+          "content": "After about 20 s, with all six in `verify.unavailable`",
+          "correct": true
+        },
+        {
+          "content": "After about 10 s, when the first four time out",
+          "explanation": "The last two requests start when the first four time out, at 10 s, and get the 10 s of budget that is left."
+        },
+        {
+          "content": "After about 40 s, after two rounds of full timeouts",
+          "explanation": "The second round only gets the time left in the 20 s budget, not a full 10 s each on top of it."
+        }
+      ],
+      "hints": [
+        "Work out when the fifth and sixth requests start and how much time they get."
+      ],
+      "explanation": "The first four requests hit the 10 s request timeout. The last two then start with 10 s of budget left and are cut off at 20 s. Every block ends up in one `verify.unavailable` finding, and the run ends after about 20 s."
     },
     {
       "type": "markdown",

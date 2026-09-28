@@ -8,6 +8,7 @@
 - **`SKILL.md` step 5**: agents follow it literally.
 
 Tests: 23 unit tests under `src/learnverify/`, and `tests/verify_contract.rs`,
-which runs the binary against a local fake TypeSafe server. Not covered: real
-API latency (the 10-second timeout is untested against the live service) and
-an overall time budget, which was deliberately left out.
+which runs the binary against a local fake TypeSafe server. The 20-second
+run budget is tested against a local server that never answers. Deliberately
+left out: a cap on the number of requests (calls are cheap) and model pinning
+(each finding records the resolved `model`).

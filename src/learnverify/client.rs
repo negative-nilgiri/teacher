@@ -6,7 +6,7 @@ use std::fmt;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,6 +18,9 @@ const MODEL_ENV: &str = "TYPESAFE_DEFAULT_MODEL";
 const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
 const DEFAULT_MODEL: &str = "jev-latest";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Time for all requests of one run. The API is fast, so a run that needs
+/// more than this means something went wrong.
+const RUN_BUDGET: Duration = Duration::from_secs(20);
 const IN_FLIGHT: usize = 4;
 
 /// Why some or all checks could not run.
@@ -29,6 +32,7 @@ pub(super) enum VerifyError {
     Api { status: u16 },
     Decode(String),
     InvalidResponse(String),
+    BudgetExceeded(Duration),
 }
 
 impl VerifyError {
@@ -55,6 +59,13 @@ impl fmt::Display for VerifyError {
             }
             Self::InvalidResponse(message) => {
                 write!(formatter, "invalid TypeSafe Choice response: {message}")
+            }
+            Self::BudgetExceeded(budget) => {
+                write!(
+                    formatter,
+                    "time budget of {} s exceeded",
+                    budget.as_secs_f64()
+                )
             }
         }
     }
@@ -179,7 +190,6 @@ impl Client {
     pub(super) fn new(endpoint: &Endpoint, api_key: &str) -> Self {
         Self {
             agent: Agent::config_builder()
-                .timeout_global(Some(REQUEST_TIMEOUT))
                 .http_status_as_error(false)
                 .build()
                 .into(),
@@ -188,10 +198,13 @@ impl Client {
         }
     }
 
-    fn send(&self, body: &Value) -> Result<Value, VerifyError> {
+    fn send(&self, body: &Value, timeout: Duration) -> Result<Value, VerifyError> {
         let mut response = self
             .agent
             .post(&self.url)
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
             .header("Authorization", &self.authorization)
             .send_json(body)
             .map_err(|error| VerifyError::Transport(error.to_string()))?;
@@ -210,8 +223,19 @@ impl Client {
     /// Send every body with at most `IN_FLIGHT` at once and return the raw
     /// responses in request order. The agent's connection pool is shared by
     /// the worker threads. A 401 or 403 stops the remaining requests, which
-    /// get the same error instead of a doomed call.
+    /// get the same error instead of a doomed call. All requests share
+    /// `RUN_BUDGET`: none starts after it ends, and a running one gets only the
+    /// time left.
     pub(super) fn send_all(&self, bodies: &[Value]) -> Vec<Result<Value, VerifyError>> {
+        self.send_all_within(bodies, RUN_BUDGET)
+    }
+
+    fn send_all_within(
+        &self,
+        bodies: &[Value],
+        budget: Duration,
+    ) -> Vec<Result<Value, VerifyError>> {
+        let deadline = Instant::now() + budget;
         let next = AtomicUsize::new(0);
         let rejected = OnceLock::<VerifyError>::new();
         let results = bodies.iter().map(|_| OnceLock::new()).collect::<Vec<_>>();
@@ -223,9 +247,17 @@ impl Client {
                         let Some(body) = bodies.get(index) else {
                             break;
                         };
+                        let left = deadline.saturating_duration_since(Instant::now());
                         let result = match rejected.get() {
                             Some(error) => Err(error.clone()),
-                            None => self.send(body),
+                            None if left.is_zero() => Err(VerifyError::BudgetExceeded(budget)),
+                            None => match self.send(body, left.min(REQUEST_TIMEOUT)) {
+                                // Cut short by the run's deadline, not by the request timeout.
+                                Err(VerifyError::Transport(_)) if Instant::now() >= deadline => {
+                                    Err(VerifyError::BudgetExceeded(budget))
+                                }
+                                result => result,
+                            },
                         };
                         if let Err(error) = &result
                             && error.is_credential_rejection()
@@ -289,6 +321,48 @@ mod tests {
             Answers::validate(json!({"answers": {}}), &["a"]),
             Err(VerifyError::Decode(_))
         ));
+    }
+
+    #[test]
+    fn the_run_budget_stops_slow_requests_and_skips_unstarted_ones() {
+        use std::io::Read;
+        use std::net::TcpListener;
+
+        // Accepts connections and never answers.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        thread::spawn(move || {
+            let mut open = Vec::new();
+            for mut stream in listener.incoming().flatten() {
+                let mut buffer = [0; 1024];
+                let _ = stream.read(&mut buffer);
+                open.push(stream);
+            }
+        });
+        let client = Client::new(
+            &Endpoint {
+                url,
+                model: "m".into(),
+            },
+            "key",
+        );
+        let bodies = vec![json!({}); IN_FLIGHT + 2];
+        let started = Instant::now();
+        let budget = Duration::from_millis(300);
+        let results = client.send_all_within(&bodies, budget);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(results.len(), bodies.len());
+        for result in results {
+            assert_eq!(result, Err(VerifyError::BudgetExceeded(budget)));
+        }
+        assert_eq!(
+            VerifyError::BudgetExceeded(RUN_BUDGET).to_string(),
+            "time budget of 20 s exceeded"
+        );
     }
 
     #[test]

@@ -137,9 +137,14 @@ opinion.
 
 ## Limits
 
-- Four requests run at once, each with a 10-second timeout; a timed-out block
-  is reported in `verify.unavailable`. An HTTP 401 or 403 stops the remaining
-  requests.
-- There is no overall time budget or request cap.
-- `jev-latest` changes over time; results are comparable only within the
-  cache lifetime or with a pinned `TYPESAFE_DEFAULT_MODEL`.
+- Four requests run at once, each with a 10-second timeout, and all of a
+  run's requests share a 20-second budget: none starts after it ends, and a
+  running one gets only the time left. Blocks cut off this way are reported
+  in `verify.unavailable` ("time budget of 20 s exceeded"). Cached answers do
+  not count against the budget. Both limits are constants in
+  `src/learnverify/client.rs`.
+- An HTTP 401 or 403 stops the remaining requests.
+- There is no cap on the number of requests: calls are cheap, so only time is
+  bounded.
+- `jev-latest` changes over time; each finding records the resolved `model`,
+  and `TYPESAFE_DEFAULT_MODEL` can select another one.
