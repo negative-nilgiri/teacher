@@ -45,7 +45,7 @@ web-test: web-install
 build: web-build
     cargo build
 
-# Install learnc, learn, and the optional learnpick adviser from this checkout.
+# Install learnc, learn, and the optional learnverify checker from this checkout.
 install: web-build
     cargo install --path . --locked --force
 
@@ -57,9 +57,9 @@ learnc *args: web-build
 learn *args: web-build
     cargo run --quiet --bin learn -- "$@"
 
-# Pass arbitrary arguments directly to the optional block-picker binary.
-learnpick *args: web-build
-    cargo run --quiet --bin learnpick -- "$@"
+# Pass arbitrary arguments directly to the optional semantic lesson checker.
+learnverify *args: web-build
+    cargo run --quiet --bin learnverify -- "$@"
 
 # Validate an authored lesson, forwarding every argument after `check`.
 lesson-check *args: web-build

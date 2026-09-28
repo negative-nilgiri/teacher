@@ -37,9 +37,14 @@ for required in \
     examples/run-repository-lesson.sh \
     src/bin/learn.rs \
     src/bin/learnc.rs \
-    src/bin/learnpick.rs \
-    src/learnpick.rs \
-    src/learnpick/client.rs \
+    src/bin/learnverify.rs \
+    src/learnverify.rs \
+    src/learnverify/cache.rs \
+    src/learnverify/checks.rs \
+    src/learnverify/client.rs \
+    src/learnverify/config.rs \
+    src/learnverify/grade.rs \
+    verify.example.toml \
     web/dist/favicon.svg \
     web/dist/index.html \
     tests/fixtures/smoke-lesson.json
@@ -79,22 +84,24 @@ PATH="$smoke_root/no-node:$PATH" cargo install \
 
 learn_bin="$smoke_root/cargo-root/bin/learn"
 learnc_bin="$smoke_root/cargo-root/bin/learnc"
-learnpick_bin="$smoke_root/cargo-root/bin/learnpick"
+learnverify_bin="$smoke_root/cargo-root/bin/learnverify"
 test -x "$learn_bin"
 test -x "$learnc_bin"
-test -x "$learnpick_bin"
+test -x "$learnverify_bin"
 "$learn_bin" --version >/dev/null
 "$learnc_bin" --version >/dev/null
-"$learnpick_bin" --version >/dev/null
+"$learnverify_bin" --version >/dev/null
 
+# Without credentials the semantic checks are skipped visibly and the run
+# succeeds. --no-cache keeps a cached answer from bypassing the credential path.
 set +e
-picker_output=$(env -u TYPESAFE_API_KEY "$learnpick_bin" \
-    "Explain why this source change matters" 2>/dev/null)
-picker_status=$?
+verify_output=$(env -u TYPESAFE_API_KEY "$learnverify_bin" --no-cache \
+    "$project_root/tests/fixtures/smoke-lesson.json" 2>/dev/null)
+verify_status=$?
 set -e
-if [[ "$picker_status" -eq 0 ]] \
-    || [[ "$picker_output" != *'"code":"learnpick.credentials.missing"'* ]]; then
-    echo "package smoke: learnpick did not report its missing credential structurally" >&2
+if [[ "$verify_status" -ne 0 ]] \
+    || [[ "$verify_output" != *'"code":"verify.unavailable"'* ]]; then
+    echo "package smoke: learnverify did not report skipped checks structurally" >&2
     exit 1
 fi
 

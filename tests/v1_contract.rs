@@ -24,8 +24,8 @@ fn learn() -> &'static str {
     env!("CARGO_BIN_EXE_learn")
 }
 
-fn learnpick() -> &'static str {
-    env!("CARGO_BIN_EXE_learnpick")
+fn learnverify() -> &'static str {
+    env!("CARGO_BIN_EXE_learnverify")
 }
 
 struct TempDir(PathBuf);
@@ -299,7 +299,7 @@ fn cli_help_version_and_usage_errors_follow_the_output_mode() {
     for (binary, name) in [
         (learnc(), "learnc"),
         (learn(), "learn"),
-        (learnpick(), "learnpick"),
+        (learnverify(), "learnverify"),
     ] {
         let help = output_success(Command::new(binary).arg("--help"));
         let help: serde_json::Value = serde_json::from_slice(&help.stdout).unwrap();
@@ -351,30 +351,34 @@ fn cli_help_version_and_usage_errors_follow_the_output_mode() {
 }
 
 #[test]
-fn learnpick_is_optional_agent_readable_and_source_isolated() {
-    let missing_credential = Command::new(learnpick())
-        .arg("Explain the final implementation of the parser")
+fn learnverify_is_optional_agent_readable_and_source_isolated() {
+    // Without credentials the checks are skipped visibly and the run succeeds.
+    let missing_credential = Command::new(learnverify())
+        .args(["--no-cache", "tests/fixtures/smoke-lesson.json"])
+        .current_dir(manifest_dir())
         .env_remove("TYPESAFE_API_KEY")
         .output()
         .unwrap();
-    assert!(!missing_credential.status.success());
+    assert!(missing_credential.status.success());
     let report: serde_json::Value = serde_json::from_slice(&missing_credential.stdout).unwrap();
-    assert_eq!(report["ok"], false);
-    assert_eq!(
-        report["diagnostics"][0]["code"],
-        "learnpick.credentials.missing"
-    );
+    assert_eq!(report["diagnostics"][0]["code"], "verify.unavailable");
+    assert_eq!(report["diagnostics"][0]["fatal"], false);
 
-    let empty = Command::new(learnpick()).arg("   ").output().unwrap();
-    assert!(!empty.status.success());
-    let report: serde_json::Value = serde_json::from_slice(&empty.stdout).unwrap();
-    assert_eq!(report["diagnostics"][0]["code"], "learnpick.unit.empty");
+    // A lesson that does not compile fails exactly as `learnc check` does.
+    let not_json = Command::new(learnverify())
+        .arg("lesson.learn")
+        .output()
+        .unwrap();
+    assert!(!not_json.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&not_json.stdout).unwrap();
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["diagnostics"][0]["code"], "compiler.input.not_json");
 
     let source_root = manifest_dir().join("src");
-    let allowed_file = source_root.join("bin/learnpick.rs");
+    let allowed_file = source_root.join("bin/learnverify.rs");
     let allowed_library_root = source_root.join("lib.rs");
-    let allowed_module = source_root.join("learnpick.rs");
-    let allowed_directory = source_root.join("learnpick");
+    let allowed_module = source_root.join("learnverify.rs");
+    let allowed_directory = source_root.join("learnverify");
     let mut pending = vec![source_root];
     while let Some(directory) = pending.pop() {
         for entry in fs::read_dir(directory).unwrap() {
@@ -393,8 +397,8 @@ fn learnpick_is_optional_agent_readable_and_source_isolated() {
             }
             let source = fs::read_to_string(&path).unwrap();
             assert!(
-                !source.contains("learnpick"),
-                "{} references the isolated learnpick module",
+                !source.contains("learnverify"),
+                "{} references the isolated learnverify module",
                 path.display()
             );
         }
@@ -1020,13 +1024,13 @@ fn cargo_install_smoke() {
         .path()
         .join("bin")
         .join(format!("learn{suffix}"));
-    let installed_learnpick = installation
+    let installed_learnverify = installation
         .path()
         .join("bin")
-        .join(format!("learnpick{suffix}"));
+        .join(format!("learnverify{suffix}"));
     assert!(installed_learnc.is_file());
     assert!(installed_learn.is_file());
-    assert!(installed_learnpick.is_file());
+    assert!(installed_learnverify.is_file());
     let schema = output_success(Command::new(installed_learnc).arg("schema"));
     let value: serde_json::Value = serde_json::from_slice(&schema.stdout).unwrap();
     assert_eq!(value["title"], "LessonSource");

@@ -1,6 +1,6 @@
 [package]
 name = "agent-teacher"
-version = "1.12.0"
+version = "1.13.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Compile and serve local, agent-authored interactive lessons"
@@ -31,10 +31,6 @@ path = "src/bin/learnc.rs"
 [[bin]]
 name = "learn"
 path = "src/bin/learn.rs"
-
-[[bin]]
-name = "learnpick"
-path = "src/bin/learnpick.rs"
 
 [[bin]]
 name = "learnverify"
