@@ -404,14 +404,66 @@
       }
     },
     {
+      "type": "markdown",
+      "id": "client",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/06b-client.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "send-until",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 245,
+              "end": 248
+            }
+          ],
+          "color": "blue",
+          "annotation": "No attempt starts after the run's deadline."
+        },
+        {
+          "lines": [
+            {
+              "start": 249,
+              "end": 250
+            }
+          ],
+          "color": "green",
+          "annotation": "Each attempt gets 2 s or the time left, whichever is shorter; a timed-out attempt is sent again."
+        },
+        {
+          "lines": [
+            {
+              "start": 251,
+              "end": 251
+            }
+          ],
+          "color": "red",
+          "annotation": "Any other result, success or failure, is returned at once."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/client.rs",
+        "lines": {
+          "start": 237,
+          "end": 254
+        }
+      }
+    },
+    {
       "type": "code",
       "id": "send-all",
       "highlights": [
         {
           "lines": [
             {
-              "start": 243,
-              "end": 246
+              "start": 277,
+              "end": 280
             }
           ],
           "annotation": "At most four workers, each claiming the next request index, over one shared agent."
@@ -419,22 +471,22 @@
         {
           "lines": [
             {
-              "start": 238,
-              "end": 238
+              "start": 272,
+              "end": 272
             },
             {
-              "start": 250,
-              "end": 260
+              "start": 286,
+              "end": 286
             }
           ],
           "color": "blue",
-          "annotation": "One deadline per run: nothing starts after it, a running request gets only the time left, and a request cut off by it reports the budget."
+          "annotation": "One deadline for the whole run, shared by every request and its retries."
         },
         {
           "lines": [
             {
-              "start": 262,
-              "end": 266
+              "start": 288,
+              "end": 292
             }
           ],
           "color": "red",
@@ -443,8 +495,8 @@
         {
           "lines": [
             {
-              "start": 267,
-              "end": 267
+              "start": 293,
+              "end": 293
             }
           ],
           "color": "green",
@@ -455,8 +507,8 @@
         "kind": "file",
         "path": "src/learnverify/client.rs",
         "lines": {
-          "start": 233,
-          "end": 276
+          "start": 266,
+          "end": 302
         }
       }
     },
@@ -488,6 +540,32 @@
     },
     {
       "type": "multiple_choice",
+      "id": "retry-timing",
+      "prompt": {
+        "kind": "inline",
+        "content": "A request's first two attempts stall, and the third is answered after 0.3 s. What happens to its block?"
+      },
+      "choices": [
+        {
+          "content": "It is graded after about 4.3 s",
+          "correct": true
+        },
+        {
+          "content": "It is graded after about 0.3 s",
+          "explanation": "Attempts of one request run one after another; each stalled one costs its full 2 s first."
+        },
+        {
+          "content": "It is reported unavailable after 2 s",
+          "explanation": "Only a non-timeout failure or the end of the 20 s budget stops the retries."
+        }
+      ],
+      "hints": [
+        "How long does `send_until` wait before it gives up on one attempt?"
+      ],
+      "explanation": "Each stalled attempt is abandoned after 2 s and the request is sent again: 2 + 2 + 0.3 s. That is well inside the 20 s budget, so the answer is validated, cached, and graded normally."
+    },
+    {
+      "type": "multiple_choice",
       "id": "run-budget",
       "prompt": {
         "kind": "inline",
@@ -499,18 +577,18 @@
           "correct": true
         },
         {
-          "content": "After about 10 s, when the first four time out",
-          "explanation": "The last two requests start when the first four time out, at 10 s, and get the 10 s of budget that is left."
+          "content": "After about 2 s, when the first attempts time out",
+          "explanation": "A timed-out attempt is sent again while the budget lasts, so the first four keep retrying until the deadline."
         },
         {
-          "content": "After about 40 s, after two rounds of full timeouts",
-          "explanation": "The second round only gets the time left in the 20 s budget, not a full 10 s each on top of it."
+          "content": "After about 40 s, when the last two finish retrying",
+          "explanation": "The last two only start at the deadline, so they fail at once instead of getting a budget of their own."
         }
       ],
       "hints": [
-        "Work out when the fifth and sixth requests start and how much time they get."
+        "Work out when the fifth and sixth requests start, and what `send_until` does then."
       ],
-      "explanation": "The first four requests hit the 10 s request timeout. The last two then start with 10 s of budget left and are cut off at 20 s. Every block ends up in one `verify.unavailable` finding, and the run ends after about 20 s."
+      "explanation": "The first four requests retry 2 s attempts until the 20 s deadline. Only then do workers claim the last two, which fail at once because no time is left. All six end up in one `verify.unavailable` finding, and the run ends after about 20 s."
     },
     {
       "type": "markdown",

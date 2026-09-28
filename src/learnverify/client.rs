@@ -17,9 +17,12 @@ const BASE_URL_ENV: &str = "TYPESAFE_BASE_URL";
 const MODEL_ENV: &str = "TYPESAFE_DEFAULT_MODEL";
 const DEFAULT_BASE_URL: &str = "https://api.typesafe.ai";
 const DEFAULT_MODEL: &str = "jev-latest";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-/// Time for all requests of one run. The API is fast, so a run that needs
-/// more than this means something went wrong.
+/// Time for one attempt. The API answers most requests in about 0.3 s but
+/// sometimes stalls for 13 s or more, so a slow attempt is abandoned and the
+/// request sent again rather than waited for.
+const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
+/// Time for all requests of one run, retries included. The API is fast, so a
+/// run that needs more than this means something went wrong.
 const RUN_BUDGET: Duration = Duration::from_secs(20);
 const IN_FLIGHT: usize = 4;
 
@@ -28,8 +31,12 @@ const IN_FLIGHT: usize = 4;
 pub(super) enum VerifyError {
     MissingApiKey,
     InvalidConfiguration(&'static str),
+    /// An attempt got no complete answer within its timeout.
+    Timeout,
     Transport(String),
-    Api { status: u16 },
+    Api {
+        status: u16,
+    },
     Decode(String),
     InvalidResponse(String),
     BudgetExceeded(Duration),
@@ -49,6 +56,7 @@ impl fmt::Display for VerifyError {
             Self::InvalidConfiguration(name) => {
                 write!(formatter, "{name} is set but empty or not valid UTF-8")
             }
+            Self::Timeout => formatter.write_str("TypeSafe request timed out"),
             Self::Transport(message) => write!(formatter, "TypeSafe request failed: {message}"),
             Self::Api { status } => write!(formatter, "TypeSafe API returned HTTP {status}"),
             Self::Decode(message) => {
@@ -207,7 +215,7 @@ impl Client {
             .build()
             .header("Authorization", &self.authorization)
             .send_json(body)
-            .map_err(|error| VerifyError::Transport(error.to_string()))?;
+            .map_err(transport_error)?;
         let status = response.status();
         if !status.is_success() {
             return Err(VerifyError::Api {
@@ -217,7 +225,32 @@ impl Client {
         response
             .body_mut()
             .read_json::<Value>()
-            .map_err(|error| VerifyError::Decode(error.to_string()))
+            .map_err(|error| match error {
+                ureq::Error::Timeout(_) => VerifyError::Timeout,
+                other => VerifyError::Decode(other.to_string()),
+            })
+    }
+
+    /// Send one request, resending it after each timed-out attempt until
+    /// `deadline`. Other failures are fast and deterministic, so they are
+    /// returned at once.
+    fn send_until(
+        &self,
+        body: &Value,
+        deadline: Instant,
+        budget: Duration,
+        attempt_timeout: Duration,
+    ) -> Result<Value, VerifyError> {
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(VerifyError::BudgetExceeded(budget));
+            }
+            match self.send(body, left.min(attempt_timeout)) {
+                Err(VerifyError::Timeout) => continue,
+                result => return result,
+            }
+        }
     }
 
     /// Send every body with at most `IN_FLIGHT` at once and return the raw
@@ -227,13 +260,14 @@ impl Client {
     /// `RUN_BUDGET`: none starts after it ends, and a running one gets only the
     /// time left.
     pub(super) fn send_all(&self, bodies: &[Value]) -> Vec<Result<Value, VerifyError>> {
-        self.send_all_within(bodies, RUN_BUDGET)
+        self.send_all_within(bodies, RUN_BUDGET, ATTEMPT_TIMEOUT)
     }
 
     fn send_all_within(
         &self,
         bodies: &[Value],
         budget: Duration,
+        attempt_timeout: Duration,
     ) -> Vec<Result<Value, VerifyError>> {
         let deadline = Instant::now() + budget;
         let next = AtomicUsize::new(0);
@@ -247,17 +281,9 @@ impl Client {
                         let Some(body) = bodies.get(index) else {
                             break;
                         };
-                        let left = deadline.saturating_duration_since(Instant::now());
                         let result = match rejected.get() {
                             Some(error) => Err(error.clone()),
-                            None if left.is_zero() => Err(VerifyError::BudgetExceeded(budget)),
-                            None => match self.send(body, left.min(REQUEST_TIMEOUT)) {
-                                // Cut short by the run's deadline, not by the request timeout.
-                                Err(VerifyError::Transport(_)) if Instant::now() >= deadline => {
-                                    Err(VerifyError::BudgetExceeded(budget))
-                                }
-                                result => result,
-                            },
+                            None => self.send_until(body, deadline, budget, attempt_timeout),
                         };
                         if let Err(error) = &result
                             && error.is_credential_rejection()
@@ -273,6 +299,13 @@ impl Client {
             .into_iter()
             .map(|cell| cell.into_inner().expect("every request index was claimed"))
             .collect()
+    }
+}
+
+fn transport_error(error: ureq::Error) -> VerifyError {
+    match error {
+        ureq::Error::Timeout(_) => VerifyError::Timeout,
+        other => VerifyError::Transport(other.to_string()),
     }
 }
 
@@ -323,20 +356,35 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn the_run_budget_stops_slow_requests_and_skips_unstarted_ones() {
-        use std::io::Read;
+    /// A local server that answers the `n`th connection (counting from 0)
+    /// with `respond(n)`, or never answers when it returns `None`. Returns the
+    /// client and the number of connections seen.
+    fn server(
+        respond: impl Fn(usize) -> Option<(u16, &'static str)> + Send + 'static,
+    ) -> (Client, std::sync::Arc<AtomicUsize>) {
+        use std::io::{Read, Write};
         use std::net::TcpListener;
 
-        // Accepts connections and never answers.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(AtomicUsize::new(0));
+        let counter = std::sync::Arc::clone(&seen);
         thread::spawn(move || {
-            let mut open = Vec::new();
+            let mut stalled = Vec::new();
             for mut stream in listener.incoming().flatten() {
-                let mut buffer = [0; 1024];
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                let mut buffer = [0; 4096];
                 let _ = stream.read(&mut buffer);
-                open.push(stream);
+                match respond(n) {
+                    Some((status, body)) => {
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 {status} S\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                    }
+                    None => stalled.push(stream),
+                }
             }
         });
         let client = Client::new(
@@ -346,10 +394,43 @@ mod tests {
             },
             "key",
         );
+        (client, seen)
+    }
+
+    #[test]
+    fn timed_out_attempts_are_resent_but_other_failures_are_not() {
+        let (client, seen) = server(|n| (n >= 2).then_some((200, "{\"ok\":true}")));
+        let started = Instant::now();
+        let results = client.send_all_within(
+            &[json!({})],
+            Duration::from_secs(5),
+            Duration::from_millis(200),
+        );
+        assert_eq!(results, [Ok(json!({"ok": true}))]);
+        assert_eq!(seen.load(Ordering::SeqCst), 3);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+
+        let (client, seen) = server(|_| Some((503, "{}")));
+        let results = client.send_all_within(
+            &[json!({})],
+            Duration::from_secs(5),
+            Duration::from_millis(200),
+        );
+        assert_eq!(results, [Err(VerifyError::Api { status: 503 })]);
+        assert_eq!(seen.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn the_run_budget_stops_slow_requests_and_skips_unstarted_ones() {
+        let (client, _) = server(|_| None);
         let bodies = vec![json!({}); IN_FLIGHT + 2];
         let started = Instant::now();
         let budget = Duration::from_millis(300);
-        let results = client.send_all_within(&bodies, budget);
+        let results = client.send_all_within(&bodies, budget, Duration::from_millis(100));
         assert!(
             started.elapsed() < Duration::from_secs(3),
             "{:?}",

@@ -315,8 +315,13 @@ breaking change.
   [Failure behavior](#failure-behavior)).
 - The cache key uses the requested model and the full request; entries expire
   after 24 hours (see [Cache](#cache)).
-- Every config key has a CLI flag; the request timeout stays at 10 seconds.
-- Four requests run at once, and a run's requests share a 20-second budget
+- Every config key has a CLI flag.
+- Each attempt gets 2 seconds and a timed-out attempt is sent again. The
+  TypeSafe API answers most requests in about 0.3 s, but about a third stall
+  for 13 s or more regardless of client, request size, or concurrency; a
+  10-second request timeout turned those into skipped blocks. Other failures
+  are fast and deterministic and are not retried.
+- Four requests run at once, and a run's attempts share a 20-second budget
   (a constant, not a setting): the API is fast, so needing longer means
   something went wrong. Requests not started by then, or cut off by it, are
   reported in `verify.unavailable`; cache hits do not count. A 401 or 403

@@ -137,11 +137,14 @@ opinion.
 
 ## Limits
 
-- Four requests run at once, each with a 10-second timeout, and all of a
-  run's requests share a 20-second budget: none starts after it ends, and a
-  running one gets only the time left. Blocks cut off this way are reported
-  in `verify.unavailable` ("time budget of 20 s exceeded"). Cached answers do
-  not count against the budget. Both limits are constants in
+- Four requests run at once. Each attempt gets 2 seconds: the API answers
+  most requests in about 0.3 s but sometimes stalls for much longer, so a
+  timed-out attempt is sent again instead of waited for. Other failures (an
+  HTTP error status, a refused connection) are not retried.
+- All of a run's attempts share a 20-second budget: none starts after it ends,
+  and a running one gets only the time left. Blocks still unanswered are
+  reported in `verify.unavailable` ("time budget of 20 s exceeded"). Cached
+  answers do not count against the budget. Both durations are constants in
   `src/learnverify/client.rs`.
 - An HTTP 401 or 403 stops the remaining requests.
 - There is no cap on the number of requests: calls are cheap, so only time is
