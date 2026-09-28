@@ -7,9 +7,9 @@ The project ships three Rust binaries from one Cargo package:
 
 - `learnc` validates, lints, and compiles lesson sources.
 - `learn` serves a compiled artifact and owns learner-session state.
-- `learnpick` is a deprecated block-type adviser, to be replaced by the
-  `learnverify` lesson checker described in
-  [`docs/LEARNVERIFY_DESIGN.md`](docs/LEARNVERIFY_DESIGN.md).
+- `learnverify` is an optional checker that asks the TypeSafe API about likely
+  semantic mistakes in a lesson's quizzes and highlights; see
+  [`docs/LEARNVERIFY.md`](docs/LEARNVERIFY.md).
 
 Agents generating lessons should start with the concise
 [`docs/AUTHORING.md`](docs/AUTHORING.md) guide and checked examples.
@@ -39,8 +39,8 @@ For local development, `just run --open --text` rebuilds the UI, compiles
 forwarding every supplied option to `learn serve`.
 All `lesson-check`, `lesson-lint`, `lesson-build`, and `serve` arguments are forwarded without
 interpretation. `just learnc ...` and `just learn ...` expose completely raw
-passthroughs to either core binary. `just learnpick ...` does the same for the
-deprecated adviser.
+passthroughs to either core binary. `just learnverify ...` does the same for the
+optional semantic checker.
 The repository-backed example has real committed and dirty-worktree inputs;
 `just repository-example` creates that disposable Git fixture, compiles it, and
 serves it. See the [`examples` guide](examples/README.md) for the manual flow.
@@ -56,6 +56,13 @@ results. Pass `--config path/to/lint.toml` for a partial config file, or set
 individual thresholds with flags such as `--max-code-lines 40`; CLI flags take
 precedence over the file. See [`config.example.toml`](config.example.toml) for
 all settings and [`docs/LINT_DESIGN.md`](docs/LINT_DESIGN.md) for the rules.
+
+`learnverify lesson.json` is optional and needs `TYPESAFE_API_KEY`. It compiles
+the lesson like `learnc check`, then reports model-judged findings (a hint that
+gives the answer away, an annotation that contradicts its code, ...) in lint's
+format. It never fails because the API is unavailable; it reports
+`verify.unavailable` instead. It takes its own config file,
+[`verify.example.toml`](verify.example.toml).
 
 ## Package contract
 

@@ -119,6 +119,12 @@ fatality is calculated. Individual `info` rules can be switched off with
 `--ignore-code <CODE>` or the TOML `ignore_codes` list; other severities cannot
 be ignored by code. These options do not affect compilation validity.
 
+After lint, the optional `learnverify lesson.json` asks the TypeSafe API
+yes/no questions about each quiz and highlighted code block (does a hint give
+the answer away, is a distractor a giveaway, does an annotation contradict its
+code, ...). Its findings use lint's format and are advice only; see
+[`LEARNVERIFY.md`](LEARNVERIFY.md).
+
 Thresholds can be overridden with CLI flags, an explicitly selected TOML file,
 or both:
 

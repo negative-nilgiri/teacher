@@ -7,8 +7,10 @@ places that must change when the format or runtime grows.
 This guide, [`docs/AUTHORING.md`](AUTHORING.md) (the lesson format), and
 [`docs/LINT_DESIGN.md`](LINT_DESIGN.md) (authoring-policy lint) together define
 the accepted behavior. [`docs/LEARNVERIFY_DESIGN.md`](LEARNVERIFY_DESIGN.md)
-records a proposed, not yet implemented, model-backed lesson checker. Lesson authors should use `AUTHORING.md`; this document is
-for people changing the compiler, artifact, server, or frontend.
+records the rationale of the optional model-backed lesson checker documented
+in [`docs/LEARNVERIFY.md`](LEARNVERIFY.md). Lesson authors should use
+`AUTHORING.md`; this document is for people changing the compiler, artifact,
+server, or frontend.
 
 ## Start here
 
@@ -18,10 +20,11 @@ The project is one Cargo package with three binaries:
   validates and freezes everything, and optionally writes a `.learn` artifact.
 - [`learn`](../src/bin/learn.rs) reads only a compiled artifact, owns the learner
   session, and serves the embedded React application on loopback.
-- [`learnpick`](../src/bin/learnpick.rs) is a deprecated, optional
-  network-backed adviser that recommends one block type. Its library module is
-  isolated from the core binaries and subsystems. It is being redesigned as
-  `learnverify`; see [`docs/LEARNVERIFY_DESIGN.md`](LEARNVERIFY_DESIGN.md).
+- [`learnverify`](../src/bin/learnverify.rs) is an optional, network-backed
+  checker that asks the TypeSafe API yes/no questions about a compiled
+  lesson's quizzes and highlights and reports likely semantic mistakes in
+  lint's diagnostic format. Its library module is isolated from the core
+  binaries and subsystems; see [`docs/LEARNVERIFY.md`](LEARNVERIFY.md).
 
 For a first pass through the implementation, read these files in order:
 
@@ -78,8 +81,9 @@ effect of a feature.
   disabled in Markdown. Launch tokens, CSRF protection, hostile-artifact limits,
   and symlink hardening are not v1 goals. Revisit this before `learn` holds
   credentials, talks to an agent or LLM, accepts third-party artifacts, listens
-  beyond loopback, or serves several users. `learnpick` holds an API key, which
-  is why it is a separate optional binary that nothing core depends on.
+  beyond loopback, or serves several users. `learnverify` holds an API key and
+  sends lesson content to TypeSafe, which is why it is a separate optional
+  binary that nothing core depends on.
 
 ## System map
 
@@ -98,12 +102,13 @@ flowchart LR
     Runtime["learn<br/>artifact loader + session"]
     Api["Loopback HTTP API<br/>shared truth"]
     Browser["Embedded React UI<br/>drafts + presentation"]
-    Picker["learnpick<br/>optional block advice"]
+    Verifier["learnverify<br/>optional semantic checks"]
     Jev["TypeSafe Jev API"]
 
     Agent --> Source
     Agent --> Repo
-    Agent --> Picker --> Jev --> Picker
+    Agent --> Verifier --> Jev --> Verifier
+    Source --> Verifier
     Source --> Compiler
     Repo --> Compiler
     Compiler --> Artifact
@@ -126,18 +131,20 @@ flowchart LR
     class Artifact artifact
     class Runtime,Api runtime
     class Browser browser
-    class Picker,Jev optional
+    class Verifier,Jev optional
 ```
 
 The boundary between `learnc` and `learn` is deliberate. Only the compiler
 reads repositories or invokes Git. The runtime receives resolved content and
 never reopens the lesson source or worktree.
 
-The `learnpick` path is deliberately one-way and optional. `src/lib.rs` exposes
-the module and `src/bin/learnpick.rs` calls it, but `learnc`, `learn`, and all
-compiler, runtime, source, artifact, and repository modules have no dependency
-on it. A picker or API failure therefore cannot affect validation, compilation,
-artifacts, or study sessions.
+The `learnverify` path is deliberately one-way and optional. `src/lib.rs`
+exposes the module and `src/bin/learnverify.rs` calls it. It reuses the
+compiler pipeline and lint's lesson loading, source spans, and diagnostic
+rendering, but `learnc`, `learn`, and all compiler, runtime, source, artifact,
+repository, and lint modules have no dependency on it. A checker or API
+failure therefore cannot affect validation, compilation, lint, artifacts, or
+study sessions; it becomes a `verify.unavailable` finding instead.
 
 ## Repository map
 
@@ -153,9 +160,9 @@ artifacts, or study sessions.
 | [`src/lint/`](../src/lint) | Separate authoring-policy rules, thresholds, editable source spans, and lint diagnostics. |
 | [`src/artifact/mod.rs`](../src/artifact/mod.rs) | Versioned serialized contract shared by compiler and runtime. |
 | [`src/bin/learn.rs`](../src/bin/learn.rs) | Runtime CLI and startup/error output. |
-| [`src/bin/learnpick.rs`](../src/bin/learnpick.rs) | Optional adviser CLI and JSON/text result projection. |
-| [`src/learnpick.rs`](../src/learnpick.rs) | Optional block-choice request/response semantics exposed by the library and used by its binary. |
-| [`src/learnpick/`](../src/learnpick) | Private synchronous TypeSafe HTTP client. |
+| [`src/bin/learnverify.rs`](../src/bin/learnverify.rs) | Optional semantic checker CLI, flags, and JSON/text report output. |
+| [`src/learnverify.rs`](../src/learnverify.rs) | Checker entry point: compile, plan requests, use the cache, send misses, grade. |
+| [`src/learnverify/`](../src/learnverify) | Request planning and question wording, TypeSafe client, answer cache, config, and grading. |
 | [`src/runtime/`](../src/runtime) | Artifact loading, public projection, session state, API, and embedded asset serving. |
 | [`web/src/`](../web/src) | React application and the TypeScript mirror of the public API. |
 | [`web/src/languages.ts`](../web/src/languages.ts) | Frontend language display names and statically imported Highlight.js grammars. |
@@ -297,7 +304,7 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.12.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.13.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.2.0` | [`SchemaVersion`](../src/source/model.rs) |
 | Artifact schema | `1.3.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
@@ -582,7 +589,7 @@ line to discover the random URL before waiting on the long-running server.
 | `just install` | Rebuilds `web/dist`, then installs all three binaries from this checkout. |
 | `just learnc [args...]` | Passes arbitrary arguments directly to the compiler binary. |
 | `just learn [args...]` | Passes arbitrary arguments directly to the runtime binary. |
-| `just learnpick [args...]` | Passes arbitrary arguments directly to the optional adviser. |
+| `just learnverify [args...]` | Passes arbitrary arguments directly to the optional semantic checker. |
 | `just lesson-check [args...]` | Runs `learnc check` with untouched arguments and options. |
 | `just lesson-lint [args...]` | Runs `learnc lint` with untouched arguments and options. |
 | `just lesson-build [args...]` | Runs `learnc build` with untouched arguments and options. |
@@ -629,8 +636,13 @@ Tests are layered so failures identify the responsible boundary:
   [`web/src/test/App.test.tsx`](../web/src/test/App.test.tsx).
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
   schema fixtures, repository builds, selected diffs, moved refs, live HTTP quiz
-  state, private-data projection, production assets, picker CLI output, and the
-  picker isolation invariant.
+  state, private-data projection, production assets, checker CLI output, and the
+  checker isolation invariant.
+- Checker planning, client validation, cache, config, and grading tests live
+  under [`src/learnverify/`](../src/learnverify);
+  [`tests/verify_contract.rs`](../tests/verify_contract.rs) runs the binary
+  against a local fake TypeSafe server (requests, findings, cache, failures,
+  exit status).
 - [`scripts/package-smoke.sh`](../scripts/package-smoke.sh) verifies the final
   consumer workflow from crate assembly through installed server responses.
 

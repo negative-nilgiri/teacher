@@ -1,9 +1,9 @@
 # `learnverify` design notes
 
-Status: **proposed, not implemented.** This records the agreed design so it can
-be reviewed and extended before implementation starts. The existing `learnpick`
-binary is deprecated and no longer documented; its code remains until this
-replacement is built.
+Status: **implemented** in package 1.13.0, which also removed `learnpick`.
+User-facing behavior is documented in [`LEARNVERIFY.md`](LEARNVERIFY.md); this
+note records the rationale. [Decisions made during review](#decisions-made-during-review)
+lists where the implementation refined the first draft.
 
 ## Purpose
 
@@ -43,6 +43,7 @@ learnverify [OPTIONS] lesson.json
 | `--warning-as-error <SEVERITY>` | Same semantics as lint; default `error`, so verify findings never fail the run by default. |
 | `--ignore-below <SEVERITY>` | Same semantics as lint. |
 | `--ignore-code <CODE>` | Repeatable; suppresses one verify code. |
+| `--min-info-probability`, `--min-warning-probability`, `--min-contradiction-warning-probability`, `--max-context-chars` | Override the matching config value, as every lint threshold has a flag. |
 | `--no-cache` | Ignore and do not write cached answers. |
 | `-t`, `--text` | Human-readable, Rustc-like output instead of JSON. |
 
@@ -67,8 +68,11 @@ be merged into one list by an agent. Locations point at the editable span in
 
 ### First set: quiz checks
 
-One request per `multiple_choice` block asks all four questions at once (the
-Jev API accepts several questions per request, keyed by ID).
+One request per `multiple_choice` block asks all of its questions at once (the
+Jev API accepts several questions per request, keyed by ID). Each check is
+asked once per item it concerns: `hint_N_reveals_answer` per hint,
+`choice_N_defensible` and `choice_N_implausible` per distractor, and one
+`explanation_contradicts_answer`.
 
 | Code | Question | "Yes" means | Suggestion |
 | --- | --- | --- | --- |
@@ -77,9 +81,12 @@ Jev API accepts several questions per request, keyed by ID).
 | `verify.multiple_defensible_choices` | Could a careful learner defend a second choice as correct? | The question is ambiguous. | Tighten the prompt or rewrite the second choice so exactly one answer is defensible. |
 | `verify.implausible_distractor` | Is any distractor obviously wrong without understanding the material? | A choice is a giveaway (joke, off-topic, grammatically mismatched). | Replace it with a realistic misconception, nearby API, or believable consequence. |
 
-Where a question concerns one specific hint or choice, the answer options
-include that item so the finding can point at it (for example, the choice ID
-of the implausible distractor), not only at the whole question.
+Asking per item, rather than one question whose answer names an item, keeps
+probabilities independent: two giveaway distractors each get their own
+probability instead of splitting one distribution (0.45 each, both under the
+threshold). Every question names its exact target, and "yes" always means that
+target has the problem; the `focus` line and both criteria say so again. Quizzes
+without hints get no hint questions.
 
 ### Second set: highlight checks
 
@@ -92,19 +99,22 @@ group.
 
 | Code | Applies to | Question | "Yes" means | Suggestion |
 | --- | --- | --- | --- | --- |
-| `verify.annotation_does_not_explain` | Annotated group | Does the annotation fail to explain what the highlighted lines do or why they matter? | It restates the code, stays vague ("the important part", "see here"), or only names the color or line numbers. | Say what these lines do and why the learner should look at them. |
+| `verify.annotation_does_not_explain` | Annotated group | Is the annotation vague, a restatement of the code, or only a reference to its color or line numbers? | It restates the code, stays vague ("the important part", "see here"), or only names the color or line numbers. | Say what these lines do and why the learner should look at them. |
 | `verify.annotation_contradicts_code` | Annotated group | Does the annotation describe behavior the highlighted lines do not have? | The annotation is factually wrong about the code it points at (for example, it names another function or the opposite condition). | Correct the annotation, or move the highlight to the lines it describes. |
 | `verify.highlight_unexplained` | Group without annotation | Is it unclear why these lines are highlighted, given the caption and the adjacent Markdown? | Nothing near the block says why these lines matter, so the highlight directs attention without a reason. | Add an `annotation`, or explain the lines in the Markdown next to the block. |
 
 Findings point at the group's `annotation` in `lesson.json`, or at the
 group's `lines` when it has no annotation. The request's `state` holds:
 
-- the displayed code with its source-file line numbers (`first_line`) and
-  language;
-- each highlight group: color, ranges in source-file lines, the text of the
-  highlighted lines, and the annotation (or `null`);
-- the block's caption and the Markdown blocks immediately before and after it,
-  since an unannotated highlight is often explained there.
+- the displayed code with a source-file line number on every line
+  (`numbered_content`), because models count lines badly, plus `first_line`
+  and language;
+- each highlight group: color, ranges in source-file lines each with the
+  verbatim text of its lines, and the annotation (or `null`);
+- the block's caption and the Markdown blocks directly before and after it
+  (only when that neighbour is Markdown), since an unannotated highlight is
+  often explained there. The neighbours share `max_context_chars`, the one
+  before first; the code itself is never truncated.
 
 Of the three, `verify.annotation_contradicts_code` matters most: a wrong
 annotation teaches something false, while the other two only waste the
@@ -123,32 +133,44 @@ These need more thought about which context to send:
 
 ## Request shape
 
-Each request sends one quiz and its local context as `state`, and defines each
-check as a choice question with explicit criteria:
+The request concerns a lesson that happens to contain a quiz or a highlighted
+code block, so `state` is an excerpt of the lesson in authored order, with
+`subject` naming the block under review:
 
 ```json
 {
   "model": "jev-latest",
   "state": {
-    "quiz": {
-      "prompt": "What does `pop_front` return?",
-      "choices": [
-        { "id": "a", "content": "The oldest item", "correct": true },
-        { "id": "b", "content": "The newest item", "correct": false }
-      ],
-      "hints": ["Think about FIFO ordering."],
-      "explanation": "A queue removes the oldest item first."
+    "lesson": {
+      "title": "Why queue removal changed",
+      "excerpt": [
+        { "id": "fifo-intro", "kind": "markdown", "content": "..." },
+        { "id": "queue-impl", "kind": "code", "path": "src/queue.rs", "language": "rust", "first_line": 40, "content": "..." },
+        {
+          "id": "check-order",
+          "kind": "multiple_choice",
+          "prompt": "What does `pop_front` return?",
+          "choices": [
+            { "id": "choice_0", "content": "The oldest item", "correct": true },
+            { "id": "choice_1", "content": "The newest item", "correct": false,
+              "explanation": "That is stack (LIFO) behavior." }
+          ],
+          "hints": [{ "id": "hint_0", "content": "Think about FIFO ordering." }],
+          "explanation": "A queue removes the oldest item first."
+        }
+      ]
     },
-    "context": [
-      { "kind": "code", "path": "src/queue.rs", "first_line": 40, "content": "..." }
-    ]
+    "subject": "check-order"
   },
   "questions": {
-    "hint_reveals_answer": {
+    "choice_1_implausible": {
       "type": "choice",
-      "instructions": { "question": "Does any hint name or directly imply the correct choice?" },
+      "instructions": {
+        "question": "In the multiple-choice block named by `subject`, is `choice_1` obviously wrong to someone who has not understood the material?",
+        "focus": "... Yes means it is a giveaway that anyone could eliminate, which is a problem."
+      },
       "criteria": {
-        "yes": { "what": "...", "not_for": "..." },
+        "yes": { "what": "... This is a problem.", "not_for": "..." },
         "no": { "what": "...", "not_for": "..." }
       }
     }
@@ -156,15 +178,21 @@ check as a choice question with explicit criteria:
 }
 ```
 
-- `context` holds the compiled code and diff blocks of the quiz's local
-  teaching unit: the blocks between the previous question (or the lesson start)
-  and this one, capped at a configurable size. The compiled artifact already
-  holds the resolved text, so no repository access is needed.
-- Criteria wording is versioned in the binary (`check_version`), because
+- A quiz's excerpt is its local teaching unit: the Markdown, code, and diff
+  blocks back to the previous question (or the lesson start). A run of
+  adjacent questions shares one unit, so a question right after another is
+  not left without context. Blocks are kept nearest-first up to
+  `max_context_chars`; the block that crosses the limit is truncated with a
+  marker and older ones are dropped. The compiled artifact already holds the
+  resolved text, so no repository access is needed.
+- Choices come from the authored source in authored order, because the
+  compiled artifact shuffles them without recording the original order; only
+  the resolved prompt text comes from the artifact.
+- Criteria wording is versioned in the binary (`CHECK_VERSION`), because
   changing it changes answers and must invalidate the cache.
-- Highlight checks use the same envelope with a different `state` (see
-  [Second set: highlight checks](#second-set-highlight-checks)): one code block
-  and its highlight groups instead of one quiz.
+- Highlight checks use the same envelope; their excerpt is the adjacent
+  Markdown and the code block (see
+  [Second set: highlight checks](#second-set-highlight-checks)).
 
 ## Severity
 
@@ -191,11 +219,13 @@ an invalid response, `learnverify` reports **one** `info` finding,
 `verify.unavailable`, whose message names the reason (for example
 "semantic checks skipped: TypeSafe API returned HTTP 503"), and exits
 successfully. Silence would be indistinguishable from "no problems found", so
-the skipped run is always visible. A lesson that fails compilation is still a
-nonzero exit with compiler diagnostics, as in lint.
+the skipped run is always visible: `verify.unavailable` is a status, not a
+check, so `--ignore-below`, `--ignore-code`, and `ignore_codes` never hide it,
+and it is never fatal whatever `--warning-as-error` says. A lesson that fails
+compilation is still a nonzero exit with compiler diagnostics, as in lint.
 
 Partial failures report the checks that succeeded plus one `verify.unavailable`
-listing the quizzes that could not be checked.
+with a related location for each quiz or code block that could not be checked.
 
 ## Cache
 
@@ -208,13 +238,20 @@ from flickering between runs.
   created with `0700` permissions and ignored if it is owned by another user.
   It holds lesson text and code, so it must not be world-readable. Quizzes are not long
   lived; losing the cache on reboot or temp cleanup only costs a new request.
-- **Key:** SHA-256 of `check_version`, the resolved model, and the exact
-  `state` sent (one quiz plus its context, or one code block plus its
-  highlights and neighbouring prose). Builds are reproducible, so an unchanged
-  quiz or code block always produces the same key.
-- **Value:** the raw Jev answers (probabilities per question), not findings.
-  Changing a threshold or `ignore_codes` re-grades cached answers without new
-  requests.
+- **Key:** SHA-256 of `CHECK_VERSION`, the endpoint, and the exact request
+  body: the model name *as requested*, the `state`, and every question. The
+  resolved model name is only known from the response, so it cannot be part
+  of the lookup; it is stored in the entry instead. Hashing the questions
+  means a wording change can never serve stale answers. Builds are
+  reproducible, so an unchanged quiz or code block always produces the same
+  key.
+- **Value:** the resolved model and the raw Jev answers (probabilities per
+  question), not findings. Changing a threshold or `ignore_codes` re-grades
+  cached answers without new requests.
+- **Lifetime:** 24 hours, so a moving alias such as `jev-latest` cannot serve
+  old answers indefinitely. Entries are written atomically with `0600`
+  permissions; corrupt or incomplete entries count as misses.
+- The API key is only needed for requests that miss the cache.
 - `--no-cache` bypasses it for a fresh opinion.
 
 ## Configuration
@@ -234,8 +271,11 @@ ignore_codes = []
 - All probabilities lie in `[0, 1]`. `min_warning_probability` and
   `min_contradiction_warning_probability` must each be at least
   `min_info_probability`.
-- `ignore_codes` accepts only known `verify.` codes. Unlike lint, every verify
-  code is ignorable, because none is stronger than `warning`.
+- `ignore_codes` accepts only the seven check codes. Unlike lint, every check
+  is ignorable, because none is stronger than `warning`; `verify.unavailable`
+  is not a check and is rejected.
+- Every key also has a CLI flag, and the packaged `verify.example.toml` lists
+  every key with its default.
 
 The verify config is a **separate file** from the lint config. Lint's TOML is
 flat and rejects unknown keys to catch typos, so verify keys in the same file
@@ -260,12 +300,22 @@ skipped.
 
 ## Migration from `learnpick`
 
-- Rename the binary, library module, docs, and `just` recipe to `learnverify`.
-- Remove block-type recommendation and its tests.
-- Keep the private HTTP client and its environment handling (including the
-  trimming and configuration fixes already made).
-- Write a user-facing `LEARNVERIFY.md` when implemented; this design note then
-  becomes its rationale.
+Done in 1.13.0: the binary, library module, and `just` recipe were replaced,
+block-type recommendation and its tests removed, and the private HTTP client
+kept with its environment handling. Removing `learnpick` is not treated as a
+breaking change.
+
+## Decisions made during review
+
+- One yes/no question per hint, distractor, and highlight group, with "yes"
+  always meaning a problem (see [First set](#first-set-quiz-checks)).
+- `state` is a lesson excerpt with a `subject`, not a bare quiz, and quiz
+  context includes the teaching unit's Markdown (see [Request shape](#request-shape)).
+- `verify.unavailable` cannot be hidden and is never fatal (see
+  [Failure behavior](#failure-behavior)).
+- The cache key uses the requested model and the full request; entries expire
+  after 24 hours (see [Cache](#cache)).
+- Every config key has a CLI flag; the request timeout stays at 10 seconds.
 
 ## Open questions
 
@@ -273,9 +323,9 @@ skipped.
   tables, each binary reading only its own table and staying strict inside it,
   would be safe. It would change the existing flat lint format, so it is left
   out unless a real need appears.
-- **Concurrency and budget.** Requests are independent per quiz; a small pool
-  (for example four in flight) with a per-request timeout and an overall time
-  budget keeps large lessons responsive.
+- **Overall budget.** Four requests run at once with a 10-second timeout
+  each, and a 401 or 403 stops the rest. An overall time budget was left out;
+  add one if large lessons prove slow.
 - **Cost ceiling.** Whether to cap the number of requests per run.
 - **Model pinning.** `jev-latest` changes over time; whether to record or pin
   the model so results stay comparable.

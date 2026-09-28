@@ -23,7 +23,13 @@ browser. Use the installed `learnc` binary, not `cargo run` or a substitute.
    prose or a question that no code block shows). If an `info` rule only
    produces noise for this lesson, rerun with `--ignore-code <CODE>` for that
    code and mention it to the user. Only `info` codes can be ignored this way.
-5. Run `learnc build`, report the lesson and artifact paths, and stop.
+5. If `learnverify` is installed, run `learnverify lesson.json` (same `--root`).
+   It sends quiz and highlight content to the TypeSafe API. Treat `warning`
+   findings like lint warnings (fix, or tell the user why the exception is
+   intentional) and `info` findings as advice; `probability` says how sure the
+   model was. If it reports `verify.unavailable`, continue without it and tell
+   the user the semantic checks were skipped.
+6. Run `learnc build`, report the lesson and artifact paths, and stop.
 
 Keep every diagnostic's code, pointer, message, and suggestion when reporting a
 failure. Never replace a missing file, revision, or repository with guessed
