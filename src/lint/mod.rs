@@ -5,14 +5,15 @@ mod rules;
 mod span;
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::ValueEnum;
 use serde::Serialize;
 
+use crate::artifact::CompiledLesson;
 use crate::compiler::{CompileOptions, compile};
 use crate::diagnostics::Diagnostic;
-use crate::source;
+use crate::source::{self, LessonSource, SchemaVersion};
 
 pub use config::LintConfig;
 pub use span::{Position, SourceLocation, SpanIndex};
@@ -22,6 +23,34 @@ pub fn lint_file(
     options: &CompileOptions,
     config: &LintConfig,
 ) -> Result<Vec<LintDiagnostic>, Vec<Diagnostic>> {
+    let lesson = load_lesson(lesson_path, options, "learnc lint")?;
+    Ok(rules::collect(
+        &lesson.source,
+        &lesson.artifact,
+        &lesson.spans,
+        &lesson.root,
+        config,
+    ))
+}
+
+/// A lesson that passed the complete `check` pipeline, with everything needed
+/// to point findings at editable source spans.
+pub(crate) struct LoadedLesson {
+    pub(crate) source: LessonSource,
+    pub(crate) artifact: CompiledLesson,
+    pub(crate) spans: SpanIndex,
+    /// Absolute filesystem root that authored paths are relative to.
+    pub(crate) root: PathBuf,
+}
+
+/// Read and compile `lesson_path` exactly as `learnc check` does, then index
+/// the original JSON for source spans. `command` names the caller in the
+/// suggestion given for a non-JSON input.
+pub(crate) fn load_lesson(
+    lesson_path: &Path,
+    options: &CompileOptions,
+    command: &str,
+) -> Result<LoadedLesson, Vec<Diagnostic>> {
     if lesson_path.extension().and_then(|value| value.to_str()) != Some("json") {
         return Err(vec![
             Diagnostic::error(
@@ -29,7 +58,7 @@ pub fn lint_file(
                 "",
                 "lesson source must be a .json file; compiled .learn artifacts are not accepted",
             )
-            .with_suggestion("Pass the authored lesson JSON to `learnc lint`."),
+            .with_suggestion(format!("Pass the authored lesson JSON to `{command}`.")),
         ]);
     }
     let input = fs::read_to_string(lesson_path).map_err(|error| {
@@ -40,8 +69,9 @@ pub fn lint_file(
         )]
     })?;
     let artifact = compile(&input, options)?;
-    let source = source::parse_and_validate(&input)
-        .expect("compilation already validated the same source text");
+    let (source, _) = source::parse_and_validate(&input)
+        .expect("compilation already validated the same source text")
+        .into_parts();
     let absolute_lesson = if lesson_path.is_absolute() {
         lesson_path.to_path_buf()
     } else {
@@ -50,18 +80,33 @@ pub fn lint_file(
     let spans = SpanIndex::new(&input, absolute_lesson)
         .map_err(|message| vec![Diagnostic::error("lint.source_span.internal", "", message)])?;
     let root = options.root.as_deref().unwrap_or(&options.current_dir);
-    let absolute_root = if root.is_absolute() {
+    let root = if root.is_absolute() {
         root.to_path_buf()
     } else {
         options.current_dir.join(root)
     };
-    Ok(rules::collect(
-        source.source(),
-        &artifact,
-        &spans,
-        &absolute_root,
-        config,
-    ))
+    Ok(LoadedLesson {
+        source,
+        artifact,
+        spans,
+        root,
+    })
+}
+
+/// Pointer to a quiz prompt's editable text. Schemas before 2.0.0 author the
+/// prompt as a plain string rather than a Markdown source object.
+pub(crate) fn prompt_pointer(schema_version: SchemaVersion, index: usize) -> String {
+    if matches!(
+        schema_version,
+        SchemaVersion::V1_0_0
+            | SchemaVersion::V1_1_0
+            | SchemaVersion::V1_2_0
+            | SchemaVersion::V1_3_0
+    ) {
+        format!("/blocks/{index}/prompt")
+    } else {
+        format!("/blocks/{index}/prompt/content")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, ValueEnum)]
@@ -75,7 +120,7 @@ pub enum Severity {
 }
 
 impl Severity {
-    const fn rank(self) -> u8 {
+    pub(crate) const fn rank(self) -> u8 {
         match self {
             Self::Error => 4,
             Self::Critical => 3,
@@ -170,46 +215,59 @@ impl LintReport {
     pub fn text(&self) -> String {
         let mut output = String::new();
         for finding in &self.diagnostics {
-            output.push_str(&format!(
-                "{}[{}]: {}\n --> {}:{}:{}\n",
-                finding.severity.as_str(),
-                finding.code,
-                finding.message,
-                finding.location.path,
-                finding.location.start.line,
-                finding.location.start.column,
-            ));
-            if let Ok(source) = fs::read_to_string(&finding.location.path)
-                && let Some(line) = source.lines().nth(finding.location.start.line - 1)
-            {
-                let width = finding
-                    .location
-                    .end
-                    .column
-                    .saturating_sub(finding.location.start.column)
-                    .clamp(1, 80);
-                let number = finding.location.start.line.to_string();
-                let gutter = " ".repeat(number.len());
-                output.push_str(&format!(
-                    "{gutter} |\n{number} | {}\n{gutter} | {}{}\n",
-                    line,
-                    " ".repeat(finding.location.start.column.saturating_sub(1)),
-                    "^".repeat(width),
-                ));
-            }
-            for related in &finding.related {
-                output.push_str(&format!(
-                    "  = related: {} at {}:{}:{}\n",
-                    related.message,
-                    related.location.path,
-                    related.location.start.line,
-                    related.location.start.column,
-                ));
-            }
-            output.push_str(&format!("  = help: {}\n", finding.suggestion));
+            write_finding_text(&mut output, finding, None);
         }
         output
     }
+}
+
+/// Render one finding as Rustc-like text, with an optional `= note:` line
+/// before its suggestion.
+pub(crate) fn write_finding_text(
+    output: &mut String,
+    finding: &LintDiagnostic,
+    note: Option<&str>,
+) {
+    output.push_str(&format!(
+        "{}[{}]: {}\n --> {}:{}:{}\n",
+        finding.severity.as_str(),
+        finding.code,
+        finding.message,
+        finding.location.path,
+        finding.location.start.line,
+        finding.location.start.column,
+    ));
+    if let Ok(source) = fs::read_to_string(&finding.location.path)
+        && let Some(line) = source.lines().nth(finding.location.start.line - 1)
+    {
+        let width = finding
+            .location
+            .end
+            .column
+            .saturating_sub(finding.location.start.column)
+            .clamp(1, 80);
+        let number = finding.location.start.line.to_string();
+        let gutter = " ".repeat(number.len());
+        output.push_str(&format!(
+            "{gutter} |\n{number} | {}\n{gutter} | {}{}\n",
+            line,
+            " ".repeat(finding.location.start.column.saturating_sub(1)),
+            "^".repeat(width),
+        ));
+    }
+    for related in &finding.related {
+        output.push_str(&format!(
+            "  = related: {} at {}:{}:{}\n",
+            related.message,
+            related.location.path,
+            related.location.start.line,
+            related.location.start.column,
+        ));
+    }
+    if let Some(note) = note {
+        output.push_str(&format!("  = note: {note}\n"));
+    }
+    output.push_str(&format!("  = help: {}\n", finding.suggestion));
 }
 
 #[cfg(test)]

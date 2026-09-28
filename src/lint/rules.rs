@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::artifact::{CompiledLesson, CompiledNodeContent};
 use crate::language::Language;
-use crate::source::{Block, CodeSource, DiffSource, LessonSource, MarkdownSource, SchemaVersion};
+use crate::source::{Block, CodeSource, DiffSource, LessonSource, MarkdownSource};
 
 use super::{LintConfig, LintDiagnostic, Severity, SourceLocation, SpanIndex};
 
@@ -87,17 +87,7 @@ pub(super) fn collect(
             }
             (Block::MultipleChoice(block), CompiledNodeContent::MultipleChoice { .. }) => {
                 if let MarkdownSource::Inline { content } = &block.prompt {
-                    let pointer = if matches!(
-                        source.schema_version,
-                        SchemaVersion::V1_0_0
-                            | SchemaVersion::V1_1_0
-                            | SchemaVersion::V1_2_0
-                            | SchemaVersion::V1_3_0
-                    ) {
-                        format!("/blocks/{index}/prompt")
-                    } else {
-                        format!("/blocks/{index}/prompt/content")
-                    };
+                    let pointer = super::prompt_pointer(source.schema_version, index);
                     rules.inline_size_at(
                         index,
                         content,
@@ -659,13 +649,6 @@ impl Rules<'_> {
     /// Markdown the learner reads alongside code: Markdown blocks, captions,
     /// highlight annotations, quiz prompts, and hints.
     fn scanned_texts(&self) -> Vec<(usize, String, TextPlace)> {
-        let legacy_prompt = matches!(
-            self.source.schema_version,
-            SchemaVersion::V1_0_0
-                | SchemaVersion::V1_1_0
-                | SchemaVersion::V1_2_0
-                | SchemaVersion::V1_3_0
-        );
         let mut texts = Vec::new();
         for (index, (block, node)) in self
             .source
@@ -718,11 +701,7 @@ impl Rules<'_> {
                     Block::MultipleChoice(block),
                     CompiledNodeContent::MultipleChoice { prompt, .. },
                 ) => {
-                    let pointer = if legacy_prompt {
-                        format!("{base}/prompt")
-                    } else {
-                        format!("{base}/prompt/content")
-                    };
+                    let pointer = super::prompt_pointer(self.source.schema_version, index);
                     texts.push((
                         index,
                         prompt.clone(),
