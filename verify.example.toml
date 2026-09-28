@@ -1,0 +1,19 @@
+# Example configuration for `learnverify --config verify.example.toml lesson.json`.
+# Delete any setting you do not want to override; omitted settings use defaults.
+# CLI flags such as --min-warning-probability 0.9 take precedence over this file.
+# This file is separate from the lint config: learnc lint rejects these keys.
+
+# Report a finding when the model's probability of a problem reaches this value (0 to 1).
+min_info_probability = 0.60
+# Report it as a warning from this probability; must be at least min_info_probability.
+min_warning_probability = 0.85
+# Warning threshold for verify.annotation_contradicts_code, lower because a wrong
+# annotation teaches something false; must be at least min_info_probability.
+min_contradiction_warning_probability = 0.70
+
+# Maximum characters of surrounding lesson content sent with each request.
+max_context_chars = 6000
+
+# Check codes to suppress, such as "verify.implausible_distractor".
+# verify.unavailable cannot be suppressed; --ignore-code CODE adds to this list.
+ignore_codes = []

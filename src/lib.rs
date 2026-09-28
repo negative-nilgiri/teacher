@@ -13,6 +13,7 @@ pub mod compiler;
 pub mod diagnostics;
 pub mod language;
 pub mod learnpick;
+pub mod learnverify;
 pub mod lint;
 pub mod repository;
 pub mod runtime;
