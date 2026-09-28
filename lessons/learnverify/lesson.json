@@ -1,0 +1,730 @@
+{
+  "schema_version": "2.2.0",
+  "title": "Reviewing learnverify",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "overview",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/01-overview.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "run-flow",
+      "caption": "Only cache misses reach the API; cached answers are re-graded locally with the current thresholds.",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/flow.mmd"
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "shared-loading",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/02-lint.md"
+      }
+    },
+    {
+      "type": "diff",
+      "id": "lint-load-lesson",
+      "source": {
+        "kind": "git",
+        "base": "5c6f5e4",
+        "target": {
+          "kind": "revision",
+          "revision": "HEAD"
+        },
+        "files": [
+          {
+            "path": "src/lint/mod.rs",
+            "after_lines": {
+              "start": 21,
+              "end": 110
+            }
+          }
+        ],
+        "context_lines": 5
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "load-lesson-command",
+      "prompt": {
+        "kind": "inline",
+        "content": "Why does `load_lesson` take a `command` argument?"
+      },
+      "choices": [
+        {
+          "content": "So the non-JSON error names the binary to rerun",
+          "correct": true
+        },
+        {
+          "content": "So learnverify can skip the full compile step",
+          "explanation": "Both callers get the complete `check` pipeline; there is no way to skip it."
+        },
+        {
+          "content": "So each caller picks its own compile options",
+          "explanation": "Compile options are the separate `options` parameter."
+        }
+      ],
+      "hints": [
+        "Find where `command` is used inside `load_lesson`."
+      ],
+      "explanation": "`command` only appears in the suggestion of the `compiler.input.not_json` error, so `learnc lint` and `learnverify` each tell the author which command to pass the lesson JSON to."
+    },
+    {
+      "type": "markdown",
+      "id": "planning",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/03-planning.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "unit-context",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 163,
+              "end": 166
+            }
+          ],
+          "annotation": "Step back over a run of questions directly before this one, so adjacent questions share the unit before them."
+        },
+        {
+          "lines": [
+            {
+              "start": 167,
+              "end": 171
+            }
+          ],
+          "color": "green",
+          "annotation": "Collect the non-question blocks back to the previous question, nearest block first."
+        },
+        {
+          "lines": [
+            {
+              "start": 180,
+              "end": 181
+            }
+          ],
+          "color": "blue",
+          "annotation": "Spend the `max_chars` budget nearest-first; `context_entry` truncates the block that crosses it, and older blocks are dropped."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/checks.rs",
+        "lines": {
+          "start": 161,
+          "end": 186
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "shared-unit",
+      "prompt": {
+        "kind": "inline",
+        "content": "A lesson is A (Markdown), Q1 (quiz), B (Markdown), C (code), Q2 (quiz), Q3 (quiz). Which blocks go before Q3 in its excerpt?"
+      },
+      "choices": [
+        {
+          "content": "B and C, the unit it shares with Q2",
+          "correct": true
+        },
+        {
+          "content": "None, since Q2 comes right before Q3",
+          "explanation": "The first loop steps back over Q2 before collecting, precisely so a second question in a row keeps its context."
+        },
+        {
+          "content": "A, B and C, every block before it",
+          "explanation": "The second loop stops at the previous question with a gap, Q1, so A belongs to another unit."
+        }
+      ],
+      "hints": [
+        "Trace the two `while` loops with `question_index` pointing at Q3."
+      ],
+      "explanation": "The first loop moves the cursor from Q3 past Q2; the second collects C and B and stops at Q1. They are reversed into lesson order: B, C, then Q3."
+    },
+    {
+      "type": "markdown",
+      "id": "wording",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/04-wording.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "check-codes",
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/checks.rs",
+        "lines": {
+          "start": 46,
+          "end": 56
+        }
+      }
+    },
+    {
+      "type": "code",
+      "id": "question-wording",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 487,
+              "end": 494
+            }
+          ],
+          "annotation": "Every question is a two-option Choice question, and both `yes` and `no` get a `what` and a `not_for`."
+        },
+        {
+          "lines": [
+            {
+              "start": 504,
+              "end": 506
+            }
+          ],
+          "color": "green",
+          "annotation": "The question names its exact target, `hint_0`, never “any hint”."
+        },
+        {
+          "lines": [
+            {
+              "start": 507,
+              "end": 509
+            }
+          ],
+          "color": "blue",
+          "annotation": "The focus line restricts the judgment to this hint and states that yes means a problem."
+        },
+        {
+          "lines": [
+            {
+              "start": 511,
+              "end": 511
+            }
+          ],
+          "color": "red",
+          "annotation": "The `yes` criterion describes the problem itself and ends with “This is a problem.”"
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/checks.rs",
+        "lines": {
+          "start": 474,
+          "end": 519
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "yes-meaning",
+      "prompt": {
+        "kind": "inline",
+        "content": "The API returns P(yes) = 0.9 for `choice_1_implausible`. What does the model claim?"
+      },
+      "choices": [
+        {
+          "content": "`choice_1` is a giveaway anyone could eliminate",
+          "correct": true
+        },
+        {
+          "content": "Most learners would pick `choice_1` over the answer",
+          "explanation": "The probability is the model's confidence that `choice_1` has the problem, not a prediction of how learners answer."
+        },
+        {
+          "content": "`choice_1` could be defended as a right answer",
+          "explanation": "That is a different question, `choice_1_defensible`, reported as `verify.multiple_defensible_choices`."
+        }
+      ],
+      "hints": [
+        "What does “yes” mean in every learnverify question?"
+      ],
+      "explanation": "Yes always means the named target has the problem the question describes. For `choice_N_implausible` that problem is a distractor so obviously wrong it teaches nothing; 0.9 reaches `warning` (default threshold 0.85)."
+    },
+    {
+      "type": "markdown",
+      "id": "highlight-state",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/05-highlights.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "highlight-helpers",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 374,
+              "end": 374
+            }
+          ],
+          "annotation": "Every displayed line gets its right-aligned source-file number, so the model never counts lines."
+        },
+        {
+          "lines": [
+            {
+              "start": 392,
+              "end": 396
+            }
+          ],
+          "color": "green",
+          "annotation": "Compiled ranges are fragment-relative; they are mapped back to source-file lines and sent with their text."
+        },
+        {
+          "lines": [
+            {
+              "start": 417,
+              "end": 420
+            }
+          ],
+          "color": "blue",
+          "annotation": "Only a Markdown neighbour counts as surrounding prose; code or a quiz next to the block means none."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/checks.rs",
+        "lines": {
+          "start": 364,
+          "end": 421
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "range-mapping",
+      "prompt": {
+        "kind": "inline",
+        "content": "A code block shows lines 40 to 60 of a file, and a highlight's compiled range starts at 3. Which `start` does the request send?"
+      },
+      "choices": [
+        {
+          "content": "42",
+          "correct": true
+        },
+        {
+          "content": "3",
+          "explanation": "That is the fragment-relative position stored in the artifact, which the author never wrote."
+        },
+        {
+          "content": "43",
+          "explanation": "That forgets that both numbers are one-based, so one must be subtracted."
+        }
+      ],
+      "hints": [
+        "Look at how `start` is computed in `group_state`."
+      ],
+      "explanation": "`first_line + range.start - 1` = 40 + 3 - 1 = 42: the third displayed line is line 42 of the file, the number the author used in `lesson.json`."
+    },
+    {
+      "type": "markdown",
+      "id": "requests",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/06-requests.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "answer-lookup",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 70,
+              "end": 73
+            }
+          ],
+          "annotation": "Endpoint and model are read without the API key, so cached answers need no credentials."
+        },
+        {
+          "lines": [
+            {
+              "start": 89,
+              "end": 99
+            }
+          ],
+          "color": "green",
+          "annotation": "Cache lookup; an entry that does not answer every question counts as a miss."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify.rs",
+        "lines": {
+          "start": 65,
+          "end": 99
+        }
+      }
+    },
+    {
+      "type": "code",
+      "id": "answer-misses",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 104,
+              "end": 110
+            }
+          ],
+          "color": "blue",
+          "annotation": "The key is only required when something missed, and its absence only affects those blocks."
+        },
+        {
+          "lines": [
+            {
+              "start": 124,
+              "end": 127
+            }
+          ],
+          "color": "red",
+          "annotation": "Only validated answers are written to the cache."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify.rs",
+        "lines": {
+          "start": 101,
+          "end": 132
+        }
+      }
+    },
+    {
+      "type": "code",
+      "id": "send-all",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 219,
+              "end": 222
+            }
+          ],
+          "annotation": "At most four workers, each claiming the next request index, over one shared agent."
+        },
+        {
+          "lines": [
+            {
+              "start": 226,
+              "end": 234
+            }
+          ],
+          "color": "red",
+          "annotation": "After a 401 or 403, requests not yet started fail with the same error instead of calling the API."
+        },
+        {
+          "lines": [
+            {
+              "start": 235,
+              "end": 235
+            }
+          ],
+          "color": "green",
+          "annotation": "Results are stored by index, so they come back in request order."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/client.rs",
+        "lines": {
+          "start": 214,
+          "end": 243
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "credential-rejection",
+      "prompt": {
+        "kind": "inline",
+        "content": "Six requests miss the cache and the first response is HTTP 401. What happens to requests that have not started yet?"
+      },
+      "choices": [
+        {
+          "content": "They fail with the same 401 without being sent",
+          "correct": true
+        },
+        {
+          "content": "They are retried once over a new connection",
+          "explanation": "There is no retry; a rejected key would be rejected again."
+        },
+        {
+          "content": "The run stops and exits with a nonzero status",
+          "explanation": "API trouble never fails the run; it becomes one `verify.unavailable` finding."
+        }
+      ],
+      "hints": [
+        "What does a worker check before calling `self.send`?"
+      ],
+      "explanation": "The first 401 or 403 is stored in `rejected`; every worker checks it before sending, so later requests get the same error, and grading reports them together in `verify.unavailable`."
+    },
+    {
+      "type": "markdown",
+      "id": "cache",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/07-cache.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "cache-key",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 31,
+              "end": 36
+            }
+          ],
+          "annotation": "Check version, endpoint, and exact body, length-prefixed so two parts can never run together."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/cache.rs",
+        "lines": {
+          "start": 26,
+          "end": 43
+        }
+      }
+    },
+    {
+      "type": "code",
+      "id": "cache-directory",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 59,
+              "end": 64
+            }
+          ],
+          "annotation": "Created with `0700` so no one else can list or read it."
+        },
+        {
+          "lines": [
+            {
+              "start": 70,
+              "end": 75
+            }
+          ],
+          "color": "red",
+          "annotation": "`symlink_metadata` never follows a link another user could have planted in a shared `/tmp`."
+        },
+        {
+          "lines": [
+            {
+              "start": 76,
+              "end": 81
+            }
+          ],
+          "color": "blue",
+          "annotation": "Must be owned by the current user with no group or other permission bits, or the cache is disabled."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/cache.rs",
+        "lines": {
+          "start": 57,
+          "end": 83
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "requested-model",
+      "prompt": {
+        "kind": "inline",
+        "content": "Why is the cache key built from the requested model name, such as `jev-latest`, rather than the resolved one?"
+      },
+      "choices": [
+        {
+          "content": "The resolved name is only known after the request",
+          "correct": true
+        },
+        {
+          "content": "The resolved name would leak the account's plan",
+          "explanation": "The response only names a model version; nothing about the account is involved."
+        },
+        {
+          "content": "Requested names change less often than resolved",
+          "explanation": "Stability is not the reason; a moving alias is exactly why entries expire after 24 hours."
+        }
+      ],
+      "hints": [
+        "When does learnverify first see a name like `jev-1.13.0`?"
+      ],
+      "explanation": "The key is needed before any request, to look the answer up. The resolved name only comes back in the response, so it is stored inside the entry and reported from there."
+    },
+    {
+      "type": "markdown",
+      "id": "grading",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/08-grading.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "severity",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 127,
+              "end": 131
+            }
+          ],
+          "annotation": "The contradiction check gets its own, lower warning threshold (0.70 by default)."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/grade.rs",
+        "lines": {
+          "start": 126,
+          "end": 139
+        }
+      }
+    },
+    {
+      "type": "code",
+      "id": "report-filtering",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 50,
+              "end": 54
+            }
+          ],
+          "annotation": "`--ignore-below` never removes `verify.unavailable`."
+        },
+        {
+          "lines": [
+            {
+              "start": 55,
+              "end": 59
+            }
+          ],
+          "color": "red",
+          "annotation": "`verify.unavailable` is never fatal, whatever `--warning-as-error` says."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/grade.rs",
+        "lines": {
+          "start": 39,
+          "end": 62
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "strict-unavailable",
+      "prompt": {
+        "kind": "inline",
+        "content": "`learnverify --warning-as-error info lesson.json` runs while the API answers every request with HTTP 503. What is the result?"
+      },
+      "choices": [
+        {
+          "content": "Exit 0 with one `verify.unavailable` finding",
+          "correct": true
+        },
+        {
+          "content": "Exit 1, because that info finding is now fatal",
+          "explanation": "`verify.unavailable` is a status, not a check, and is never fatal."
+        },
+        {
+          "content": "Exit 0 with an empty list of diagnostics",
+          "explanation": "Silence would look like “no problems found”, so the skip is always reported."
+        }
+      ],
+      "hints": [
+        "Read the `map` closure in `from_findings`."
+      ],
+      "explanation": "Every block failed, so grading produces one `verify.unavailable` finding naming HTTP 503. `from_findings` keeps it and sets `fatal` to false, so the run exits successfully and the agent sees the checks were skipped."
+    },
+    {
+      "type": "markdown",
+      "id": "migration",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/09-migration.md"
+      }
+    },
+    {
+      "type": "diff",
+      "id": "smoke-probe",
+      "source": {
+        "kind": "git",
+        "base": "5c6f5e4",
+        "target": {
+          "kind": "revision",
+          "revision": "HEAD"
+        },
+        "files": [
+          {
+            "path": "scripts/package-smoke.sh",
+            "after_lines": {
+              "start": 95,
+              "end": 106
+            }
+          }
+        ],
+        "context_lines": 1
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "smoke-no-cache",
+      "prompt": {
+        "kind": "inline",
+        "content": "Why does the smoke probe pass `--no-cache` to `learnverify`?"
+      },
+      "choices": [
+        {
+          "content": "A cached answer would skip the missing-key path",
+          "correct": true
+        },
+        {
+          "content": "The installed binary cannot open the temp directory",
+          "explanation": "The installed binary uses the normal cache; nothing prevents it from opening the directory."
+        },
+        {
+          "content": "Release builds of learnverify disable the cache",
+          "explanation": "There is no build-specific cache behavior; the cache works the same in every build."
+        }
+      ],
+      "hints": [
+        "When is `TYPESAFE_API_KEY` read at all?"
+      ],
+      "explanation": "The key is only read for cache misses. On a machine that already checked the smoke lesson, a cached answer would be graded without ever reaching the missing-key path, and `verify.unavailable` would not appear."
+    },
+    {
+      "type": "markdown",
+      "id": "review",
+      "source": {
+        "kind": "file",
+        "path": "lessons/learnverify/10-review.md"
+      }
+    }
+  ]
+}

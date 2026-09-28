@@ -1,0 +1,26 @@
+flowchart LR
+    Agent["Authoring agent"]
+    Lesson["lesson.json"]
+    Load["load_lesson<br/>same pipeline as learnc check"]
+    Plan["plan<br/>one job per quiz or highlighted block"]
+    Cache["answer cache<br/>per user, 24 h"]
+    Jev["TypeSafe Jev API"]
+    Grade["grade<br/>P(yes) to severity"]
+    Report["diagnostics<br/>lint shape + probability"]
+
+    Agent --> Lesson --> Load --> Plan
+    Plan --> Cache
+    Plan -->|"cache miss"| Jev
+    Cache --> Grade
+    Jev --> Grade
+    Grade --> Report --> Agent
+
+    classDef actor fill:#e7e5e4,stroke:#78716c,color:#1c1917
+    classDef core fill:#d1fae5,stroke:#059669,color:#064e3b
+    classDef verifier fill:#e0e7ff,stroke:#6366f1,color:#1e1b4b
+    classDef external fill:#fde68a,stroke:#b45309,color:#451a03
+
+    class Agent,Lesson actor
+    class Load core
+    class Plan,Cache,Grade,Report verifier
+    class Jev external
