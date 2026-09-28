@@ -40,7 +40,6 @@ for required in \
     src/bin/learnpick.rs \
     src/learnpick.rs \
     src/learnpick/client.rs \
-    docs/LEARNPICK.md \
     web/dist/favicon.svg \
     web/dist/index.html \
     tests/fixtures/smoke-lesson.json
