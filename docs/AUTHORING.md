@@ -104,7 +104,8 @@ diff source over 256 decoded characters, inline Markdown or quiz prompt over
 512 characters, or a diff that presents a new file is a lint `error` by default.
 Other rules cover code language and length, highlights, filename context,
 answer-choice balance, question frequency, questions with three or more choices
-but no hints or with unexplained distractors, names formatted as code in prose but
+but no hints or with unexplained distractors, diff hunks that are mostly
+additions, names formatted as code in prose but
 never shown in a code or diff block, and Mermaid `subgraph`/`style` use in
 flowcharts and class diagrams. The
 complete rule and threshold table is in [`LINT_DESIGN.md`](LINT_DESIGN.md).

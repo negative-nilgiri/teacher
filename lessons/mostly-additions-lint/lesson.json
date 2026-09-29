@@ -1,0 +1,238 @@
+{
+  "schema_version": "2.2.0",
+  "title": "Reviewing the mostly-additions lint",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "overview",
+      "source": {
+        "kind": "file",
+        "path": "lessons/mostly-additions-lint/01-overview.md"
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "rule",
+      "source": {
+        "kind": "file",
+        "path": "lessons/mostly-additions-lint/02-rule.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "rule-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 413,
+              "end": 415
+            }
+          ],
+          "annotation": "New files and Markdown from Git sources are skipped."
+        },
+        {
+          "lines": [
+            {
+              "start": 417,
+              "end": 426
+            }
+          ],
+          "color": "green",
+          "annotation": "A Git source points at the file's own selection; a patch points at the whole source."
+        },
+        {
+          "lines": [
+            {
+              "start": 438,
+              "end": 441
+            }
+          ],
+          "color": "blue",
+          "annotation": "Skip hunks with too few additions or too many deletions for their size."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/lint/rules.rs",
+        "lines": {
+          "start": 403,
+          "end": 442
+        }
+      }
+    },
+    {
+      "type": "code",
+      "id": "suggestion-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 452,
+              "end": 461
+            }
+          ],
+          "annotation": "A Git source is narrowed with `before_lines`/`after_lines`; the code block uses `git_blob` at the target revision, or `file` for the worktree."
+        },
+        {
+          "lines": [
+            {
+              "start": 462,
+              "end": 466
+            }
+          ],
+          "color": "green",
+          "annotation": "A patch cannot be narrowed by fields, so the hunk is cut, and either code source may fit."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/lint/rules.rs",
+        "lines": {
+          "start": 450,
+          "end": 481
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "which-hunk",
+      "prompt": {
+        "kind": "inline",
+        "content": "With the defaults, which hunk does `lint.diff.mostly_additions` report?"
+      },
+      "choices": [
+        {
+          "content": "30 lines added and 3 lines deleted",
+          "correct": true
+        },
+        {
+          "content": "30 lines added and 4 lines deleted",
+          "explanation": "4 is more than 30 × 0.10 = 3, so this hunk changes enough existing code to stay a diff."
+        },
+        {
+          "content": "19 lines added and no lines deleted",
+          "explanation": "19 is below the minimum of 20 added lines, so the hunk is small enough to read as a diff."
+        }
+      ],
+      "hints": [
+        "Compare the deletions with `added × diff_max_deletion_ratio`."
+      ],
+      "explanation": "30 additions meet the minimum of 20, and 3 deletions do not exceed 30 × 0.10 = 3, so the hunk is reported. The comparison is strict: only more than 3 deletions keeps it quiet."
+    },
+    {
+      "type": "multiple_choice",
+      "id": "which-source",
+      "prompt": {
+        "kind": "inline",
+        "content": "The rule reports a hunk in a Git diff whose target is the revision named main. Which code block does the suggestion ask for?"
+      },
+      "choices": [
+        {
+          "content": "A `git_blob` code source at revision main",
+          "correct": true
+        },
+        {
+          "content": "A `file` code source showing the worktree",
+          "explanation": "The worktree may differ from main, so the code block could show other code than the diff; `file` is suggested only for worktree targets."
+        },
+        {
+          "content": "A `git_blob` code source at the base revision",
+          "explanation": "The base is the diff's before side; the added lines exist only on the after side."
+        }
+      ],
+      "hints": [
+        "Which version of the file contains the added lines?"
+      ],
+      "explanation": "The added lines exist on the diff's after side, which is main, so the code block must show main too: a `git_blob` source at that revision."
+    },
+    {
+      "type": "markdown",
+      "id": "config",
+      "source": {
+        "kind": "file",
+        "path": "lessons/mostly-additions-lint/03-config.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "config-code",
+      "source": {
+        "kind": "file",
+        "path": "config.example.toml",
+        "lines": {
+          "start": 27,
+          "end": 30
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "markdown-exclusion",
+      "prompt": {
+        "kind": "inline",
+        "content": "A Git diff adds a 40-line section to `docs/SETUP.md` and changes nothing else. What does lint report?"
+      },
+      "choices": [
+        {
+          "content": "Nothing, since it renders as formatted prose",
+          "correct": true
+        },
+        {
+          "content": "A warning to show the section as a code block",
+          "explanation": "A code block would show the prose as raw text; Markdown from Git sources renders, so large additions read fine."
+        },
+        {
+          "content": "An error, because it counts as a new file",
+          "explanation": "The file already exists; only the added section is new, and `lint.diff.new_file` is about whole new files."
+        }
+      ],
+      "hints": [
+        "Which files does the rule skip before counting lines?"
+      ],
+      "explanation": "Markdown files from Git sources render as formatted text, where added blocks read naturally, so the rule skips them."
+    },
+    {
+      "type": "markdown",
+      "id": "catch",
+      "source": {
+        "kind": "file",
+        "path": "lessons/mostly-additions-lint/04-catch.md"
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "rewrite",
+      "prompt": {
+        "kind": "inline",
+        "content": "The rule reports a hunk that adds a 29-line function and removes one line. Which rewrite fits its suggestion?"
+      },
+      "choices": [
+        {
+          "content": "A ranged code block of the function, with highlights",
+          "correct": true
+        },
+        {
+          "content": "The same diff with fewer lines of context",
+          "explanation": "Context lines are unchanged lines; the hunk would still be 29 additions to read line by line."
+        },
+        {
+          "content": "A Markdown paragraph that describes the function",
+          "explanation": "Prose can introduce the function, but the learner still needs to see the code itself."
+        }
+      ],
+      "hints": [
+        "What does a code block offer that a diff does not?"
+      ],
+      "explanation": "The suggestion is to show added code as code: a `file` or `git_blob` source with `lines`, highlights on the key parts, and a short Markdown explanation before it. A remaining small diff can show the lines that change existing code."
+    },
+    {
+      "type": "markdown",
+      "id": "review",
+      "source": {
+        "kind": "file",
+        "path": "lessons/mostly-additions-lint/05-review.md"
+      }
+    }
+  ]
+}

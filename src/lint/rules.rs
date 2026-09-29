@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::artifact::{CompiledLesson, CompiledNodeContent};
 use crate::language::Language;
-use crate::source::{Block, CodeSource, DiffSource, LessonSource, MarkdownSource};
+use crate::source::{Block, CodeSource, DiffSource, GitDiffTarget, LessonSource, MarkdownSource};
 
 use super::{LintConfig, LintDiagnostic, Severity, SourceLocation, SpanIndex};
 
@@ -72,6 +72,7 @@ pub(super) fn collect(
                 }
                 let patch_source = !matches!(block.source, DiffSource::Git { .. });
                 for file in &diff.files {
+                    rules.mostly_additions(index, &block.source, file, patch_source);
                     if patch_source && file.language == Language::Markdown {
                         let path = file.display_path().unwrap_or("unnamed file");
                         rules.add(
@@ -395,6 +396,87 @@ impl Rules<'_> {
                 format!("diagram uses `{}`", keyword.text),
                 "If this expresses a semantic distinction, consider reusable `classDef` and `class` assignments; keep `subgraph` when actual grouping is intended.",
                 Some(location),
+            );
+        }
+    }
+
+    /// A hunk that is almost all additions shows new code, which reads better
+    /// as a code block. New files already have their own error, and Markdown
+    /// from a Git source renders as prose, where large additions read fine.
+    fn mostly_additions(
+        &mut self,
+        index: usize,
+        source: &DiffSource,
+        file: &crate::repository::ResolvedDiffFile,
+        patch_source: bool,
+    ) {
+        if file.is_new || (!patch_source && file.language == Language::Markdown) {
+            return;
+        }
+        let path = file.display_path().unwrap_or("unnamed file");
+        let pointer = match source {
+            DiffSource::Git { files, .. } => files
+                .iter()
+                .position(|selected| selected.path.as_str() == path)
+                .map_or_else(
+                    || format!("/blocks/{index}/source"),
+                    |position| format!("/blocks/{index}/source/files/{position}"),
+                ),
+            _ => format!("/blocks/{index}/source"),
+        };
+        for hunk in &file.hunks {
+            let added = hunk
+                .lines
+                .iter()
+                .filter(|line| line.kind == crate::repository::DiffLineKind::Addition)
+                .collect::<Vec<_>>();
+            let deleted = hunk
+                .lines
+                .iter()
+                .filter(|line| line.kind == crate::repository::DiffLineKind::Deletion)
+                .count();
+            if added.len() < self.config.diff_addition_heavy_min_lines
+                || deleted as f64 > added.len() as f64 * self.config.diff_max_deletion_ratio
+            {
+                continue;
+            }
+            let first = added.first().and_then(|line| line.new_line).unwrap_or(0);
+            let last = added.last().and_then(|line| line.new_line).unwrap_or(first);
+            let removes = if deleted == 1 {
+                "1 line".to_owned()
+            } else {
+                format!("{deleted} lines")
+            };
+            // The code block should show the same version of the file as the
+            // diff's after side, so name the source that does.
+            let (narrow, code_source) = match source {
+                DiffSource::Git { target, .. } => (
+                    "Narrow this diff to the lines that change existing code (set `before_lines`/`after_lines` on this file)",
+                    match target {
+                        GitDiffTarget::Revision { revision } => format!(
+                            "a `git_blob` code source at revision `{}`",
+                            revision.as_str()
+                        ),
+                        GitDiffTarget::Worktree => "a `file` code source".to_owned(),
+                    },
+                ),
+                _ => (
+                    "Cut this hunk from the patch so the diff keeps only the lines that change existing code",
+                    "a `file` or `git_blob` code source".to_owned(),
+                ),
+            };
+            self.add(
+                Some(index),
+                "lint.diff.mostly_additions",
+                &pointer,
+                format!(
+                    "hunk adds {} lines of {path} (lines {first}–{last}) and removes {removes}",
+                    added.len()
+                ),
+                format!(
+                    "{narrow}, then add a code block right after it for lines {first}–{last}: a short Markdown explanation followed by {code_source} with `lines`, highlighting the key parts."
+                ),
+                None,
             );
         }
     }
@@ -900,7 +982,8 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.code.too_many_lines"
         | "lint.code.highlight_coverage"
         | "lint.question.uneven_choice_lengths"
-        | "lint.mermaid.style_or_subgraph" => Severity::Warning,
+        | "lint.mermaid.style_or_subgraph"
+        | "lint.diff.mostly_additions" => Severity::Warning,
         "lint.code.no_highlights"
         | "lint.code.many_highlight_ranges"
         | "lint.code.filename_reference_far"
@@ -1175,6 +1258,174 @@ mod tests {
         assert_eq!(flagged[0].block_id.as_deref(), Some("patched"));
         assert_eq!(flagged[0].severity, Severity::Info);
         assert_eq!(flagged[0].pointer, "/blocks/0/source");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn patch(path: &str, hunks: &[(usize, usize)]) -> String {
+        let mut patch = format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n");
+        let mut old = 1;
+        let mut new = 1;
+        for (added, deleted) in hunks {
+            patch.push_str(&format!(
+                "@@ -{old},{} +{new},{} @@\n",
+                deleted + 1,
+                added + 1
+            ));
+            patch.push_str(" context\n");
+            for n in 0..*deleted {
+                patch.push_str(&format!("-old {n}\n"));
+            }
+            for n in 0..*added {
+                patch.push_str(&format!("+new {n}\n"));
+            }
+            old += deleted + 100;
+            new += added + 100;
+        }
+        patch
+    }
+
+    #[test]
+    fn reports_hunks_that_are_mostly_additions() {
+        let root = temp_root();
+        fs::write(
+            root.join("big.patch"),
+            patch("src/queue.rs", &[(30, 1), (30, 4), (19, 0)]),
+        )
+        .unwrap();
+        fs::write(root.join("docs.patch"), patch("docs/guide.md", &[(25, 0)])).unwrap();
+        fs::write(
+            root.join("new.patch"),
+            "diff --git a/n.rs b/n.rs\nnew file mode 100644\n--- /dev/null\n+++ b/n.rs\n@@ -0,0 +1,25 @@\n"
+                .to_owned()
+                + &(0..25).map(|n| format!("+line {n}\n")).collect::<String>(),
+        )
+        .unwrap();
+        let lesson = json!({"schema_version":"2.2.0","title":"Diffs","blocks":[
+            {"type":"diff","id":"big","source":{"kind":"file","path":"big.patch"}},
+            {"type":"diff","id":"docs","source":{"kind":"file","path":"docs.patch"}},
+            {"type":"diff","id":"new","source":{"kind":"file","path":"new.patch"}}
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let flagged = found
+            .iter()
+            .filter(|f| f.code == "lint.diff.mostly_additions")
+            .map(|f| {
+                (
+                    f.block_id.as_deref().unwrap(),
+                    f.message.as_str(),
+                    f.pointer.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        // 30/1 is reported; 30/4 (ratio 0.13) and 19/0 (too few) are not;
+        // a Markdown patch is reported (it does not render); a new file has
+        // its own error instead.
+        assert_eq!(
+            flagged,
+            [
+                (
+                    "big",
+                    "hunk adds 30 lines of src/queue.rs (lines 2–31) and removes 1 line",
+                    "/blocks/0/source"
+                ),
+                (
+                    "docs",
+                    "hunk adds 25 lines of docs/guide.md (lines 2–26) and removes 0 lines",
+                    "/blocks/1/source"
+                ),
+            ]
+        );
+        assert!(found.iter().any(|f| f.code == "lint.diff.new_file"));
+        let big = found
+            .iter()
+            .find(|f| f.code == "lint.diff.mostly_additions")
+            .unwrap();
+        assert_eq!(
+            big.suggestion,
+            "Cut this hunk from the patch so the diff keeps only the lines that change existing code, then add a code block right after it for lines 2–31: a short Markdown explanation followed by a `file` or `git_blob` code source with `lines`, highlighting the key parts."
+        );
+
+        let looser = LintConfig {
+            diff_max_deletion_ratio: 0.2,
+            diff_addition_heavy_min_lines: 19,
+            ..LintConfig::default()
+        };
+        let lesson = json!({"schema_version":"2.2.0","title":"Diffs","blocks":[
+            {"type":"diff","id":"big","source":{"kind":"file","path":"big.patch"}}
+        ]});
+        let count = findings(lesson, &root, &looser)
+            .iter()
+            .filter(|f| f.code == "lint.diff.mostly_additions")
+            .count();
+        assert_eq!(count, 3);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_sources_point_at_the_file_selection_and_skip_markdown() {
+        let root = temp_root();
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init", "--quiet"]);
+        run(&["config", "user.email", "t@example.invalid"]);
+        run(&["config", "user.name", "T"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+        fs::write(root.join("README.md"), "# Docs\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "--quiet", "-m", "base"]);
+        let many = (0..24).map(|n| format!("line {n}\n")).collect::<String>();
+        fs::write(root.join("a.rs"), format!("fn a() {{}}\n{many}")).unwrap();
+        fs::write(root.join("README.md"), format!("# Docs\n\n{many}")).unwrap();
+        let lesson = json!({"schema_version":"2.2.0","title":"Git","blocks":[
+            {"type":"diff","id":"change","source":{"kind":"git","base":"HEAD","target":{"kind":"worktree"},
+             "files":[{"path":"README.md"},{"path":"a.rs"}],"context_lines":1}}
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let flagged = found
+            .iter()
+            .filter(|f| f.code == "lint.diff.mostly_additions")
+            .collect::<Vec<_>>();
+        assert_eq!(flagged.len(), 1);
+        assert_eq!(flagged[0].pointer, "/blocks/0/source/files/1");
+        assert!(flagged[0].message.contains("a.rs"));
+        assert_eq!(flagged[0].severity, Severity::Warning);
+        assert_eq!(
+            flagged[0].suggestion,
+            "Narrow this diff to the lines that change existing code (set `before_lines`/`after_lines` on this file), then add a code block right after it for lines 2–25: a short Markdown explanation followed by a `file` code source with `lines`, highlighting the key parts."
+        );
+
+        // Against a revision, the code block must show that revision too.
+        run(&["add", "."]);
+        run(&["commit", "--quiet", "-m", "target"]);
+        let lesson = json!({"schema_version":"2.2.0","title":"Git","blocks":[
+            {"type":"diff","id":"change","source":{"kind":"git","base":"HEAD~1","target":{"kind":"revision","revision":"HEAD"},
+             "files":[{"path":"a.rs"}],"context_lines":1}}
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let flagged = found
+            .iter()
+            .find(|f| f.code == "lint.diff.mostly_additions")
+            .unwrap();
+        assert_eq!(flagged.pointer, "/blocks/0/source/files/0");
+        assert!(
+            flagged
+                .suggestion
+                .contains("followed by a `git_blob` code source at revision `HEAD` with `lines`"),
+            "{}",
+            flagged.suggestion
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

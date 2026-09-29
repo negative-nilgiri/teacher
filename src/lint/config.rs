@@ -19,6 +19,8 @@ pub struct LintConfig {
     pub min_question_ratio: f64,
     pub max_inline_code_diff_chars: usize,
     pub max_inline_prose_chars: usize,
+    pub diff_addition_heavy_min_lines: usize,
+    pub diff_max_deletion_ratio: f64,
     /// `info` codes to suppress. Only `info` findings are guesses weak enough
     /// to switch off per rule; stronger findings are filtered by severity.
     pub ignore_codes: Vec<String>,
@@ -38,6 +40,8 @@ impl Default for LintConfig {
             min_question_ratio: 0.20,
             max_inline_code_diff_chars: 256,
             max_inline_prose_chars: 512,
+            diff_addition_heavy_min_lines: 20,
+            diff_max_deletion_ratio: 0.10,
             ignore_codes: Vec::new(),
         }
     }
@@ -118,6 +122,11 @@ impl LintConfig {
             (
                 "max_choice_length_spread",
                 self.max_choice_length_spread,
+                None,
+            ),
+            (
+                "diff_max_deletion_ratio",
+                self.diff_max_deletion_ratio,
                 None,
             ),
         ] {

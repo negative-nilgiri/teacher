@@ -112,6 +112,12 @@ struct LintOverrides {
     /// Maximum decoded characters in an inline Markdown source or quiz prompt.
     #[arg(long)]
     max_inline_prose_chars: Option<usize>,
+    /// Minimum added lines before a mostly-additions diff hunk is reported.
+    #[arg(long)]
+    diff_addition_heavy_min_lines: Option<usize>,
+    /// Maximum ratio of deleted to added lines for a mostly-additions hunk.
+    #[arg(long)]
+    diff_max_deletion_ratio: Option<f64>,
     /// Suppress one info finding code; repeat for several. Adds to ignore_codes.
     #[arg(long = "ignore-code", value_name = "CODE")]
     ignore_codes: Vec<String>,
@@ -151,6 +157,12 @@ impl LintOverrides {
         }
         if let Some(value) = self.max_inline_prose_chars {
             config.max_inline_prose_chars = value;
+        }
+        if let Some(value) = self.diff_addition_heavy_min_lines {
+            config.diff_addition_heavy_min_lines = value;
+        }
+        if let Some(value) = self.diff_max_deletion_ratio {
+            config.diff_max_deletion_ratio = value;
         }
         config.ignore_codes.extend(self.ignore_codes);
     }

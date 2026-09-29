@@ -24,6 +24,11 @@ min_choice_length_gap_chars = 10
 # Suggest more questions below this share of all lesson blocks (0 to 1).
 min_question_ratio = 0.20
 
+# Warn when a diff hunk adds at least this many lines while removing few (see next).
+diff_addition_heavy_min_lines = 20
+# ...and its deleted lines are at most this fraction of its added lines.
+diff_max_deletion_ratio = 0.10
+
 # Error when inline code or diff content exceeds this many decoded characters.
 max_inline_code_diff_chars = 256
 # Error when inline Markdown or quiz prompt content exceeds this many characters.

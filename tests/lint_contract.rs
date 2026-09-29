@@ -244,6 +244,8 @@ fn lint_help_exposes_each_config_threshold_as_a_flag() {
         "--min-question-ratio",
         "--max-inline-code-diff-chars",
         "--max-inline-prose-chars",
+        "--diff-addition-heavy-min-lines",
+        "--diff-max-deletion-ratio",
         "--ignore-code",
     ] {
         assert!(help.contains(flag), "missing {flag} from lint help");

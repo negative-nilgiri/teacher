@@ -50,6 +50,8 @@ content.
   compared. Files owned by different repositories need separate diff blocks.
   A Markdown file in a `git` diff renders as formatted Markdown with changed
   blocks marked; from a patch it shows as raw lines, so diff docs with `git`.
+  A hunk that mostly adds code is new code: keep the diff for the lines that
+  change, and show the additions as a ranged code block.
 - **Multiple choice** checks understanding at the point where it matters.
 
 ## Judgment lint cannot check

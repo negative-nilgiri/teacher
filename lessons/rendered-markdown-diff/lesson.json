@@ -285,24 +285,56 @@
       }
     },
     {
-      "type": "diff",
-      "id": "freeze-diff",
-      "source": {
-        "kind": "git",
-        "base": "9cae1e0",
-        "target": {
-          "kind": "worktree"
-        },
-        "files": [
-          {
-            "path": "src/repository/git.rs",
-            "after_lines": {
-              "start": 498,
-              "end": 526
+      "type": "code",
+      "id": "freeze-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 503,
+              "end": 503
             }
-          }
-        ],
-        "context_lines": 1
+          ],
+          "annotation": "Only files whose language resolves to Markdown are read in full."
+        },
+        {
+          "lines": [
+            {
+              "start": 508,
+              "end": 508
+            }
+          ],
+          "color": "green",
+          "annotation": "Before: the base blob; a new file has none."
+        },
+        {
+          "lines": [
+            {
+              "start": 516,
+              "end": 521
+            }
+          ],
+          "color": "blue",
+          "annotation": "After: the target blob for a revision, otherwise the worktree file; a deleted file has none."
+        },
+        {
+          "lines": [
+            {
+              "start": 525,
+              "end": 525
+            }
+          ],
+          "color": "red",
+          "annotation": "The two documents and the hunks become the frozen segments."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/repository/git.rs",
+        "lines": {
+          "start": 498,
+          "end": 526
+        }
       }
     },
     {
