@@ -310,6 +310,68 @@ describe("semantic source rendering", () => {
     expect(screen.getByText("first change")).toBeVisible();
   });
 
+  it("renders prepared Markdown diffs with a source toggle", async () => {
+    const user = userEvent.setup();
+    const { container } = render(
+      <DiffBlock
+        node={{
+          files: [
+            {
+              hunks: [{
+                header: "@@ -3 +3 @@",
+                lines: [
+                  { content: "Install the tools.", kind: "deletion", new_line: null, old_line: 3 },
+                  { content: "Install the tools **once**.", kind: "addition", new_line: 3, old_line: null },
+                ],
+              }],
+              language: "markdown",
+              new_path: "docs/SETUP.md",
+              old_path: "docs/SETUP.md",
+              rendered: {
+                segments: [
+                  { blocks: 1, kind: "gap" },
+                  { kind: "unchanged", markdown: "## Install" },
+                  { kind: "removed", markdown: "Install the tools." },
+                  { kind: "added", markdown: "Install the tools **once**." },
+                ],
+              },
+            },
+            {
+              hunks: [{
+                header: "@@ -1 +1 @@",
+                lines: [{ content: "# Notes", kind: "addition", new_line: 1, old_line: null }],
+              }],
+              language: "markdown",
+              new_path: "NOTES.md",
+              old_path: "NOTES.md",
+            },
+          ],
+          node_id: 4,
+          source_id: "docs-diff",
+          type: "diff",
+        }}
+      />,
+    );
+
+    const rendered = screen.getByRole("button", { name: "Rendered" });
+    expect(rendered).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Install" })).toBeVisible();
+    expect(screen.getByText("once").tagName).toBe("STRONG");
+    expect(container.querySelector(".markdown-diff-removed")).toHaveTextContent("Removed: Install the tools.");
+    expect(container.querySelector(".markdown-diff-added")).toHaveTextContent("Added: Install the tools once.");
+    expect(screen.getByText("⋯ 1 block not shown")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Source" }));
+    expect(screen.getByRole("button", { name: "Source" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("heading", { name: "Install" })).not.toBeInTheDocument();
+    expect(screen.getByText("@@ -3 +3 @@")).toBeVisible();
+
+    // A file the compiler did not prepare, such as one from a patch source,
+    // keeps the line view and has no switch.
+    expect(screen.getAllByRole("group", { name: /^View of/ })).toHaveLength(1);
+    expect(screen.getByText("@@ -1 +1 @@")).toBeVisible();
+  });
+
   it("uses the language resolved for each diff file", () => {
     const { container } = render(
       <DiffBlock

@@ -126,6 +126,17 @@ pre code, .diff-block code { font-family: "SFMono-Regular", Consolas, "Liberatio
 .diff-file-toggle:hover { border-color: var(--accent); color: var(--ink); }
 .diff-file-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .diff-file-toggle-icon { width: .8rem; color: var(--accent); font-size: 1rem; font-weight: 750; line-height: .7; text-align: center; }
+.diff-view-switch { display: inline-flex; overflow: hidden; border: 1px solid var(--line); border-radius: .4rem; }
+.diff-view-option { padding: .28rem .55rem; border: 0; border-radius: 0; background: var(--paper); color: var(--muted); font-size: .72rem; }
+.diff-view-option + .diff-view-option { border-left: 1px solid var(--line); }
+.diff-view-option[aria-pressed="true"] { background: var(--accent-soft); color: var(--ink); font-weight: 650; }
+.diff-view-option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.markdown-diff { padding: .5rem 1rem; }
+.markdown-diff-segment { padding: .15rem .75rem; border-left: 3px solid transparent; }
+.markdown-diff-added { background: var(--addition); border-left-color: var(--accent); }
+.markdown-diff-removed { background: var(--deletion); border-left-color: var(--danger); }
+.markdown-diff-removed .markdown { text-decoration: line-through; text-decoration-color: var(--danger); }
+.markdown-diff-gap { padding: .35rem .75rem; color: var(--muted); font-size: .82rem; }
 .diff-hunk { overflow-x: auto; }
 .diff-hunk + .diff-hunk { border-top: 1px solid var(--line); }
 .diff-hunk-header { padding: .35rem 1rem; background: #e7edf0; color: #4e626c; font: .8rem "SFMono-Regular", Consolas, monospace; }

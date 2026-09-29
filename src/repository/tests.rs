@@ -645,3 +645,98 @@ fn line_range_past_end_of_file_reports_line_range_error() {
     assert_eq!(error.kind(), RepositoryErrorKind::LineRange);
     assert_eq!(error.code(), "repository.invalid_line_range");
 }
+
+#[test]
+fn markdown_files_in_git_diffs_render_as_complete_blocks() {
+    let root = TempRoot::new();
+    let repo = TempRepo::at(root.path.join("docs-repo"));
+    repo.write(
+        "README.md",
+        "# Setup\n\n```sh\njust install\n\njust test\n```\n\n- Node\n- Rust\n",
+    );
+    repo.write("notes.txt", "plain\n");
+    repo.commit_all("base");
+    repo.write(
+        "README.md",
+        "# Setup\n\n```sh\njust install\n\njust verify\n```\n\n- Node\n- Rust\n- Git\n",
+    );
+    repo.write("notes.txt", "changed\n");
+    repo.commit_all("target");
+    repo.write(
+        "README.md",
+        "# Setup once\n\n```sh\njust install\n\njust verify\n```\n\n- Node\n- Rust\n- Git\n",
+    );
+
+    let repository = Repository::at_root(&root.path, None).unwrap();
+    let request = |target| DiffRequest {
+        base: "HEAD~1".to_owned(),
+        target,
+        files: vec![
+            selected("docs-repo/README.md"),
+            selected("docs-repo/notes.txt"),
+        ],
+        context_lines: 3,
+    };
+    let committed = repository
+        .resolve_git_diff(&request(DiffTarget::Revision("HEAD".to_owned())))
+        .unwrap()
+        .diff;
+    let readme = committed
+        .files
+        .iter()
+        .find(|file| file.new_path.as_deref() == Some("docs-repo/README.md"))
+        .unwrap();
+    // The changed line sits in the middle of a fence with a blank line: the
+    // whole fence is one block, so it renders as removed + added, never half.
+    assert_eq!(
+        readme.rendered.as_ref().unwrap().segments,
+        [
+            // Line 1 lies outside the hunk's three context lines.
+            RenderedSegment::Gap { blocks: 1 },
+            RenderedSegment::Removed {
+                markdown: "```sh\njust install\n\njust test\n```".into()
+            },
+            RenderedSegment::Added {
+                markdown: "```sh\njust install\n\njust verify\n```".into()
+            },
+            RenderedSegment::Unchanged {
+                markdown: "- Node".into()
+            },
+            RenderedSegment::Unchanged {
+                markdown: "- Rust".into()
+            },
+            RenderedSegment::Added {
+                markdown: "- Git".into()
+            },
+        ]
+    );
+    let notes = committed
+        .files
+        .iter()
+        .find(|file| file.new_path.as_deref() == Some("docs-repo/notes.txt"))
+        .unwrap();
+    assert_eq!(notes.rendered, None);
+
+    let worktree = repository
+        .resolve_git_diff(&request(DiffTarget::Worktree))
+        .unwrap()
+        .diff;
+    let segments = &worktree.files[0].rendered.as_ref().unwrap().segments;
+    assert_eq!(
+        segments[..2],
+        [
+            RenderedSegment::Removed {
+                markdown: "# Setup".into()
+            },
+            RenderedSegment::Added {
+                markdown: "# Setup once".into()
+            },
+        ]
+    );
+
+    let patch = parse_unified_diff(
+        "diff --git a/d.md b/d.md\n--- a/d.md\n+++ b/d.md\n@@ -1 +1 @@\n-a\n+b\n",
+    )
+    .unwrap();
+    assert_eq!(patch.files[0].rendered, None);
+}

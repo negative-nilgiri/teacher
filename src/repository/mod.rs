@@ -7,6 +7,7 @@
 mod diff;
 mod error;
 mod git;
+mod markdown_diff;
 mod path;
 mod snapshot;
 
@@ -19,6 +20,7 @@ pub use git::{
     GitDiffProvenance, GitObjectId, Repository, RepositoryGroup, ResolvedGitDiff,
     ResolvedGitDiffTarget, ResolvedResource, ResourceProvenance,
 };
+pub use markdown_diff::{RenderedMarkdownDiff, RenderedSegment, render_markdown_diff};
 pub use path::RepoPath;
 pub use snapshot::{RepositorySnapshot, SnapshotGuard};
 

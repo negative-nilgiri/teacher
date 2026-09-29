@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::language::Language;
 
+use super::markdown_diff::RenderedMarkdownDiff;
+
 use super::{RepoPath, RepositoryError, RepositoryErrorKind};
 
 /// A one-based, inclusive range used to select changed lines.
@@ -67,6 +69,10 @@ pub struct ResolvedDiffFile {
     pub is_new: bool,
     pub is_deleted: bool,
     pub hunks: Vec<ResolvedDiffHunk>,
+    /// The displayed change as complete Markdown blocks, for Markdown files
+    /// in Git diffs, where both complete documents are available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered: Option<RenderedMarkdownDiff>,
 }
 
 impl ResolvedDiffFile {
@@ -197,6 +203,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<ResolvedDiff, RepositoryError> 
                 is_new: false,
                 is_deleted: false,
                 hunks: Vec::new(),
+                rendered: None,
             });
         } else if let Some(rest) = line.strip_prefix("index ") {
             let file = current_file.as_mut().ok_or_else(|| {
@@ -241,6 +248,7 @@ pub fn parse_unified_diff(patch: &str) -> Result<ResolvedDiff, RepositoryError> 
                 is_new: false,
                 is_deleted: false,
                 hunks: Vec::new(),
+                rendered: None,
             });
             file.old_path = old_path;
             file.is_new = file.old_path.is_none();
@@ -526,6 +534,7 @@ pub(crate) fn complete_addition(path: &RepoPath, content: &str) -> ResolvedDiffF
                 })
                 .collect(),
         }],
+        rendered: None,
     }
 }
 

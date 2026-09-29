@@ -48,6 +48,8 @@ content.
   relationship is what the learner must understand. Prefer a declarative `git`
   source over a hand-made patch. Any two revisions Git can resolve may be
   compared. Files owned by different repositories need separate diff blocks.
+  A Markdown file in a `git` diff renders as formatted Markdown with changed
+  blocks marked; from a patch it shows as raw lines, so diff docs with `git`.
 - **Multiple choice** checks understanding at the point where it matters.
 
 ## Judgment lint cannot check

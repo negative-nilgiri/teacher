@@ -277,6 +277,7 @@ fn project_diff(diff: &ResolvedDiff) -> Vec<PublicDiffFile> {
                     }
                 })
                 .collect(),
+            rendered: file.rendered.clone(),
         })
         .collect()
 }
@@ -332,6 +333,9 @@ pub struct PublicDiffFile {
     pub new_path: Option<String>,
     pub language: crate::language::Language,
     pub hunks: Vec<PublicDiffHunk>,
+    /// Complete Markdown blocks of the displayed change, when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rendered: Option<crate::repository::RenderedMarkdownDiff>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

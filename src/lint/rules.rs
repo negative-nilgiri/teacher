@@ -70,7 +70,21 @@ pub(super) fn collect(
                         "lint.inline.code_diff.too_large",
                     );
                 }
+                let patch_source = !matches!(block.source, DiffSource::Git { .. });
                 for file in &diff.files {
+                    if patch_source && file.language == Language::Markdown {
+                        let path = file.display_path().unwrap_or("unnamed file");
+                        rules.add(
+                            Some(index),
+                            "lint.diff.markdown_patch",
+                            &format!("/blocks/{index}/source"),
+                            format!(
+                                "Markdown file {path:?} comes from a patch, so it is shown as raw lines instead of rendered"
+                            ),
+                            "Use a `git` diff source so the change renders as Markdown; keep the patch only if the change exists in no revision or worktree.",
+                            None,
+                        );
+                    }
                     if file.is_new {
                         let path = file.display_path().unwrap_or("unnamed file");
                         let pointer = format!("/blocks/{index}/source");
@@ -891,6 +905,7 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.code.many_highlight_ranges"
         | "lint.code.filename_reference_far"
         | "lint.lesson.few_questions"
+        | "lint.diff.markdown_patch"
         | "lint.question.no_hints"
         | "lint.question.unexplained_distractors"
         | "lint.markdown.unshown_code_reference" => Severity::Info,
@@ -1116,6 +1131,50 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(new_files.len(), 1);
         assert_eq!(new_files[0].block_id.as_deref(), Some("new"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn markdown_from_patch_sources_is_reported_but_git_sources_are_not() {
+        let root = temp_root();
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init", "--quiet"]);
+        run(&["config", "user.email", "t@example.invalid"]);
+        run(&["config", "user.name", "T"]);
+        run(&["config", "commit.gpgsign", "false"]);
+        fs::write(root.join("README.md"), "# Old\n").unwrap();
+        run(&["add", "README.md"]);
+        run(&["commit", "--quiet", "-m", "base"]);
+        fs::write(root.join("README.md"), "# New\n").unwrap();
+        let lesson = json!({
+            "schema_version":"2.2.0", "title":"Docs", "blocks":[
+                {"type":"diff","id":"patched","source":{"kind":"inline","content":"diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-# Old\n+# New\n"}},
+                {"type":"diff","id":"code-patch","source":{"kind":"inline","content":"diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-a\n+b\n"}},
+                {"type":"diff","id":"declared","source":{"kind":"git","base":"HEAD","target":{"kind":"worktree"},
+                 "files":[{"path":"README.md"}],"context_lines":1}}
+            ]
+        });
+        let found = findings(lesson, &root, &LintConfig::default());
+        let flagged = found
+            .iter()
+            .filter(|f| f.code == "lint.diff.markdown_patch")
+            .collect::<Vec<_>>();
+        assert_eq!(flagged.len(), 1);
+        assert_eq!(flagged[0].block_id.as_deref(), Some("patched"));
+        assert_eq!(flagged[0].severity, Severity::Info);
+        assert_eq!(flagged[0].pointer, "/blocks/0/source");
         fs::remove_dir_all(root).unwrap();
     }
 

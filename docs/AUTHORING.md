@@ -397,6 +397,18 @@ worktree files become complete additions; ignored files are rejected.
 When one resolved diff contains multiple files, the runtime lets the learner
 fold each file independently. Single-file diffs keep only the block-level fold.
 
+A Markdown file in a **Git** diff also renders as Markdown. The compiler reads
+the complete before and after documents, splits them into blocks (headings,
+paragraphs, fences, tables, math, and each item of a top-level list or block
+quote), and marks added blocks in green and removed ones struck through in
+red. A changed block shows as its old version followed by its new one; there
+is no word-level marking yet. The rendered view covers the same part of the
+file as the line diff, widened to whole blocks, with the rest summarized as
+"⋯ N blocks not shown". A `Rendered | Source` switch shows the line diff.
+Inline and file patches contain only hunks, which cannot be rendered safely,
+so their Markdown files keep the line view; lint reports this as
+`lint.diff.markdown_patch`.
+
 The compiler invokes Git directly from structured fields. Never place shell
 commands or Git argument arrays in the lesson.
 

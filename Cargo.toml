@@ -1,6 +1,6 @@
 [package]
 name = "agent-teacher"
-version = "1.13.0"
+version = "1.14.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Compile and serve local, agent-authored interactive lessons"
@@ -41,6 +41,7 @@ axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 mime_guess = "2"
 mermaid-svg = "=0.7.0"
+pulldown-cmark = { version = "0.13", default-features = false }
 rust-embed = "8"
 schemars = { version = "1", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

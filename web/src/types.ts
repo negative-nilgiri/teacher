@@ -49,11 +49,21 @@ export interface DiffHunk {
   lines: DiffLine[];
 }
 
+export type RenderedSegment =
+  | { kind: "unchanged" | "removed" | "added"; markdown: string }
+  | { kind: "gap"; blocks: number };
+
+/** Complete Markdown blocks of a displayed change, prepared by the compiler. */
+export interface RenderedMarkdownDiff {
+  segments: RenderedSegment[];
+}
+
 export interface DiffFile {
   old_path: string | null;
   new_path: string | null;
   language: string;
   hunks: DiffHunk[];
+  rendered?: RenderedMarkdownDiff;
 }
 
 export interface DiffNode extends LessonNodeBase {

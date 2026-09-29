@@ -155,7 +155,7 @@ study sessions; it becomes a `verify.unavailable` finding instead.
 | [`src/source/`](../src/source) | Authored model, `SourceId`/`NodeId`, JSON Schema, and source-only validation. |
 | [`src/language.rs`](../src/language.rs) | Canonical code-language normalization, path inference, aliases, and plain-text fallback. |
 | [`src/diagnostics.rs`](../src/diagnostics.rs) | Stable diagnostic codes, JSON Pointers, related locations, and suggestions. |
-| [`src/repository/`](../src/repository) | Validated repository paths, Git execution, content resolution, diff parsing, and consistency guards. |
+| [`src/repository/`](../src/repository) | Validated repository paths, Git execution, content resolution, diff parsing, rendered Markdown diffs, and consistency guards. |
 | [`src/compiler/mod.rs`](../src/compiler/mod.rs) | Adapts source types to repository requests and lowers resolved blocks into an artifact. |
 | [`src/lint/`](../src/lint) | Separate authoring-policy rules, thresholds, editable source spans, and lint diagnostics. |
 | [`src/artifact/mod.rs`](../src/artifact/mod.rs) | Versioned serialized contract shared by compiler and runtime. |
@@ -304,9 +304,9 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.13.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.14.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.2.0` | [`SchemaVersion`](../src/source/model.rs) |
-| Artifact schema | `1.3.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
+| Artifact schema | `1.4.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -341,6 +341,17 @@ Raw inline/file patches are parsed once by
 line counts in their `@@` header, so content such as a deleted `-- comment`
 is never mistaken for a file header. The artifact and browser use structured
 files, hunks, and typed lines; React never parses patch text.
+
+Markdown files in Git diffs are also frozen as rendered segments by
+[`render_markdown_diff`](../src/repository/markdown_diff.rs). Hunks are
+fragments that can cut a fence or list in half, so the resolver reads the
+complete before (base blob) and after (target blob or worktree file)
+documents under the diff's snapshot guard. `pulldown-cmark` supplies block
+boundaries only: top-level blocks, with the items of top-level lists and block
+quotes as separate units taken as whole source lines. Blocks are matched by
+longest common subsequence, replacements are paired, blocks outside the
+displayed hunks collapse into gaps, and link and footnote definitions are
+appended to every segment. React only renders the prepared segments.
 
 Generated diff ranges are applied to changed regions:
 
@@ -478,7 +489,11 @@ compact label and falls back to `Code` when no specific language is known:
   old/new line numbers, showing and using the language frozen for each compiled
   diff file to syntax-highlight its content. A multi-file diff gives every file
   an independent local fold control; a single-file diff avoids redundant nested
-  folding. Optional captions render once above the complete diff.
+  folding. Optional captions render once above the complete diff. A file with
+  compiled `rendered` segments starts in a rendered Markdown view, with a
+  `Rendered | Source` switch; each segment is a complete block rendered by the
+  normal `Markdown` component, with added and removed styling and hidden
+  labels.
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
 
@@ -625,7 +640,9 @@ Tests are layered so failures identify the responsible boundary:
   [`src/lint/`](../src/lint); [`tests/lint_contract.rs`](../tests/lint_contract.rs)
   checks the command output, exit behavior, config, and compiler boundary.
 - Patch parsing and range-selection tests live in
-  [`src/repository/diff.rs`](../src/repository/diff.rs).
+  [`src/repository/diff.rs`](../src/repository/diff.rs); Markdown block
+  splitting and matching tests in
+  [`src/repository/markdown_diff.rs`](../src/repository/markdown_diff.rs).
 - Real Git worktree, sibling-repository, submodule, revision, ref-movement,
   quoting, ignored, and untracked cases live in
   [`src/repository/tests.rs`](../src/repository/tests.rs).
@@ -735,6 +752,8 @@ and render with only the excerpt index. Source schema `2.2.0` adds optional
 per-distractor `explanation` fields to choices; artifact `1.3.0` keeps them in
 the private answer table as `choice_explanations` keyed by generated choice ID,
 and the runtime returns them with the answer after a correct attempt or reveal.
+Artifact `1.4.0` adds an optional `rendered` field to Markdown files in Git
+diffs; older artifacts omit it and show only the line diff.
 
 ### Change package contents
 

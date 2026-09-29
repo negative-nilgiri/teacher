@@ -1,0 +1,384 @@
+{
+  "schema_version": "2.2.0",
+  "title": "Reviewing rendered Markdown diffs",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "overview",
+      "source": {
+        "kind": "file",
+        "path": "lessons/rendered-markdown-diff/01-overview.md"
+      }
+    },
+    {
+      "type": "diff",
+      "id": "authoring-example",
+      "source": {
+        "kind": "git",
+        "base": "9cae1e0",
+        "target": {
+          "kind": "worktree"
+        },
+        "files": [
+          {
+            "path": "docs/AUTHORING.md",
+            "after_lines": {
+              "start": 400,
+              "end": 411
+            }
+          }
+        ],
+        "context_lines": 1
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "why",
+      "source": {
+        "kind": "file",
+        "path": "lessons/rendered-markdown-diff/02-why.md"
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "fragment",
+      "prompt": {
+        "kind": "inline",
+        "content": "A hunk's context starts in the middle of a fenced code block. What would rendering the hunk lines as Markdown do?"
+      },
+      "choices": [
+        {
+          "content": "Treat the prose after the fence as code",
+          "correct": true
+        },
+        {
+          "content": "Show the fence as plain text and nothing else",
+          "explanation": "A Markdown renderer has no way to know the fence started earlier; it reads the closing fence as an opening one."
+        },
+        {
+          "content": "Fail to compile the lesson with an error",
+          "explanation": "Nothing checks Markdown validity; the fragment would render, just wrongly."
+        }
+      ],
+      "hints": [
+        "What does a Markdown renderer do with a lone closing fence?"
+      ],
+      "explanation": "Without its opening line, the closing fence opens a new code block, so everything after it renders as code. Complete blocks from whole documents avoid that."
+    },
+    {
+      "type": "markdown",
+      "id": "split",
+      "source": {
+        "kind": "file",
+        "path": "lessons/rendered-markdown-diff/03-split.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "split-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 107,
+              "end": 111
+            }
+          ],
+          "annotation": "At depth 0, lists and block quotes become containers; every other block is one unit."
+        },
+        {
+          "lines": [
+            {
+              "start": 112,
+              "end": 113
+            }
+          ],
+          "color": "green",
+          "annotation": "The direct children of a container, such as list items, are the units instead."
+        },
+        {
+          "lines": [
+            {
+              "start": 115,
+              "end": 118
+            }
+          ],
+          "color": "blue",
+          "annotation": "A top-level footnote definition adds its first through last source line to `definition_lines`."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/repository/markdown_diff.rs",
+        "lines": {
+          "start": 71,
+          "end": 126
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "one-bullet",
+      "prompt": {
+        "kind": "inline",
+        "content": "A three-item list gains a fourth item. Which segments does the changed list produce?"
+      },
+      "choices": [
+        {
+          "content": "Three unchanged items and one added item",
+          "correct": true
+        },
+        {
+          "content": "The list removed, then re-added whole",
+          "explanation": "Lists are containers, so each item is its own unit and the three old items match unchanged."
+        },
+        {
+          "content": "One unchanged list with the new item inside it",
+          "explanation": "Segments are whole units; the new item is its own added unit, not part of an unchanged one."
+        }
+      ],
+      "hints": [
+        "What are the units inside a top-level list?"
+      ],
+      "explanation": "Each item of a top-level list is a unit, so matching finds the three existing items unchanged and only the new item added."
+    },
+    {
+      "type": "markdown",
+      "id": "match",
+      "source": {
+        "kind": "file",
+        "path": "lessons/rendered-markdown-diff/04-match.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "pair-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 188,
+              "end": 196
+            }
+          ],
+          "annotation": "Take one removal and one addition at a time, so each old block sits next to its replacement."
+        },
+        {
+          "lines": [
+            {
+              "start": 201,
+              "end": 204
+            }
+          ],
+          "color": "green",
+          "annotation": "An unchanged block ends a run of changes: flush it before keeping the block."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/repository/markdown_diff.rs",
+        "lines": {
+          "start": 184,
+          "end": 209
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "pairing",
+      "prompt": {
+        "kind": "inline",
+        "content": "A heading and the paragraph below it both change. In what order do the four segments appear?"
+      },
+      "choices": [
+        {
+          "content": "Old heading, new heading, old paragraph, new paragraph",
+          "correct": true
+        },
+        {
+          "content": "Old heading, old paragraph, new heading, new paragraph",
+          "explanation": "That is the raw subsequence order; `pair_replacements` interleaves it."
+        },
+        {
+          "content": "New heading and new paragraph only, marked as changed",
+          "explanation": "Removed blocks are kept and shown struck through, so the reader sees what was replaced."
+        }
+      ],
+      "hints": [
+        "What does `flush` take from each list on every turn?"
+      ],
+      "explanation": "Within a run of changes, `flush` takes one removal and one addition at a time, so each block's old and new versions sit next to each other."
+    },
+    {
+      "type": "markdown",
+      "id": "trim",
+      "source": {
+        "kind": "file",
+        "path": "lessons/rendered-markdown-diff/05-trim.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "trim-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 248,
+              "end": 252
+            }
+          ],
+          "annotation": "An unchanged block survives only if it overlaps a displayed old or new line; removed and added blocks below follow the same rule."
+        },
+        {
+          "lines": [
+            {
+              "start": 264,
+              "end": 273
+            }
+          ],
+          "color": "green",
+          "annotation": "Hidden steps are counted and emitted as one gap before the next visible segment."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/repository/markdown_diff.rs",
+        "lines": {
+          "start": 244,
+          "end": 277
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "gap",
+      "prompt": {
+        "kind": "inline",
+        "content": "A 40-block document changes one paragraph in the middle, with `context_lines` 1. What does the rendered view show?"
+      },
+      "choices": [
+        {
+          "content": "A gap, the changed paragraph, then another gap",
+          "correct": true
+        },
+        {
+          "content": "All 40 blocks, with the paragraph marked",
+          "explanation": "The rendered view covers the same region as the line diff, not the whole document."
+        },
+        {
+          "content": "Only the changed paragraph, with no gaps",
+          "explanation": "Leading and trailing blocks outside the hunks are summarized as gaps so the reader knows more exists."
+        }
+      ],
+      "hints": [
+        "Which blocks overlap a displayed line when only one line of context is shown?"
+      ],
+      "explanation": "Only the blocks overlapping the hunk's lines are kept; the blocks before and after collapse into one gap each."
+    },
+    {
+      "type": "markdown",
+      "id": "freeze",
+      "source": {
+        "kind": "file",
+        "path": "lessons/rendered-markdown-diff/06-freeze.md"
+      }
+    },
+    {
+      "type": "diff",
+      "id": "freeze-diff",
+      "source": {
+        "kind": "git",
+        "base": "9cae1e0",
+        "target": {
+          "kind": "worktree"
+        },
+        "files": [
+          {
+            "path": "src/repository/git.rs",
+            "after_lines": {
+              "start": 498,
+              "end": 526
+            }
+          }
+        ],
+        "context_lines": 1
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "patch-source",
+      "prompt": {
+        "kind": "inline",
+        "content": "An agent diffs `docs/SETUP.md` with an inline patch. What does the learner see?"
+      },
+      "choices": [
+        {
+          "content": "The line diff, and lint reports an info finding",
+          "correct": true
+        },
+        {
+          "content": "The rendered view, built from the patch hunks",
+          "explanation": "Hunks are fragments; only Git sources give the complete documents needed for rendering."
+        },
+        {
+          "content": "An error, because lint rejects Markdown patches",
+          "explanation": "The rule is `info`: a hand-made patch is sometimes the only option."
+        }
+      ],
+      "hints": [
+        "Which diff source gives the compiler both complete documents?"
+      ],
+      "explanation": "Only `git` sources get `rendered`, so an inline patch keeps the line view, and `lint.diff.markdown_patch` suggests a `git` source."
+    },
+    {
+      "type": "markdown",
+      "id": "view",
+      "source": {
+        "kind": "file",
+        "path": "lessons/rendered-markdown-diff/07-view.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "view-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 102,
+              "end": 108
+            }
+          ],
+          "annotation": "A gap only reports how many blocks were left out."
+        },
+        {
+          "lines": [
+            {
+              "start": 111,
+              "end": 115
+            }
+          ],
+          "color": "green",
+          "annotation": "Every other segment is a complete block rendered by the normal Markdown component, with a hidden label for changes."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "web/src/components/DiffBlock.tsx",
+        "lines": {
+          "start": 98,
+          "end": 121
+        }
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "review",
+      "source": {
+        "kind": "file",
+        "path": "lessons/rendered-markdown-diff/08-review.md"
+      }
+    }
+  ]
+}

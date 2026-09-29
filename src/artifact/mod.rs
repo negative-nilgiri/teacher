@@ -6,11 +6,11 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::language::Language;
-use crate::repository::ResolvedDiff;
+use crate::repository::{RenderedSegment, ResolvedDiff};
 use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_3_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_4_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
@@ -24,11 +24,20 @@ pub enum ArtifactVersion {
     /// Adds private per-distractor `choice_explanations` to quiz answers.
     #[serde(rename = "1.3.0")]
     V1_3_0,
+    /// Adds rendered Markdown segments to Markdown files in Git diffs.
+    #[serde(rename = "1.4.0")]
+    V1_4_0,
 }
 
 impl ArtifactVersion {
     /// Every artifact version the runtime can load.
-    pub const SUPPORTED: [Self; 4] = [Self::V1_0_0, Self::V1_1_0, Self::V1_2_0, Self::V1_3_0];
+    pub const SUPPORTED: [Self; 5] = [
+        Self::V1_0_0,
+        Self::V1_1_0,
+        Self::V1_2_0,
+        Self::V1_3_0,
+        Self::V1_4_0,
+    ];
 
     pub fn parse(value: &str) -> Option<Self> {
         Self::SUPPORTED
@@ -42,6 +51,7 @@ impl ArtifactVersion {
             Self::V1_1_0 => "1.1.0",
             Self::V1_2_0 => "1.2.0",
             Self::V1_3_0 => "1.3.0",
+            Self::V1_4_0 => "1.4.0",
         }
     }
 }
@@ -384,6 +394,33 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
                 }
             }
         }
+        if let CompiledNodeContent::Diff { diff, .. } = &node.content {
+            for file in &diff.files {
+                let Some(rendered) = &file.rendered else {
+                    continue;
+                };
+                if file.language != Language::Markdown {
+                    return Err(ArtifactValidationError::new(format!(
+                        "diff node {} renders a non-Markdown file as Markdown",
+                        node.node_id
+                    )));
+                }
+                for segment in &rendered.segments {
+                    let valid = match segment {
+                        RenderedSegment::Unchanged { markdown }
+                        | RenderedSegment::Removed { markdown }
+                        | RenderedSegment::Added { markdown } => !markdown.trim().is_empty(),
+                        RenderedSegment::Gap { blocks } => *blocks > 0,
+                    };
+                    if !valid {
+                        return Err(ArtifactValidationError::new(format!(
+                            "diff node {} has an empty rendered Markdown segment",
+                            node.node_id
+                        )));
+                    }
+                }
+            }
+        }
         if let CompiledNodeContent::MultipleChoice {
             choices: values, ..
         } = &node.content
@@ -634,6 +671,75 @@ mod tests {
             explanation: "A is wrong.".into(),
         }];
         assert!(validate_artifact(&artifact).is_ok());
+    }
+
+    #[test]
+    fn rendered_markdown_segments_are_validated() {
+        use crate::repository::{
+            RenderedMarkdownDiff, ResolvedDiff, ResolvedDiffFile, parse_unified_diff,
+        };
+        let diff_node = |file: ResolvedDiffFile| CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "change".into(),
+            content: CompiledNodeContent::Diff {
+                diff: ResolvedDiff { files: vec![file] },
+                caption: None,
+                provenance: ResourceProvenance::Inline {
+                    sha256: "0".repeat(64),
+                },
+            },
+        };
+        let markdown = parse_unified_diff(
+            "diff --git a/d.md b/d.md\n--- a/d.md\n+++ b/d.md\n@@ -1 +1 @@\n-a\n+b\n",
+        )
+        .unwrap()
+        .files
+        .remove(0);
+        let with = |file: &ResolvedDiffFile, segments: Vec<RenderedSegment>| {
+            let mut file = file.clone();
+            file.rendered = Some(RenderedMarkdownDiff { segments });
+            let mut artifact = quiz_artifact();
+            artifact.presentation.nodes.push(diff_node(file));
+            validate_artifact(&artifact)
+        };
+        assert!(
+            with(
+                &markdown,
+                vec![RenderedSegment::Added {
+                    markdown: "b".into()
+                }]
+            )
+            .is_ok()
+        );
+        assert!(
+            with(
+                &markdown,
+                vec![RenderedSegment::Added {
+                    markdown: " ".into()
+                }]
+            )
+            .is_err()
+        );
+        assert!(with(&markdown, vec![RenderedSegment::Gap { blocks: 0 }]).is_err());
+        let mut code = markdown.clone();
+        code.language = Language::Rust;
+        assert!(
+            with(
+                &code,
+                vec![RenderedSegment::Added {
+                    markdown: "b".into()
+                }]
+            )
+            .is_err()
+        );
+
+        // A 1.3.0 artifact without the field still decodes and validates.
+        let mut legacy = quiz_artifact();
+        legacy.artifact_version = ArtifactVersion::V1_3_0;
+        legacy.presentation.nodes.push(diff_node(markdown));
+        let decoded: CompiledLesson =
+            serde_json::from_str(&serde_json::to_string(&legacy).unwrap()).unwrap();
+        validate_artifact(&decoded).unwrap();
     }
 
     #[test]

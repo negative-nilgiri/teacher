@@ -9,10 +9,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::diff::{complete_addition, parse_unified_diff, select_diff_ranges};
+use super::markdown_diff::render_markdown_diff;
 use super::{
     DiffRequest, DiffTarget, LineRange, RepoPath, RepositoryError, RepositoryErrorKind,
     RepositorySnapshot, ResolvedDiff, SnapshotGuard,
 };
+use crate::language::Language;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -493,7 +495,35 @@ impl Repository {
             }
         }
 
-        let diff = select_diff_ranges(diff, &request.files, request.context_lines)?;
+        let mut diff = select_diff_ranges(diff, &request.files, request.context_lines)?;
+        // Markdown changes also render as complete blocks, which needs both
+        // complete documents. They are read under the same snapshot guard as
+        // the diff itself.
+        for file in &mut diff.files {
+            if file.language != Language::Markdown {
+                continue;
+            }
+            let before = match (&file.old_path, file.is_new) {
+                (Some(path), false) => {
+                    self.read_git_blob(base.as_str(), &RepoPath::parse(path)?, None)?
+                        .content
+                }
+                _ => String::new(),
+            };
+            let after = match (&file.new_path, file.is_deleted) {
+                (Some(path), false) => {
+                    let path = RepoPath::parse(path)?;
+                    match &target {
+                        Some((_, object_id)) => {
+                            self.read_git_blob(object_id.as_str(), &path, None)?.content
+                        }
+                        None => self.read_file(&path, None)?.content,
+                    }
+                }
+                _ => String::new(),
+            };
+            file.rendered = Some(render_markdown_diff(file, &before, &after));
+        }
 
         // A symbolic ref moving during resolution must not silently produce a
         // comparison assembled from different repository moments.

@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import type { DiffFile, DiffLine, DiffNode } from "../types";
+import type { DiffFile, DiffHunk, DiffLine, DiffNode, RenderedSegment } from "../types";
 import { LanguageLabel } from "./LanguageLabel";
 import { Markdown } from "./Markdown";
 import { SyntaxCode } from "./SyntaxCode";
@@ -33,8 +33,12 @@ export function DiffBlock({ node }: { node: DiffNode }) {
   );
 }
 
+type DiffView = "rendered" | "source";
+
 function DiffFileSection({ collapsible, file }: { collapsible: boolean; file: DiffFile }) {
   const [collapsed, setCollapsed] = useState(false);
+  // Markdown files the compiler prepared start rendered; the line diff stays one click away.
+  const [view, setView] = useState<DiffView>(file.rendered ? "rendered" : "source");
   const contentId = useId();
   const label = fileLabel(file.old_path, file.new_path);
   const action = collapsed ? "Expand" : "Collapse";
@@ -44,6 +48,21 @@ function DiffFileSection({ collapsible, file }: { collapsible: boolean; file: Di
       <header className="diff-file-header">
         <h2 className="diff-file-name">{label}</h2>
         <div className="diff-file-controls">
+          {file.rendered ? (
+            <div aria-label={`View of ${label}`} className="diff-view-switch" role="group">
+              {(["rendered", "source"] as const).map((option) => (
+                <button
+                  aria-pressed={view === option}
+                  className="diff-view-option"
+                  key={option}
+                  onClick={() => setView(option)}
+                  type="button"
+                >
+                  {option === "rendered" ? "Rendered" : "Source"}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <LanguageLabel language={file.language} />
           {collapsible ? (
             <button
@@ -63,7 +82,48 @@ function DiffFileSection({ collapsible, file }: { collapsible: boolean; file: Di
         </div>
       </header>
       <div hidden={collapsed} id={contentId}>
-        {file.hunks.map((hunk, hunkIndex) => (
+        {file.rendered && view === "rendered" ? (
+          <RenderedMarkdown segments={file.rendered.segments} />
+        ) : (
+          <SourceHunks hunks={file.hunks} language={file.language} />
+        )}
+      </div>
+    </article>
+  );
+}
+
+const SEGMENT_LABELS = { added: "Added", removed: "Removed" } as const;
+
+/** Each segment is a complete Markdown block, so it renders on its own. */
+function RenderedMarkdown({ segments }: { segments: RenderedSegment[] }) {
+  return (
+    <div className="markdown-diff">
+      {segments.map((segment, index) => {
+        if (segment.kind === "gap") {
+          const noun = segment.blocks === 1 ? "block" : "blocks";
+          return (
+            <div className="markdown-diff-gap" key={index}>
+              ⋯ {segment.blocks} {noun} not shown
+            </div>
+          );
+        }
+        return (
+          <div className={`markdown-diff-segment markdown-diff-${segment.kind}`} key={index}>
+            {segment.kind === "unchanged" ? null : (
+              <span className="visually-hidden">{SEGMENT_LABELS[segment.kind]}: </span>
+            )}
+            <Markdown>{segment.markdown}</Markdown>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SourceHunks({ hunks, language }: { hunks: DiffHunk[]; language: string }) {
+  return (
+    <>
+        {hunks.map((hunk, hunkIndex) => (
           <div className="diff-hunk" key={`${hunk.header}:${hunkIndex}`}>
             <div className="diff-hunk-header">{hunk.header}</div>
             <table>
@@ -84,7 +144,7 @@ function DiffFileSection({ collapsible, file }: { collapsible: boolean; file: Di
                       {lineMarker(line)}
                     </td>
                     <td className="diff-content">
-                      <SyntaxCode language={file.language}>{line.content}</SyntaxCode>
+                      <SyntaxCode language={language}>{line.content}</SyntaxCode>
                     </td>
                   </tr>
                 ))}
@@ -92,7 +152,6 @@ function DiffFileSection({ collapsible, file }: { collapsible: boolean; file: Di
             </table>
           </div>
         ))}
-      </div>
-    </article>
+    </>
   );
 }
