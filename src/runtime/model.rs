@@ -228,6 +228,7 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
             PublicLessonNode {
                 node_id: node.node_id,
                 source_id: node.source_id.clone(),
+                reference: node_reference(&node.content),
                 content,
             }
         })
@@ -236,9 +237,22 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
     RuntimeLesson {
         public: PublicLesson {
             title: artifact.presentation.title.clone(),
+            lesson_path: artifact.provenance.lesson_path.clone(),
+            artifact_path: None,
             nodes,
         },
         answers,
+    }
+}
+
+/// Where a block's content came from, for references the learner copies to an
+/// agent. Quizzes have no source resource; their references name the block.
+fn node_reference(content: &CompiledNodeContent) -> Option<crate::artifact::ResourceProvenance> {
+    match content {
+        CompiledNodeContent::Markdown { provenance, .. }
+        | CompiledNodeContent::Code { provenance, .. }
+        | CompiledNodeContent::Diff { provenance, .. } => Some(provenance.clone()),
+        CompiledNodeContent::MultipleChoice { .. } => None,
     }
 }
 
@@ -285,6 +299,12 @@ fn project_diff(diff: &ResolvedDiff) -> Vec<PublicDiffFile> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PublicLesson {
     pub title: String,
+    /// The lesson source relative to the filesystem root, when recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lesson_path: Option<String>,
+    /// The `.learn` file as given to `learn serve`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
     pub nodes: Vec<PublicLessonNode>,
 }
 
@@ -292,6 +312,9 @@ pub struct PublicLesson {
 pub struct PublicLessonNode {
     pub node_id: NodeId,
     pub source_id: String,
+    /// Frozen provenance of the block's content; `None` for quizzes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<crate::artifact::ResourceProvenance>,
     #[serde(flatten)]
     pub content: PublicLessonNodeContent,
 }
@@ -440,6 +463,7 @@ pub(crate) mod tests {
             provenance: BuildProvenance {
                 compiler_version: "0.1.0".into(),
                 source_schema_version: SchemaVersion::CURRENT,
+                lesson_path: None,
             },
         }
     }
@@ -511,6 +535,13 @@ pub(crate) mod tests {
 
         let projection = serde_json::to_value(project_artifact(&artifact)).unwrap();
         assert_eq!(projection["nodes"][1]["filename"], "parser.rs");
+        // References carry the frozen provenance; quizzes have none.
+        assert_eq!(projection["nodes"][1]["reference"]["kind"], "git_blob");
+        assert_eq!(
+            projection["nodes"][1]["reference"]["revision_object_id"],
+            "0".repeat(40)
+        );
+        assert!(projection["nodes"][0].get("reference").is_none());
         assert_eq!(projection["nodes"][1]["first_line"], 40);
         assert!(projection["nodes"][0].get("first_line").is_none());
         assert_eq!(

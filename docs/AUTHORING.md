@@ -514,6 +514,17 @@ workflow and removes the temporary repository when the server exits. The
 integration test invokes the same setup script, so the documented example and
 tested fixture cannot silently diverge.
 
+## Questions about a lesson
+
+Learners can copy a reference to any block for their agent: an icon appears in
+a block's header on hover or focus, and selecting lines in a code or diff block
+offers a small "Ask" chip. The copied text names the lesson, the block, the
+file and source lines shown, the exact version (commit and blob IDs, or the
+worktree blob and the `HEAD` it was built on), and the `.learn` file holding the
+frozen content; it never includes the content itself or quiz answers. Authors
+do nothing extra, but keeping the lesson source inside the filesystem root lets
+the reference name it.
+
 ## Acting on diagnostics
 
 Default failures are stable JSON and may include several independent problems:

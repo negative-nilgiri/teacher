@@ -38,6 +38,9 @@ pub struct ResourceProvenance {
     pub object_id: Option<GitObjectId>,
     /// Concrete blob containing the embedded bytes.
     pub content_object_id: Option<GitObjectId>,
+    /// Git blob ID of the complete worktree file, as `git hash-object` would
+    /// compute it, so content committed later can still be found.
+    pub worktree_blob_id: Option<String>,
     pub sha256: String,
 }
 
@@ -54,6 +57,10 @@ pub struct GitDiffProvenance {
     pub base_object_id: GitObjectId,
     pub target: ResolvedGitDiffTarget,
     pub files: Vec<String>,
+    /// For a worktree target: Git blob ID of each selected file's worktree
+    /// content, and the owning repository's `HEAD` at build time.
+    pub worktree_blob_ids: BTreeMap<String, String>,
+    pub head: Option<GitObjectId>,
     pub sha256: String,
 }
 
@@ -289,6 +296,7 @@ impl Repository {
                 path.to_path_buf(),
             )
         })?;
+        let worktree_blob_id = git_blob_id(&bytes);
         let content = String::from_utf8(bytes).map_err(|_| {
             RepositoryError::at_path(
                 RepositoryErrorKind::Utf8,
@@ -304,6 +312,7 @@ impl Repository {
                 revision: None,
                 object_id: None,
                 content_object_id: None,
+                worktree_blob_id: Some(worktree_blob_id),
                 sha256: sha256(content.as_bytes()),
             },
             content,
@@ -369,6 +378,7 @@ impl Repository {
                 revision: Some(revision.to_owned()),
                 object_id: Some(commit_id),
                 content_object_id: Some(blob_id),
+                worktree_blob_id: None,
                 sha256: sha256(content.as_bytes()),
             },
             content,
@@ -544,6 +554,25 @@ impl Repository {
                 format!("target revision {revision:?} changed while resolving the diff"),
             ));
         }
+        // Worktree content has no commit yet; its blob IDs find it once it is
+        // committed. Read under the same guard as the diff.
+        let (worktree_blob_ids, head) = if target.is_none() {
+            let mut blobs = BTreeMap::new();
+            for path in &paths {
+                let absolute = self.resolve_path(path);
+                if absolute.is_file()
+                    && let Ok(bytes) = fs::read(&absolute)
+                {
+                    blobs.insert(path.as_str().to_owned(), git_blob_id(&bytes));
+                }
+            }
+            (
+                blobs,
+                self.resolve_revision(&group.owning_root, "HEAD").ok(),
+            )
+        } else {
+            (BTreeMap::new(), None)
+        };
         guard.verify(self)?;
         let digest_bytes = serde_json::to_vec(&diff.files).map_err(|error| {
             RepositoryError::new(
@@ -563,6 +592,8 @@ impl Repository {
                 None => ResolvedGitDiffTarget::Worktree,
             },
             files: paths.iter().map(|path| path.as_str().to_owned()).collect(),
+            worktree_blob_ids,
+            head,
             sha256: sha256(&digest_bytes),
         };
         Ok(ResolvedGitDiff { diff, provenance })
@@ -658,6 +689,26 @@ impl Repository {
             material.extend_from_slice(&status.stdout);
         }
         Ok(RepositorySnapshot::new(sha256(&material)))
+    }
+
+    /// Owning repository root of `path`. Invokes Git.
+    pub fn owning_root(&self, path: &RepoPath) -> Result<PathBuf, RepositoryError> {
+        self.owner_for_path(path)
+    }
+
+    /// `HEAD` of the repository owning `path`, but only if that repository is
+    /// one of `in_use`, which the build already talks to; an unborn `HEAD` is
+    /// `None`. Plain-file lessons never call this, so they never spawn Git.
+    pub fn head_if_in_use(
+        &self,
+        path: &RepoPath,
+        in_use: &std::collections::BTreeSet<PathBuf>,
+    ) -> Option<GitObjectId> {
+        let owner = self.owner_for_path(path).ok()?;
+        if !in_use.contains(&owner) {
+            return None;
+        }
+        self.resolve_revision(&owner, "HEAD").ok()
     }
 
     fn owner_for_path(&self, path: &RepoPath) -> Result<PathBuf, RepositoryError> {
@@ -938,6 +989,21 @@ fn select_lines(content: &str, lines: Option<LineRange>) -> Result<String, Repos
         ));
     }
     Ok(values[(lines.start - 1) as usize..lines.end as usize].concat())
+}
+
+/// Git's object ID for a blob with these bytes: SHA-1 of `blob <size>\0`
+/// followed by the content. Computed without Git, so plain-file lessons still
+/// never spawn it. Repositories using SHA-256 object names differ.
+pub(crate) fn git_blob_id(bytes: &[u8]) -> String {
+    use sha1::{Digest as _, Sha1};
+    let mut hasher = Sha1::new();
+    hasher.update(format!("blob {}\0", bytes.len()).as_bytes());
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn sha256(bytes: &[u8]) -> String {

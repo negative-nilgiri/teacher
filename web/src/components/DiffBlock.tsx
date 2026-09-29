@@ -44,7 +44,7 @@ function DiffFileSection({ collapsible, file }: { collapsible: boolean; file: Di
   const action = collapsed ? "Expand" : "Collapse";
 
   return (
-    <article className="diff-file">
+    <article className="diff-file" data-diff-path={file.new_path ?? file.old_path ?? undefined}>
       <header className="diff-file-header">
         <h2 className="diff-file-name">{label}</h2>
         <div className="diff-file-controls">
@@ -137,7 +137,12 @@ function SourceHunks({ hunks, language }: { hunks: DiffHunk[]; language: string 
               </thead>
               <tbody>
                 {hunk.lines.map((line, lineIndex) => (
-                  <tr className={`diff-line diff-line-${line.kind}`} key={lineIndex}>
+                  <tr
+                    className={`diff-line diff-line-${line.kind}`}
+                    data-new-line={line.new_line ?? undefined}
+                    data-old-line={line.old_line ?? undefined}
+                    key={lineIndex}
+                  >
                     <td className="line-number">{line.old_line ?? ""}</td>
                     <td className="line-number">{line.new_line ?? ""}</td>
                     <td className="diff-marker" aria-label={line.kind}>

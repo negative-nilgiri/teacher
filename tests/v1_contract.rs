@@ -169,7 +169,7 @@ fn compiler_freezes_file_backed_question_prompts() {
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(root.path().join("lesson.learn")).unwrap()).unwrap();
     assert_eq!(artifact.provenance.source_schema_version.as_str(), "2.1.0");
-    assert_eq!(artifact.artifact_version.as_str(), "1.4.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.5.0");
     assert_eq!(
         artifact.provenance.compiler_version,
         env!("CARGO_PKG_VERSION")
@@ -835,6 +835,24 @@ fn artifact_public_projection_and_live_api_keep_quiz_answers_private() {
 
     let state = request_json(&address, "GET", "/api/v1/state", None);
     assert_eq!(state["lesson"]["title"], artifact.presentation.title);
+    // References: the artifact path as served, and frozen provenance per
+    // non-quiz node, still without any private answer data.
+    assert_eq!(
+        state["lesson"]["artifact_path"],
+        artifact_path.to_string_lossy().as_ref()
+    );
+    let nodes = state["lesson"]["nodes"].as_array().unwrap();
+    assert!(
+        nodes
+            .iter()
+            .any(|node| node["reference"]["kind"].is_string())
+    );
+    assert!(
+        nodes
+            .iter()
+            .filter(|node| node["type"] == "multiple_choice")
+            .all(|node| node.get("reference").is_none())
+    );
     let state_text = serde_json::to_string(&state).unwrap();
     assert!(!state_text.contains("correct_choice_id"));
     assert!(!state_text.contains("explanation"));
@@ -1402,4 +1420,129 @@ fn find_schema_block<'a>(
 fn schema_block_has_property(schema: &serde_json::Value, block_type: &str, property: &str) -> bool {
     find_schema_block(schema, block_type)
         .is_some_and(|block| block["properties"].get(property).is_some())
+}
+
+#[cfg(unix)]
+#[test]
+fn artifacts_record_blob_ids_heads_and_the_lesson_path_for_references() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = TempDir::new("references");
+    let repo = root.path();
+    git(repo, &["init", "--quiet"]);
+    git(repo, &["config", "user.name", "T"]);
+    git(repo, &["config", "user.email", "t@example.invalid"]);
+    git(repo, &["config", "commit.gpgsign", "false"]);
+    fs::write(repo.join("tracked.rs"), "fn tracked() {}\n").unwrap();
+    git(repo, &["add", "tracked.rs"]);
+    git(repo, &["commit", "--quiet", "-m", "base"]);
+    let head = git_stdout(repo, &["rev-parse", "HEAD"]);
+    fs::write(repo.join("tracked.rs"), "fn tracked() {}\nfn dirty() {}\n").unwrap();
+    fs::write(repo.join("untracked.md"), "# New\n").unwrap();
+    fs::create_dir(repo.join("lessons")).unwrap();
+
+    // A plain-file lesson must not run Git at all: a wrapper records any call.
+    let wrapper_dir = repo.join("wrapper-bin");
+    fs::create_dir(&wrapper_dir).unwrap();
+    let marker = repo.join("git-was-called");
+    let wrapper = wrapper_dir.join("git");
+    fs::write(
+        &wrapper,
+        format!("#!/bin/sh\ntouch {}\nexit 97\n", shell_quote(&marker)),
+    )
+    .unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    let plain = repo.join("lessons/plain.json");
+    fs::write(
+        &plain,
+        serde_json::to_vec(&serde_json::json!({"schema_version":"2.2.0","title":"Plain","blocks":[
+            {"type":"markdown","id":"notes","source":{"kind":"file","path":"untracked.md"}},
+            {"type":"code","id":"dirty","source":{"kind":"file","path":"tracked.rs","lines":{"start":2,"end":2}}}
+        ]}))
+        .unwrap(),
+    )
+    .unwrap();
+    let path = std::env::join_paths(std::iter::once(wrapper_dir.clone()).chain(
+        std::env::split_paths(&std::env::var_os("PATH").expect("PATH is set")),
+    ))
+    .unwrap();
+    output_success(
+        Command::new(learnc())
+            .current_dir(repo)
+            .args(["build", "lessons/plain.json"])
+            .env("PATH", &path),
+    );
+    assert!(!marker.exists(), "a plain-file lesson invoked Git");
+    let artifact: CompiledLesson =
+        serde_json::from_slice(&fs::read(repo.join("lessons/plain.learn")).unwrap()).unwrap();
+    assert_eq!(artifact.artifact_version.as_str(), "1.5.0");
+    assert_eq!(
+        artifact.provenance.lesson_path.as_deref(),
+        Some("lessons/plain.json")
+    );
+    let file_provenance =
+        |artifact: &CompiledLesson, index: usize| match &artifact.presentation.nodes[index].content
+        {
+            CompiledNodeContent::Markdown { provenance, .. }
+            | CompiledNodeContent::Code { provenance, .. } => match provenance {
+                ResourceProvenance::File { blob_id, head, .. } => (blob_id.clone(), head.clone()),
+                other => panic!("expected file provenance, found {other:?}"),
+            },
+            other => panic!("unexpected node {other:?}"),
+        };
+    // Blob IDs cover the whole file, not only the displayed lines, and match
+    // what Git will record when the content is committed.
+    let (untracked_blob, untracked_head) = file_provenance(&artifact, 0);
+    assert_eq!(
+        untracked_blob,
+        Some(git_stdout(repo, &["hash-object", "untracked.md"]))
+    );
+    assert_eq!(untracked_head, None);
+    let (dirty_blob, _) = file_provenance(&artifact, 1);
+    assert_eq!(
+        dirty_blob,
+        Some(git_stdout(repo, &["hash-object", "tracked.rs"]))
+    );
+
+    // When the lesson already uses Git in that repository, HEAD is recorded
+    // for worktree files and worktree diffs.
+    let mixed = repo.join("lessons/mixed.json");
+    fs::write(
+        &mixed,
+        serde_json::to_vec(&serde_json::json!({"schema_version":"2.2.0","title":"Mixed","blocks":[
+            {"type":"code","id":"dirty","source":{"kind":"file","path":"tracked.rs"}},
+            {"type":"code","id":"committed","source":{"kind":"git_blob","revision":"HEAD","path":"tracked.rs"}},
+            {"type":"diff","id":"change","source":{"kind":"git","base":"HEAD","target":{"kind":"worktree"},
+             "files":[{"path":"tracked.rs"}],"context_lines":1}}
+        ]}))
+        .unwrap(),
+    )
+    .unwrap();
+    output_success(
+        Command::new(learnc())
+            .current_dir(repo)
+            .args(["build", "lessons/mixed.json"]),
+    );
+    let artifact: CompiledLesson =
+        serde_json::from_slice(&fs::read(repo.join("lessons/mixed.learn")).unwrap()).unwrap();
+    let (blob, file_head) = file_provenance(&artifact, 0);
+    assert_eq!(blob, Some(git_stdout(repo, &["hash-object", "tracked.rs"])));
+    assert_eq!(file_head.as_deref(), Some(head.as_str()));
+    let CompiledNodeContent::Diff { provenance, .. } = &artifact.presentation.nodes[2].content
+    else {
+        panic!("expected diff node")
+    };
+    let ResourceProvenance::GitDiff {
+        worktree_blob_ids,
+        head: diff_head,
+        ..
+    } = provenance
+    else {
+        panic!("expected Git diff provenance")
+    };
+    assert_eq!(
+        worktree_blob_ids.get("tracked.rs"),
+        Some(&git_stdout(repo, &["hash-object", "tracked.rs"]))
+    );
+    assert_eq!(diff_head.as_deref(), Some(head.as_str()));
 }

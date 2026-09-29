@@ -1,4 +1,6 @@
 import type { ChoiceId, LessonNode, QuestionState } from "../types";
+import type { LessonContext } from "../reference";
+import { AskAboutBlock } from "./AskAboutBlock";
 import { specificLanguageDisplayName } from "../languages";
 import { CodeBlock } from "./CodeBlock";
 import { CollapsibleLessonBlock } from "./CollapsibleLessonBlock";
@@ -8,6 +10,8 @@ import { MultipleChoiceBlock } from "./MultipleChoiceBlock";
 
 interface LessonNodeViewProps {
   node: LessonNode;
+  /** When present, the block offers a copyable reference for an agent. */
+  lesson?: LessonContext;
   questionState?: QuestionState;
   busy: boolean;
   onSubmit: (choiceId: ChoiceId) => Promise<void>;
@@ -51,7 +55,11 @@ export function LessonNodeView(props: LessonNodeViewProps) {
   }
 
   return (
-    <CollapsibleLessonBlock kind={kind} sourceId={node.source_id}>
+    <CollapsibleLessonBlock
+      actions={props.lesson ? <AskAboutBlock lesson={props.lesson} node={node} /> : null}
+      kind={kind}
+      sourceId={node.source_id}
+    >
       {content}
     </CollapsibleLessonBlock>
   );

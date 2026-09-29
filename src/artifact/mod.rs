@@ -10,7 +10,7 @@ use crate::repository::{RenderedSegment, ResolvedDiff};
 use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_4_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_5_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
@@ -27,16 +27,20 @@ pub enum ArtifactVersion {
     /// Adds rendered Markdown segments to Markdown files in Git diffs.
     #[serde(rename = "1.4.0")]
     V1_4_0,
+    /// Adds blob IDs, `HEAD` commits, and the lesson path for references.
+    #[serde(rename = "1.5.0")]
+    V1_5_0,
 }
 
 impl ArtifactVersion {
     /// Every artifact version the runtime can load.
-    pub const SUPPORTED: [Self; 5] = [
+    pub const SUPPORTED: [Self; 6] = [
         Self::V1_0_0,
         Self::V1_1_0,
         Self::V1_2_0,
         Self::V1_3_0,
         Self::V1_4_0,
+        Self::V1_5_0,
     ];
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -52,6 +56,7 @@ impl ArtifactVersion {
             Self::V1_2_0 => "1.2.0",
             Self::V1_3_0 => "1.3.0",
             Self::V1_4_0 => "1.4.0",
+            Self::V1_5_0 => "1.5.0",
         }
     }
 }
@@ -261,10 +266,14 @@ pub struct ChoiceExplanation {
 pub struct BuildProvenance {
     pub compiler_version: String,
     pub source_schema_version: SchemaVersion,
+    /// The lesson source, relative to the filesystem root; absent when the
+    /// lesson lives outside the root or for artifacts before 1.5.0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lesson_path: Option<String>,
 }
 
 /// Describes where embedded bytes came from without leaking an absolute path.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ResourceProvenance {
     Inline {
@@ -273,6 +282,12 @@ pub enum ResourceProvenance {
     File {
         path: String,
         sha256: String,
+        /// Git blob ID of the complete file at build time.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blob_id: Option<String>,
+        /// `HEAD` of the owning repository, when the build already used it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<String>,
     },
     GitBlob {
         repository: String,
@@ -288,6 +303,12 @@ pub enum ResourceProvenance {
         base_object_id: String,
         target: FrozenDiffTarget,
         files: Vec<String>,
+        /// Worktree targets: blob ID of each selected file's content.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        worktree_blob_ids: BTreeMap<String, String>,
+        /// Worktree targets: `HEAD` of the owning repository at build time.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<String>,
         sha256: String,
     },
 }
@@ -559,6 +580,7 @@ mod tests {
             provenance: BuildProvenance {
                 compiler_version: "0.1.0".into(),
                 source_schema_version: SchemaVersion::CURRENT,
+                lesson_path: None,
             },
         }
     }

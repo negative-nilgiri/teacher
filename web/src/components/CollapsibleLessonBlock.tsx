@@ -4,12 +4,15 @@ interface CollapsibleLessonBlockProps {
   children: ReactNode;
   kind: string;
   sourceId: string;
+  /** Extra toolbar controls, such as the ask button. */
+  actions?: ReactNode;
 }
 
 export function CollapsibleLessonBlock({
   children,
   kind,
   sourceId,
+  actions,
 }: CollapsibleLessonBlockProps) {
   const [collapsed, setCollapsed] = useState(false);
   const contentId = useId();
@@ -25,6 +28,7 @@ export function CollapsibleLessonBlock({
           <strong className="lesson-block-kind">{kind}</strong>
           <code className="lesson-block-source">{sourceId}</code>
         </div>
+        {actions}
         <button
           aria-controls={contentId}
           aria-expanded={!collapsed}

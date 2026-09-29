@@ -103,6 +103,7 @@ export function App() {
           <LessonNodeView
             busy={busyNode === node.node_id}
             key={node.node_id}
+            lesson={lesson}
             node={node}
             onReveal={() => mutate(node.node_id, () => revealAnswer(node.node_id))}
             onSubmit={(choiceId: ChoiceId) =>

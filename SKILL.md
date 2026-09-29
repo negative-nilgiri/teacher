@@ -35,6 +35,23 @@ Keep every diagnostic's code, pointer, message, and suggestion when reporting a
 failure. Never replace a missing file, revision, or repository with guessed
 content.
 
+## When the user pastes a lesson reference
+
+A reference starts with `Question about lesson "..."` and names a block, the
+file and lines shown, and a version. To see what the user saw:
+
+1. Open the path and lines. For a `git_blob` version, read that commit and
+   blob (`git show <commit>:<path>`); for a worktree version, check whether the
+   file's current blob (`git hash-object <path>`) still matches.
+2. If it does not, look for the content in history:
+   `git log --all --find-object=<blob>` finds the commit that added it, even
+   after a move or rename. The commit it was built on gives a base to diff
+   against.
+3. If the content exists nowhere, read the frozen copy: the named block in the
+   `.learn` file (its `presentation.nodes` entry with that `source_id`).
+
+Answer the user's question in the session; a reference never needs a rebuild.
+
 ## Choosing blocks
 
 - **Markdown** carries prose, headings, lists, and KaTeX math (`$...$` inline,

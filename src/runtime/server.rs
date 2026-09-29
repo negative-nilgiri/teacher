@@ -66,8 +66,10 @@ impl BoundServer {
 /// Load one artifact, create one shared in-memory session, and reserve a random
 /// IPv4 loopback port. The returned server does not listen beyond loopback.
 pub async fn bind(artifact_path: impl AsRef<Path>) -> Result<BoundServer, RuntimeError> {
+    let display_path = artifact_path.as_ref().to_string_lossy().into_owned();
     let artifact = load_artifact(artifact_path).map_err(RuntimeError::Artifact)?;
-    let lesson = project_runtime_lesson(&artifact);
+    let mut lesson = project_runtime_lesson(&artifact);
+    lesson.public.artifact_path = Some(display_path);
     let app = router(AppState::new(lesson));
     let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .await

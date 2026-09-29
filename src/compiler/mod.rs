@@ -35,6 +35,8 @@ pub struct CompileOptions {
     pub current_dir: PathBuf,
     /// Optional filesystem anchor selected by `--root`.
     pub root: Option<PathBuf>,
+    /// The lesson source file, recorded root-relative in the artifact.
+    pub lesson_path: Option<PathBuf>,
 }
 
 impl CompileOptions {
@@ -42,7 +44,44 @@ impl CompileOptions {
         Self {
             current_dir: current_dir.into(),
             root: None,
+            lesson_path: None,
         }
+    }
+
+    pub fn with_lesson_path(mut self, lesson_path: impl Into<PathBuf>) -> Self {
+        self.lesson_path = Some(lesson_path.into());
+        self
+    }
+
+    /// `lesson_path` relative to the filesystem root, with forward slashes,
+    /// or `None` when it lies outside the root.
+    fn root_relative_lesson_path(&self) -> Option<String> {
+        let absolute = |path: &Path| {
+            let joined = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                self.current_dir.join(path)
+            };
+            let mut normal = PathBuf::new();
+            for component in joined.components() {
+                match component {
+                    std::path::Component::CurDir => {}
+                    std::path::Component::ParentDir => {
+                        normal.pop();
+                    }
+                    other => normal.push(other),
+                }
+            }
+            normal
+        };
+        let lesson = absolute(self.lesson_path.as_deref()?);
+        let root = absolute(self.root.as_deref().unwrap_or(&self.current_dir));
+        let relative = lesson.strip_prefix(&root).ok()?;
+        let parts = relative
+            .components()
+            .map(|component| component.as_os_str().to_str())
+            .collect::<Option<Vec<_>>>()?;
+        (!parts.is_empty()).then(|| parts.join("/"))
     }
 
     pub fn with_root(mut self, root: impl Into<PathBuf>) -> Self {
@@ -190,6 +229,11 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
         }
     }
 
+    if let Some(repository) = repository.as_ref()
+        && !repository_paths.git.is_empty()
+    {
+        record_heads(repository, &repository_paths.git, &mut nodes);
+    }
     if let Some(repository) = repository.as_ref() {
         if let Err(error) = repository.verify_observed_revisions() {
             diagnostics.push(repository_diagnostic("", error));
@@ -219,6 +263,7 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
         provenance: BuildProvenance {
             compiler_version: env!("CARGO_PKG_VERSION").to_owned(),
             source_schema_version: schema_version,
+            lesson_path: options.root_relative_lesson_path(),
         },
     };
     crate::artifact::validate_artifact(&artifact).map_err(|error| {
@@ -254,7 +299,7 @@ pub fn compile_file(
             format!("could not read lesson source: {error}"),
         )]
     })?;
-    compile(&input, options)
+    compile(&input, &options.clone().with_lesson_path(input_path))
 }
 
 /// Default `lesson.json` -> `lesson.learn` output naming.
@@ -307,6 +352,34 @@ pub fn write_artifact_atomic(
         ));
     }
     Ok(())
+}
+
+/// Record the owning repository's `HEAD` on worktree file content, but only
+/// for repositories the build already uses through Git sources, so lessons
+/// made only of plain files never invoke Git.
+fn record_heads(
+    repository: &Repository,
+    git_paths: &[repository::RepoPath],
+    nodes: &mut [CompiledNode],
+) {
+    let in_use = git_paths
+        .iter()
+        .filter_map(|path| repository.owning_root(path).ok())
+        .collect::<std::collections::BTreeSet<_>>();
+    for node in nodes {
+        let provenance = match &mut node.content {
+            CompiledNodeContent::Markdown { provenance, .. }
+            | CompiledNodeContent::Code { provenance, .. } => provenance,
+            _ => continue,
+        };
+        if let ResourceProvenance::File { path, head, .. } = provenance
+            && let Ok(path) = repository::RepoPath::parse(path.as_str())
+        {
+            *head = repository
+                .head_if_in_use(&path, &in_use)
+                .map(|commit| commit.as_str().to_owned());
+        }
+    }
 }
 
 fn resolve_markdown(
@@ -634,6 +707,11 @@ fn resolve_diff(
                     base_object_id: resolved.provenance.base_object_id.as_str().to_owned(),
                     target: frozen_target,
                     files: resolved.provenance.files,
+                    worktree_blob_ids: resolved.provenance.worktree_blob_ids,
+                    head: resolved
+                        .provenance
+                        .head
+                        .map(|head| head.as_str().to_owned()),
                     sha256: resolved.provenance.sha256,
                 },
             })
@@ -776,6 +854,8 @@ fn resource_provenance(value: RepositoryResourceProvenance) -> ResourceProvenanc
         _ => ResourceProvenance::File {
             path: value.path,
             sha256: value.sha256,
+            blob_id: value.worktree_blob_id,
+            head: None,
         },
     }
 }
@@ -854,6 +934,34 @@ mod tests {
         );
         let presentation = serde_json::to_string(&artifact.presentation).unwrap();
         assert!(!presentation.contains("pop_back"));
+    }
+
+    #[test]
+    fn lesson_paths_are_recorded_relative_to_the_root_or_not_at_all() {
+        let relative = |current: &str, root: Option<&str>, lesson: &str| {
+            let mut options = CompileOptions::new(current).with_lesson_path(lesson);
+            if let Some(root) = root {
+                options = options.with_root(root);
+            }
+            options.root_relative_lesson_path()
+        };
+        assert_eq!(
+            relative("/work", None, "lessons/a.json").as_deref(),
+            Some("lessons/a.json")
+        );
+        assert_eq!(
+            relative("/work", None, "./lessons/../lessons/a.json").as_deref(),
+            Some("lessons/a.json")
+        );
+        assert_eq!(
+            relative("/work/sub", Some(".."), "a.json").as_deref(),
+            Some("sub/a.json")
+        );
+        assert_eq!(relative("/work", Some("/work/repo"), "/work/a.json"), None);
+        assert_eq!(
+            CompileOptions::new("/work").root_relative_lesson_path(),
+            None
+        );
     }
 
     #[test]

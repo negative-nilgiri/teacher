@@ -227,7 +227,9 @@ The concrete orchestration starts in
    [`Repository::at_root`](../src/repository/git.rs) and start a filesystem
    [`SnapshotGuard`](../src/repository/snapshot.rs). Git-backed paths also
    get a whole-build owner/repository-state guard; plain-file-only lessons never
-   invoke Git.
+   invoke Git. For learner references, `file` content records its Git blob ID
+   (computed in Rust, so still without Git) and, only when the lesson already
+   uses that repository through Git sources, the repository's `HEAD`.
 4. Markdown, code, diff, and quiz blocks are lowered in authored block order.
    Code languages are normalized or inferred from source paths during lowering;
    choices inside each quiz are scrambled before dense choice IDs are assigned.
@@ -304,9 +306,9 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.14.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.15.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.2.0` | [`SchemaVersion`](../src/source/model.rs) |
-| Artifact schema | `1.4.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
+| Artifact schema | `1.5.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -420,7 +422,7 @@ The v1 routes are registered in
 
 | Method | Path | Effect |
 | --- | --- | --- |
-| `GET` | `/api/v1/state` | Returns public lesson data and current progress. |
+| `GET` | `/api/v1/state` | Returns public lesson data and current progress. The lesson includes its root-relative `lesson_path`, the `artifact_path` given to `learn serve`, and a `reference` (frozen provenance) on every non-quiz node. |
 | `POST` | `/api/v1/questions/{node_id}/submit` | Records `{ "choice_id": n }`, grades it, and returns authoritative progress plus the focused question. |
 | `POST` | `/api/v1/questions/{node_id}/reveal` | Records an explicit reveal and returns the same mutation shape. |
 
@@ -494,6 +496,12 @@ compact label and falls back to `Code` when no specific language is known:
   `Rendered | Source` switch; each segment is a complete block rendered by the
   normal `Markdown` component, with added and removed styling and hidden
   labels.
+- [`AskAboutBlock`](../web/src/components/AskAboutBlock.tsx) adds a discreet
+  toolbar icon (visible on hover or focus), a chip for selected code or diff
+  lines, and a popover that copies an agent-ready reference built by
+  [`formatReference`](../web/src/reference.ts); nothing is sent anywhere.
+  [`selection.ts`](../web/src/selection.ts) maps a text selection to source
+  lines, a highlight group, or old/new diff lines.
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
 
@@ -650,7 +658,9 @@ Tests are layered so failures identify the responsible boundary:
 - Runtime projection, quiz state, endpoint, and asset tests live under
   [`src/runtime/`](../src/runtime).
 - React interaction tests live in
-  [`web/src/test/App.test.tsx`](../web/src/test/App.test.tsx).
+  [`web/src/test/App.test.tsx`](../web/src/test/App.test.tsx); reference
+  formatting, the ask popover, and selection mapping in
+  [`web/src/test/Reference.test.tsx`](../web/src/test/Reference.test.tsx).
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
   schema fixtures, repository builds, selected diffs, moved refs, live HTTP quiz
   state, private-data projection, production assets, checker CLI output, and the
@@ -753,7 +763,10 @@ per-distractor `explanation` fields to choices; artifact `1.3.0` keeps them in
 the private answer table as `choice_explanations` keyed by generated choice ID,
 and the runtime returns them with the answer after a correct attempt or reveal.
 Artifact `1.4.0` adds an optional `rendered` field to Markdown files in Git
-diffs; older artifacts omit it and show only the line diff.
+diffs; older artifacts omit it and show only the line diff. Artifact `1.5.0`
+adds `blob_id` and `head` to `file` provenance, `worktree_blob_ids` and `head`
+to Git diffs with a worktree target, and `lesson_path` to the build
+provenance; older artifacts omit them and give shorter references.
 
 ### Change package contents
 

@@ -68,7 +68,7 @@ pub(crate) fn load_lesson(
             format!("could not read lesson source: {error}"),
         )]
     })?;
-    let artifact = compile(&input, options)?;
+    let artifact = compile(&input, &options.clone().with_lesson_path(lesson_path))?;
     let (source, _) = source::parse_and_validate(&input)
         .expect("compilation already validated the same source text")
         .into_parts();

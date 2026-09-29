@@ -1,0 +1,362 @@
+{
+  "schema_version": "2.2.0",
+  "title": "Reviewing lesson references",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "overview",
+      "source": {
+        "kind": "file",
+        "path": "lessons/lesson-references/01-overview.md"
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "blob",
+      "source": {
+        "kind": "file",
+        "path": "lessons/lesson-references/02-blob.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "blob-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 1000,
+              "end": 1001
+            }
+          ],
+          "annotation": "Git's blob header, `blob <size>` and a NUL byte, then the content: the same bytes `git hash-object` hashes."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/repository/git.rs",
+        "lines": {
+          "start": 994,
+          "end": 1007
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "committed-later",
+      "prompt": {
+        "kind": "inline",
+        "content": "A lesson showed an untracked file. A week later the file is committed unchanged under a new name. How can the agent find what the learner saw?"
+      },
+      "choices": [
+        {
+          "content": "Search history for the blob ID in the reference",
+          "correct": true
+        },
+        {
+          "content": "Open the file at its old path in the worktree",
+          "explanation": "The file moved, and the worktree may have changed since; the path alone no longer identifies the content."
+        },
+        {
+          "content": "Check out the commit the lesson was built on",
+          "explanation": "The file was untracked then, so that commit does not contain it at all."
+        }
+      ],
+      "hints": [
+        "What does a blob ID depend on: the path, or the content?"
+      ],
+      "explanation": "The blob ID depends only on the content, so `git log --all --find-object=<blob>` finds the commit that added exactly that content, whatever it is called now."
+    },
+    {
+      "type": "markdown",
+      "id": "head",
+      "source": {
+        "kind": "file",
+        "path": "lessons/lesson-references/03-head.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "head-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 365,
+              "end": 368
+            }
+          ],
+          "annotation": "The repositories this build already uses: the owners of its Git-backed paths."
+        },
+        {
+          "lines": [
+            {
+              "start": 378,
+              "end": 380
+            }
+          ],
+          "color": "green",
+          "annotation": "`head_if_in_use` returns nothing for a file in any other repository, or when HEAD is unborn."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/compiler/mod.rs",
+        "lines": {
+          "start": 357,
+          "end": 383
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "plain-lesson",
+      "prompt": {
+        "kind": "inline",
+        "content": "A lesson made only of `file` sources lives inside a Git repository. What does its artifact record for those files?"
+      },
+      "choices": [
+        {
+          "content": "A blob ID for each file, and no HEAD",
+          "correct": true
+        },
+        {
+          "content": "A blob ID and the repository's HEAD",
+          "explanation": "Reading HEAD needs Git, and a plain-file lesson never runs it."
+        },
+        {
+          "content": "Nothing, since the files are uncommitted",
+          "explanation": "The blob ID is computed in Rust from the content, whether or not it is committed."
+        }
+      ],
+      "hints": [
+        "Which of the two values can be computed without running Git?"
+      ],
+      "explanation": "The blob ID is a hash computed in Rust. HEAD is recorded only for repositories the lesson already reaches through Git sources, which a plain-file lesson has none of."
+    },
+    {
+      "type": "markdown",
+      "id": "diff",
+      "source": {
+        "kind": "file",
+        "path": "lessons/lesson-references/04-diff.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "diff-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 559,
+              "end": 568
+            }
+          ],
+          "annotation": "Worktree targets hash every selected file that exists; a deleted file has no blob."
+        },
+        {
+          "lines": [
+            {
+              "start": 569,
+              "end": 572
+            }
+          ],
+          "color": "green",
+          "annotation": "The owning repository's HEAD, already open for the diff."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/repository/git.rs",
+        "lines": {
+          "start": 557,
+          "end": 575
+        }
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "format",
+      "source": {
+        "kind": "file",
+        "path": "lessons/lesson-references/05-format.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "format-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 56,
+              "end": 56
+            }
+          ],
+          "annotation": "Without a `reference`, as for a quiz, the block is only described as part of the lesson source."
+        },
+        {
+          "lines": [
+            {
+              "start": 60,
+              "end": 65
+            }
+          ],
+          "color": "green",
+          "annotation": "Worktree files report their blob ID, falling back to the content hash, and HEAD when known."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "web/src/reference.ts",
+        "lines": {
+          "start": 55,
+          "end": 80
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "quiz-reference",
+      "prompt": {
+        "kind": "inline",
+        "content": "What does a reference to a multiple-choice block contain?"
+      },
+      "choices": [
+        {
+          "content": "The lesson, the block ID, and the `.learn` file",
+          "correct": true
+        },
+        {
+          "content": "The prompt, the choices, and the block ID",
+          "explanation": "References never include displayed content, which also keeps choices out of them."
+        },
+        {
+          "content": "The block ID and which choice is correct",
+          "explanation": "Quizzes have no source resource, and references never reveal answers."
+        }
+      ],
+      "hints": [
+        "Does a quiz have a source resource with provenance?"
+      ],
+      "explanation": "A quiz has no provenance, so its reference names the lesson and the block and points at the `.learn` file, which is enough for the agent to find it."
+    },
+    {
+      "type": "markdown",
+      "id": "selection",
+      "source": {
+        "kind": "file",
+        "path": "lessons/lesson-references/06-selection.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "selection-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 50,
+              "end": 53
+            }
+          ],
+          "annotation": "Count newlines before the selection's start and end; a selection ending at the start of the next line does not include it."
+        },
+        {
+          "lines": [
+            {
+              "start": 54,
+              "end": 57
+            }
+          ],
+          "color": "green",
+          "annotation": "Add `first_line - 1` to reach file lines, and look for the first highlight group whose range overlaps the selection."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "web/src/selection.ts",
+        "lines": {
+          "start": 39,
+          "end": 64
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "selection-lines",
+      "prompt": {
+        "kind": "inline",
+        "content": "A code block starts at file line 40. The learner selects its second and third displayed lines. Which lines does the reference name?"
+      },
+      "choices": [
+        {
+          "content": "Lines 41–42",
+          "correct": true
+        },
+        {
+          "content": "Lines 2–3",
+          "explanation": "Those are positions in the displayed fragment; the reference always uses file lines."
+        },
+        {
+          "content": "Lines 42–43",
+          "explanation": "The first displayed line is line 40 itself, so the offset is 39, not 40."
+        }
+      ],
+      "hints": [
+        "What does `offset` add to a fragment line?"
+      ],
+      "explanation": "`offset` is `first_line - 1` = 39, so displayed lines 2 and 3 become file lines 41 and 42."
+    },
+    {
+      "type": "markdown",
+      "id": "copy",
+      "source": {
+        "kind": "file",
+        "path": "lessons/lesson-references/07-copy.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "copy-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 91,
+              "end": 94
+            }
+          ],
+          "annotation": "Write the reference to the clipboard, close the popover, and set the `copied` state."
+        },
+        {
+          "lines": [
+            {
+              "start": 95,
+              "end": 97
+            }
+          ],
+          "color": "red",
+          "annotation": "A missing or refusing clipboard sets the `manual` state instead."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "web/src/components/AskAboutBlock.tsx",
+        "lines": {
+          "start": 89,
+          "end": 108
+        }
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "review",
+      "source": {
+        "kind": "file",
+        "path": "lessons/lesson-references/08-review.md"
+      }
+    }
+  ]
+}

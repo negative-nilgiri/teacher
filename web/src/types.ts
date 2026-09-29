@@ -1,9 +1,36 @@
 export type NodeId = number;
 export type ChoiceId = number;
 
+/** Frozen provenance of a block's content, mirroring the artifact. */
+export type ResourceReference =
+  | { kind: "inline"; sha256: string }
+  | { kind: "file"; path: string; sha256: string; blob_id?: string; head?: string }
+  | {
+      kind: "git_blob";
+      repository: string;
+      path: string;
+      revision: string;
+      revision_object_id: string;
+      content_object_id: string;
+      sha256: string;
+    }
+  | {
+      kind: "git_diff";
+      repository: string;
+      base_revision: string;
+      base_object_id: string;
+      target: { kind: "revision"; revision: string; object_id: string } | { kind: "worktree" };
+      files: string[];
+      worktree_blob_ids?: Record<string, string>;
+      head?: string;
+      sha256: string;
+    };
+
 interface LessonNodeBase {
   node_id: NodeId;
   source_id: string;
+  /** Absent for quizzes, which have no source resource. */
+  reference?: ResourceReference;
 }
 
 export interface MarkdownNode extends LessonNodeBase {
@@ -92,6 +119,10 @@ export type LessonNode =
 
 export interface PublicLesson {
   title: string;
+  /** The lesson source relative to the filesystem root, when recorded. */
+  lesson_path?: string;
+  /** The `.learn` file as given to `learn serve`. */
+  artifact_path?: string;
   nodes: LessonNode[];
 }
 
