@@ -306,9 +306,9 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.16.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.17.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.3.0` | [`SchemaVersion`](../src/source/model.rs) |
-| Artifact schema | `1.6.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
+| Artifact schema | `1.7.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -502,6 +502,12 @@ compact label and falls back to `Code` when no specific language is known:
   [`previewNode`](../web/src/links.tsx), quizzes as prompt only), and jumps
   through the URL hash to the block's `block-<id>` anchor, which expands and
   flashes it.
+- Go to definition: [`markDefinitions`](../web/src/definitions.ts) wraps the
+  names in highlight.js output that have a shown definition, skipping comment
+  and string tokens and letting functions link only calls and macros only
+  `name!`; [`DefinitionLayer`](../web/src/components/DefinitionLayer.tsx)
+  previews on hover, jumps on Cmd/Ctrl+click, and offers a chooser for
+  ambiguous names, reusing the block-link preview.
 - [`AskAboutBlock`](../web/src/components/AskAboutBlock.tsx) adds a discreet
   toolbar icon (visible on hover or focus), a chip for selected code or diff
   lines, and a popover that copies an agent-ready reference built by
@@ -667,7 +673,11 @@ Tests are layered so failures identify the responsible boundary:
   [`web/src/test/App.test.tsx`](../web/src/test/App.test.tsx); reference
   formatting, the ask popover, and selection mapping in
   [`web/src/test/Reference.test.tsx`](../web/src/test/Reference.test.tsx);
-  block links in [`web/src/test/Links.test.tsx`](../web/src/test/Links.test.tsx).
+  block links in [`web/src/test/Links.test.tsx`](../web/src/test/Links.test.tsx);
+  go to definition in
+  [`web/src/test/Definitions.test.tsx`](../web/src/test/Definitions.test.tsx).
+  Per-language definition tests live in
+  [`src/compiler/definitions.rs`](../src/compiler/definitions.rs).
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
   schema fixtures, repository builds, selected diffs, moved refs, live HTTP quiz
   state, private-data projection, production assets, checker CLI output, and the
@@ -779,7 +789,10 @@ adds `blob_id` and `head` to `file` provenance, `worktree_blob_ids` and `head`
 to Git diffs with a worktree target, and `lesson_path` to the build
 provenance; older artifacts omit them and give shorter references. Artifact
 `1.6.0` adds `presentation.links`, block links keyed by destination; older
-artifacts have none.
+artifacts have none. Artifact `1.7.0` adds `presentation.definitions`: every
+definition the lesson shows, found by
+[`definitions.rs`](../src/compiler/definitions.rs) with a keyword table per
+language (not a parser), as name → sites with kind, block, and lines.
 
 ### Change package contents
 

@@ -541,6 +541,28 @@ block, excerpts repeated far apart, and names formatted as code that no nearby
 block shows; `learnverify` asks whether each link's target shows what its text
 says. In schemas before `2.3.0`, `#…` links remain ordinary links.
 
+## Go to definition
+
+Names in code link to the definitions the lesson itself shows, with no
+authoring needed. Hovering a name for a moment previews its definition, and
+Cmd/Ctrl+click jumps to it (Back returns). Code looks unchanged until hovered.
+
+The compiler recognizes definitions by the keywords that start them, not by
+parsing: Rust (`fn`, `struct`, `enum`, `trait`, `type`, `union`, `mod`,
+`const`, `static`, `macro_rules!`), Python (`def`, `class`), JavaScript and
+TypeScript (`function`, `class`, `interface`, `type`, `enum`, `namespace`,
+top-level `const`/`let`/`var`, methods), Go (`func`, including methods and
+generics, `type`, top-level `const`/`var`), Java (types and method
+signatures), C and C++ (`struct`, `enum`, `union`, `class`, `namespace`,
+`typedef`, function signatures), shell (`name() {`, `function name {`), and SQL
+(`CREATE TABLE`/`VIEW`/`FUNCTION`/...). Code blocks and the new-side lines of
+diffs are scanned; other languages define nothing.
+
+A function only links where it is called (`key(…)`), a macro only as `name!`,
+and types, constants, and shell functions wherever they appear; names in
+comments and strings never link. When the lesson shows several definitions of
+one name, the learner gets a small chooser instead of a guess.
+
 ## Questions about a lesson
 
 Learners can copy a reference to any block for their agent: an icon appears in

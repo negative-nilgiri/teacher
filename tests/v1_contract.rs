@@ -169,7 +169,7 @@ fn compiler_freezes_file_backed_question_prompts() {
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(root.path().join("lesson.learn")).unwrap()).unwrap();
     assert_eq!(artifact.provenance.source_schema_version.as_str(), "2.1.0");
-    assert_eq!(artifact.artifact_version.as_str(), "1.6.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.7.0");
     assert_eq!(
         artifact.provenance.compiler_version,
         env!("CARGO_PKG_VERSION")
@@ -1475,7 +1475,7 @@ fn artifacts_record_blob_ids_heads_and_the_lesson_path_for_references() {
     assert!(!marker.exists(), "a plain-file lesson invoked Git");
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(repo.join("lessons/plain.learn")).unwrap()).unwrap();
-    assert_eq!(artifact.artifact_version.as_str(), "1.6.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.7.0");
     assert_eq!(
         artifact.provenance.lesson_path.as_deref(),
         Some("lessons/plain.json")

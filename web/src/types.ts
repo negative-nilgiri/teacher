@@ -123,6 +123,13 @@ export interface BlockLink {
   lines?: { start: number; end: number };
 }
 
+/** One shown definition of a name; its kind decides which usages link. */
+export interface DefinitionSite {
+  kind: "function" | "macro" | "type" | "value" | "command";
+  target: NodeId;
+  lines?: { start: number; end: number };
+}
+
 export interface PublicLesson {
   title: string;
   /** The lesson source relative to the filesystem root, when recorded. */
@@ -132,6 +139,8 @@ export interface PublicLesson {
   nodes: LessonNode[];
   /** Block links by destination without the `#`, such as `queue-def:12-18`. */
   links?: Record<string, BlockLink>;
+  /** Shown definitions by name, for go-to-definition. */
+  definitions?: Record<string, DefinitionSite[]>;
 }
 
 export interface Attempt {

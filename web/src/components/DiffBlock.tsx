@@ -25,6 +25,7 @@ export function DiffBlock({ node }: { node: DiffNode }) {
       {node.files.map((file, fileIndex) => (
         <DiffFileSection
           collapsible={filesAreCollapsible}
+          nodeId={node.node_id}
           file={file}
           key={`${file.old_path}:${file.new_path}:${fileIndex}`}
         />
@@ -35,7 +36,15 @@ export function DiffBlock({ node }: { node: DiffNode }) {
 
 type DiffView = "rendered" | "source";
 
-function DiffFileSection({ collapsible, file }: { collapsible: boolean; file: DiffFile }) {
+function DiffFileSection({
+  collapsible,
+  file,
+  nodeId,
+}: {
+  collapsible: boolean;
+  file: DiffFile;
+  nodeId: number;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   // Markdown files the compiler prepared start rendered; the line diff stays one click away.
   const [view, setView] = useState<DiffView>(file.rendered ? "rendered" : "source");
@@ -85,7 +94,7 @@ function DiffFileSection({ collapsible, file }: { collapsible: boolean; file: Di
         {file.rendered && view === "rendered" ? (
           <RenderedMarkdown segments={file.rendered.segments} />
         ) : (
-          <SourceHunks hunks={file.hunks} language={file.language} />
+          <SourceHunks hunks={file.hunks} language={file.language} nodeId={nodeId} />
         )}
       </div>
     </article>
@@ -120,7 +129,15 @@ function RenderedMarkdown({ segments }: { segments: RenderedSegment[] }) {
   );
 }
 
-function SourceHunks({ hunks, language }: { hunks: DiffHunk[]; language: string }) {
+function SourceHunks({
+  hunks,
+  language,
+  nodeId,
+}: {
+  hunks: DiffHunk[];
+  language: string;
+  nodeId: number;
+}) {
   return (
     <>
         {hunks.map((hunk, hunkIndex) => (
@@ -149,7 +166,16 @@ function SourceHunks({ hunks, language }: { hunks: DiffHunk[]; language: string 
                       {lineMarker(line)}
                     </td>
                     <td className="diff-content">
-                      <SyntaxCode language={language}>{line.content}</SyntaxCode>
+                      <SyntaxCode
+                        language={language}
+                        origin={
+                          line.kind === "deletion" || line.new_line === null
+                            ? undefined
+                            : { firstLine: line.new_line, nodeId }
+                        }
+                      >
+                        {line.content}
+                      </SyntaxCode>
                     </td>
                   </tr>
                 ))}

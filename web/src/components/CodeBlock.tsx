@@ -24,6 +24,7 @@ export function CodeBlock({ node }: { node: CodeNode }) {
         <CodeListing
           content={node.content}
           firstLine={node.first_line}
+          nodeId={node.node_id}
           highlights={highlights}
           language={node.language}
         />
@@ -45,9 +46,11 @@ function CodeListing({
   firstLine,
   highlights,
   language,
+  nodeId,
 }: {
   content: string;
   firstLine?: number;
+  nodeId: number;
   highlights: CodeHighlight[];
   language: string;
 }) {
@@ -115,7 +118,11 @@ function CodeListing({
                 {lineNumbers}
               </span>
             )}
-            <SyntaxCode className="code-listing-source" language={language}>
+            <SyntaxCode
+              className="code-listing-source"
+              language={language}
+              origin={{ firstLine: firstLine ?? 1, nodeId }}
+            >
               {content}
             </SyntaxCode>
           </span>

@@ -10,7 +10,7 @@ use crate::repository::{RenderedSegment, ResolvedDiff};
 use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_6_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_7_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
@@ -33,11 +33,14 @@ pub enum ArtifactVersion {
     /// Adds the lesson-wide table of block links.
     #[serde(rename = "1.6.0")]
     V1_6_0,
+    /// Adds the table of definitions shown by the lesson.
+    #[serde(rename = "1.7.0")]
+    V1_7_0,
 }
 
 impl ArtifactVersion {
     /// Every artifact version the runtime can load.
-    pub const SUPPORTED: [Self; 7] = [
+    pub const SUPPORTED: [Self; 8] = [
         Self::V1_0_0,
         Self::V1_1_0,
         Self::V1_2_0,
@@ -45,6 +48,7 @@ impl ArtifactVersion {
         Self::V1_4_0,
         Self::V1_5_0,
         Self::V1_6_0,
+        Self::V1_7_0,
     ];
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -62,6 +66,7 @@ impl ArtifactVersion {
             Self::V1_4_0 => "1.4.0",
             Self::V1_5_0 => "1.5.0",
             Self::V1_6_0 => "1.6.0",
+            Self::V1_7_0 => "1.7.0",
         }
     }
 }
@@ -92,6 +97,33 @@ pub struct LessonPresentation {
     /// Block links by destination without the `#`, such as `queue-def:12-18`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub links: BTreeMap<String, BlockLink>,
+    /// Definitions shown by the lesson, by name; several sites mean the name
+    /// is ambiguous and the browser offers a chooser.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub definitions: BTreeMap<String, Vec<DefinitionSite>>,
+}
+
+/// One shown definition of a name.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DefinitionSite {
+    pub kind: DefinitionKind,
+    pub target: NodeId,
+    /// The definition's lines, in the numbers the target's gutter shows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<LinkedLines>,
+}
+
+/// What a definition defines, which decides which usages link to it: a
+/// function only links calls, a macro only `name!`, everything else any use.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DefinitionKind {
+    Function,
+    Macro,
+    Type,
+    Value,
+    Command,
 }
 
 /// Where a block link points.
@@ -499,11 +531,23 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
         }
     }
 
-    for (destination, link) in &artifact.presentation.links {
-        if link.target.get() as usize >= artifact.presentation.nodes.len()
-            || link
-                .lines
-                .is_some_and(|lines| lines.start == 0 || lines.end < lines.start)
+    let links = artifact
+        .presentation
+        .links
+        .iter()
+        .map(|(key, link)| (key, link.target, link.lines));
+    let definitions = artifact
+        .presentation
+        .definitions
+        .iter()
+        .flat_map(|(name, sites)| {
+            sites
+                .iter()
+                .map(move |site| (name, site.target, site.lines))
+        });
+    for (destination, target, lines) in links.chain(definitions) {
+        if target.get() as usize >= artifact.presentation.nodes.len()
+            || lines.is_some_and(|lines| lines.start == 0 || lines.end < lines.start)
         {
             return Err(ArtifactValidationError::new(format!(
                 "block link `#{destination}` has an invalid target or line range"
@@ -589,6 +633,7 @@ mod tests {
             presentation: LessonPresentation {
                 title: "Test".into(),
                 links: Default::default(),
+                definitions: Default::default(),
                 nodes: vec![CompiledNode {
                     node_id: NodeId::new(0),
                     source_id: "question".into(),

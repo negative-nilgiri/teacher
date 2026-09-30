@@ -1,9 +1,11 @@
 import { createContext, useContext } from "react";
-import type { BlockLink, CodeHighlight, CodeNode, DiffNode, LessonNode } from "./types";
+import type { BlockLink, CodeHighlight, CodeNode, DefinitionSite, DiffNode, LessonNode } from "./types";
 
 export interface LinkContextValue {
   links: Record<string, BlockLink>;
   nodes: LessonNode[];
+  /** Shown definitions by name, for go-to-definition in code. */
+  definitions?: Record<string, DefinitionSite[]>;
   /** True inside a preview, where links render plainly to avoid nesting. */
   inPreview: boolean;
 }

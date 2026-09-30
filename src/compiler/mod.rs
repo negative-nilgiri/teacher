@@ -27,6 +27,7 @@ use crate::source::{
     MarkdownSource,
 };
 
+pub(crate) mod definitions;
 pub(crate) mod links;
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -262,12 +263,15 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
         None => Default::default(),
     };
 
+    let definitions = definitions::index(&nodes);
+
     let artifact = CompiledLesson {
         artifact_version: CURRENT_ARTIFACT_VERSION,
         presentation: LessonPresentation {
             title: source.title,
             nodes,
             links,
+            definitions,
         },
         private: PrivateLesson { answers },
         provenance: BuildProvenance {

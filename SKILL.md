@@ -78,8 +78,10 @@ Answer the user's question in the session; a reference never needs a rebuild.
   diffs at the end. Show a definition once and link it where later blocks rely
   on it: `` [`Queue`](#queue-def) `` or, for part of a block,
   `#queue-def:12-18` (the lines its gutter shows; source schema 2.3.0).
-  Learners preview the target in place. Still repeat a small fragment when the
-  learner must compare it line by line with nearby code.
+  Learners preview the target in place. Names in code also link to the
+  definitions the lesson shows (go to definition), so a definition shown once
+  serves every later use. Still repeat a small fragment when the learner must
+  compare it line by line with nearby code.
 - **Captions** (code and diff) are for what the learner cannot infer from the
   content, mainly a Mermaid diagram's assumption or omission. Never narrate
   arrows, labels, reading direction, or adjacent Markdown.

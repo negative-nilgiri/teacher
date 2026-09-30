@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { blockAnchor, LinkContext, previewNode, useLinks } from "../links";
+import type { LessonNode } from "../types";
 import { CodeBlock } from "./CodeBlock";
 import { DiffBlock } from "./DiffBlock";
 import { Markdown } from "./Markdown";
@@ -35,23 +36,6 @@ export function ReferenceLink({ destination, children }: ReferenceLinkProps) {
         {children}
       </a>
     );
-  }
-
-  const node = previewNode(target, link.lines);
-  let preview: ReactNode;
-  switch (node.type) {
-    case "code":
-      preview = <CodeBlock node={node} />;
-      break;
-    case "diff":
-      preview = <DiffBlock node={node} />;
-      break;
-    case "markdown":
-      preview = <Markdown>{node.content}</Markdown>;
-      break;
-    case "multiple_choice":
-      preview = <Markdown>{node.prompt}</Markdown>;
-      break;
   }
 
   // The preview lives in a portal: it holds block content that cannot nest
@@ -106,11 +90,42 @@ export function ReferenceLink({ destination, children }: ReferenceLinkProps) {
                 : ` · lines ${link.lines.start}–${link.lines.end}`
               : null}
           </span>
-          <LinkContext.Provider value={{ ...context, inPreview: true }}>{preview}</LinkContext.Provider>
+          <TargetPreview lines={link.lines} node={target} />
         </div>,
             document.body,
           )
         : null}
     </>
   );
+}
+
+/**
+ * A block rendered for a preview: trimmed to `lines`, questions as prompt
+ * only, and inside a context that renders links and definitions plainly.
+ */
+export function TargetPreview({
+  node: target,
+  lines,
+}: {
+  node: LessonNode;
+  lines?: { start: number; end: number };
+}) {
+  const context = useLinks();
+  const node = previewNode(target, lines);
+  let preview: ReactNode;
+  switch (node.type) {
+    case "code":
+      preview = <CodeBlock node={node} />;
+      break;
+    case "diff":
+      preview = <DiffBlock node={node} />;
+      break;
+    case "markdown":
+      preview = <Markdown>{node.content}</Markdown>;
+      break;
+    case "multiple_choice":
+      preview = <Markdown>{node.prompt}</Markdown>;
+      break;
+  }
+  return <LinkContext.Provider value={{ ...context, inPreview: true }}>{preview}</LinkContext.Provider>;
 }

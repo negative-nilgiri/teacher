@@ -1,0 +1,362 @@
+{
+  "schema_version": "2.3.0",
+  "title": "Reviewing go to definition",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "overview",
+      "source": {
+        "kind": "file",
+        "path": "lessons/go-to-definition/01-overview.md"
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "helpers",
+      "source": {
+        "kind": "file",
+        "path": "lessons/go-to-definition/02-helpers.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "helper-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 81,
+              "end": 87
+            }
+          ],
+          "annotation": "A word counts only when no identifier character follows it, so `pub` never matches the start of a longer word."
+        },
+        {
+          "lines": [
+            {
+              "start": 100,
+              "end": 105
+            }
+          ],
+          "color": "green",
+          "annotation": "The name is the identifier right after one of the keywords."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/compiler/definitions.rs",
+        "lines": {
+          "start": 67,
+          "end": 105
+        }
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "table",
+      "source": {
+        "kind": "file",
+        "path": "lessons/go-to-definition/03-table.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "defined-name",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 182,
+              "end": 185
+            }
+          ],
+          "annotation": "A Rust `fn` is a function, a `const` a value; each calls the helpers shown above."
+        },
+        {
+          "lines": [
+            {
+              "start": 191,
+              "end": 196
+            }
+          ],
+          "color": "green",
+          "annotation": "Python needs only `def` and `class`, after stepping over `async`."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/compiler/definitions.rs",
+        "lines": {
+          "start": 155,
+          "end": 196
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "kinds",
+      "prompt": {
+        "kind": "inline",
+        "content": "A lesson shows `fn key(...)`. Later code contains `let key = 1;` and `key(queue)`. Which of the two `key` names link to the definition?"
+      },
+      "choices": [
+        {
+          "content": "Only the call `key(queue)`",
+          "correct": true
+        },
+        {
+          "content": "Only the variable in `let key = 1`",
+          "explanation": "A function definition only links usages that are calls; the variable merely shares the name."
+        },
+        {
+          "content": "Both, since the names are the same",
+          "explanation": "Linking both would send the learner from an unrelated variable to the function."
+        }
+      ],
+      "hints": [
+        "What kind does `fn` give a definition, and which usages does that kind accept?"
+      ],
+      "explanation": "`fn key` is a function, and functions only link where they are called. The variable `key` stays plain; the call links."
+    },
+    {
+      "type": "markdown",
+      "id": "extent",
+      "source": {
+        "kind": "file",
+        "path": "lessons/go-to-definition/04-extent.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "extent-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 468,
+              "end": 483
+            }
+          ],
+          "annotation": "Parentheses and braces are counted outside strings and comments; `;` ends a definition only before any body."
+        },
+        {
+          "lines": [
+            {
+              "start": 484,
+              "end": 489
+            }
+          ],
+          "color": "green",
+          "annotation": "A closed body ends the definition; in Go and shell a line without `{` is a whole definition."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/compiler/definitions.rs",
+        "lines": {
+          "start": 442,
+          "end": 493
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "signature",
+      "prompt": {
+        "kind": "inline",
+        "content": "A Rust function's parameters span four lines before its `{`. Where does its recorded extent end?"
+      },
+      "choices": [
+        {
+          "content": "At the closing brace of its body",
+          "correct": true
+        },
+        {
+          "content": "At the end of its first line",
+          "explanation": "That is what a three-line lookahead used to give; parentheses are now tracked until the body opens."
+        },
+        {
+          "content": "At the fortieth line after it",
+          "explanation": "Forty lines is only the cap; the extent ends as soon as the body's braces balance."
+        }
+      ],
+      "hints": [
+        "What stops a `;` or a line break from ending the definition early?"
+      ],
+      "explanation": "While parentheses are open, the signature continues; once `{` opens the body, the definition ends where the braces balance again."
+    },
+    {
+      "type": "markdown",
+      "id": "find",
+      "source": {
+        "kind": "file",
+        "path": "lessons/go-to-definition/05-find.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "find-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 505,
+              "end": 510
+            }
+          ],
+          "annotation": "Each line either starts a definition or not; the extent is found from there."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/compiler/definitions.rs",
+        "lines": {
+          "start": 496,
+          "end": 514
+        }
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "browser",
+      "source": {
+        "kind": "file",
+        "path": "lessons/go-to-definition/06-browser.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "mark-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 65,
+              "end": 67
+            }
+          ],
+          "annotation": "What follows the name decides the usage: `(` is a call, `!` a macro."
+        },
+        {
+          "lines": [
+            {
+              "start": 70,
+              "end": 75
+            }
+          ],
+          "color": "green",
+          "annotation": "The definition's own line never links, and each kind accepts only its usages."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "web/src/definitions.ts",
+        "lines": {
+          "start": 58,
+          "end": 79
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "comment",
+      "prompt": {
+        "kind": "inline",
+        "content": "The text `// call key(queue) here` sits in a comment. Does `key` link?"
+      },
+      "choices": [
+        {
+          "content": "No, comments are skipped before any matching",
+          "correct": true
+        },
+        {
+          "content": "Yes, because it is followed by a parenthesis",
+          "explanation": "The call test only runs on names outside comment and string tokens."
+        },
+        {
+          "content": "Only when the lesson shows one definition",
+          "explanation": "Uniqueness only matters for names in code; comment text never gets that far."
+        }
+      ],
+      "hints": [
+        "Which highlight.js tokens does the marking step skip?"
+      ],
+      "explanation": "highlight.js puts the comment in its own token, which the marking step skips entirely, so nothing inside it links."
+    },
+    {
+      "type": "markdown",
+      "id": "chooser",
+      "source": {
+        "kind": "file",
+        "path": "lessons/go-to-definition/07-chooser.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "click-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 87,
+              "end": 87
+            }
+          ],
+          "annotation": "Only Cmd or Ctrl turns a click into a jump; a plain click still selects text."
+        },
+        {
+          "lines": [
+            {
+              "start": 91,
+              "end": 96
+            }
+          ],
+          "color": "green",
+          "annotation": "One definition jumps right away; several open the chooser, pinned until closed."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "web/src/components/DefinitionLayer.tsx",
+        "lines": {
+          "start": 85,
+          "end": 97
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "ambiguous",
+      "prompt": {
+        "kind": "inline",
+        "content": "A lesson shows two `new` methods. What happens on Cmd/Ctrl+click of a call to `new`?"
+      },
+      "choices": [
+        {
+          "content": "A chooser lists both definitions to pick from",
+          "correct": true
+        },
+        {
+          "content": "The browser jumps to the first definition shown",
+          "explanation": "Guessing would often pick the wrong one, so several sites open a chooser."
+        },
+        {
+          "content": "Nothing happens, since the name is ambiguous",
+          "explanation": "Staying silent was the fallback; the chooser keeps the name useful."
+        }
+      ],
+      "hints": [
+        "How many sites does the mark carry?"
+      ],
+      "explanation": "Both `new` sites are listed, each with a preview and a button, and the learner picks one."
+    },
+    {
+      "type": "markdown",
+      "id": "review",
+      "source": {
+        "kind": "file",
+        "path": "lessons/go-to-definition/08-review.md"
+      }
+    }
+  ]
+}
