@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use super::checks::{Check, Job, Question};
+use super::checks::{Check, Job, JobLink, Question};
 use super::client::{Answers, VerifyError};
 use super::config::VerifyConfig;
 use crate::lint::{
@@ -111,7 +111,7 @@ pub(super) fn findings(
                 continue;
             }
             findings.push(VerifyDiagnostic {
-                finding: locate(lesson, job.block_index, question, severity),
+                finding: locate(lesson, job, question, severity),
                 probability: Some(probability),
                 model: Some(answers.model.clone()),
             });
@@ -140,13 +140,17 @@ fn severity(check: Check, probability: f64, config: &VerifyConfig) -> Option<Sev
 
 fn locate(
     lesson: &LoadedLesson,
-    index: usize,
+    job: &Job,
     question: &Question,
     severity: Severity,
 ) -> LintDiagnostic {
+    let index = job.block_index;
     let base = format!("/blocks/{index}");
     let item = question.item;
     let block = &lesson.source.blocks[index];
+    if question.check == Check::ReferenceMismatch {
+        return locate_link(lesson, &job.links[item], block, severity);
+    }
     let (pointer, message, related) = match (block, question.check) {
         (Block::MultipleChoice(quiz), Check::HintRevealsAnswer) => (
             format!("{base}/hints/{item}"),
@@ -218,6 +222,52 @@ fn locate(
         question.check.suggestion(),
     );
     finding.related = related;
+    finding
+}
+
+fn locate_link(
+    lesson: &LoadedLesson,
+    link: &JobLink,
+    block: &crate::source::Block,
+    severity: Severity,
+) -> LintDiagnostic {
+    let field = &link.field;
+    let location = match &field.file {
+        None => lesson
+            .spans
+            .string_range(&field.pointer, link.start_char, link.end_char),
+        Some(path) => {
+            let before = field.text.chars().take(link.start_char).collect::<String>();
+            let line = before.matches('\n').count() + 1;
+            let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+            SourceLocation::file_line(
+                lesson.root.join(path),
+                line,
+                column,
+                column + link.end_char.saturating_sub(link.start_char),
+            )
+        }
+    };
+    let target = &lesson.source.blocks[link.target_index];
+    let mut finding = LintDiagnostic::new(
+        Check::ReferenceMismatch.code(),
+        severity,
+        format!(
+            "link {} may not show what it says in block `{}`",
+            quote(&link.text),
+            target.id().as_str()
+        ),
+        location,
+        Some(block.id().as_str()),
+        field.pointer.clone(),
+        Check::ReferenceMismatch.suggestion(),
+    );
+    finding.related = vec![RelatedLintLocation {
+        message: "the linked block".to_owned(),
+        location: lesson
+            .spans
+            .location(&format!("/blocks/{}", link.target_index)),
+    }];
     finding
 }
 
@@ -613,6 +663,49 @@ mod tests {
         let text = VerifyReport::from_findings(found, None, Severity::Error).text();
         assert!(text.contains("warning[verify.explanation_contradicts_answer]"));
         assert!(text.contains("= note: probability 0.91 from jev-1.13.0"));
+    }
+
+    #[test]
+    fn reference_mismatches_point_at_the_link_text() {
+        let root = std::env::temp_dir().join(format!(
+            "agent-teacher-verify-grade-links-{}-{}",
+            std::process::id(),
+            NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root).unwrap();
+        let lesson_json = json!({"schema_version":"2.3.0","title":"T","blocks":[
+            {"type":"code","id":"def","language":"rust","source":{"kind":"inline","content":"fn a() {}"}},
+            {"type":"markdown","id":"uses","source":{"kind":"inline","content":"Calls [the parser](#def)."}}
+        ]});
+        let path = root.join("lesson.json");
+        fs::write(&path, serde_json::to_string_pretty(&lesson_json).unwrap()).unwrap();
+        let lesson =
+            crate::lint::load_lesson(&path, &CompileOptions::new(&root), "learnverify").unwrap();
+        let jobs = plan(&lesson, 6000);
+        assert_eq!(jobs.len(), 1);
+        let answers = Answers {
+            model: "jev-1.13.0".into(),
+            probabilities: BTreeMap::from([(
+                "link_0_mismatch".to_owned(),
+                BTreeMap::from([("yes".to_owned(), 0.9), ("no".to_owned(), 0.1)]),
+            )]),
+        };
+        let found = findings(&lesson, &jobs, &[Ok(answers)], &VerifyConfig::default());
+        assert_eq!(found.len(), 1);
+        let finding = &found[0].finding;
+        assert_eq!(finding.code, "verify.reference_mismatch");
+        assert_eq!(finding.severity, Severity::Warning);
+        assert_eq!(finding.pointer, "/blocks/1/source/content");
+        assert_eq!(
+            finding.message,
+            "link “the parser” may not show what it says in block `def`"
+        );
+        assert_eq!(finding.related[0].message, "the linked block");
+        assert_eq!(
+            finding.location,
+            lesson.spans.string_range("/blocks/1/source/content", 6, 24)
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

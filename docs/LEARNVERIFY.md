@@ -52,6 +52,12 @@ has the problem.
 | `verify.annotation_does_not_explain` | each annotated highlight group | the annotation |
 | `verify.annotation_contradicts_code` | each annotated highlight group | the annotation (related: the group's `lines`) |
 | `verify.highlight_unexplained` | each highlight group without annotation | the group's `lines` |
+| `verify.reference_mismatch` | each block link (source schema 2.3.0) | the link text (related: the linked block) |
+
+Block links get their own request per linking block: the block, each linked
+target (trimmed to the linked lines), and the list of links with their text.
+Link targets also join the excerpts of quiz and highlight requests, so a
+question is judged with the definitions it relies on in view.
 
 The model's probability that the answer is "yes" becomes the severity:
 
@@ -102,7 +108,7 @@ ignore_codes = []
 ```
 
 Probabilities lie in `[0, 1]`, and both warning thresholds must be at least
-`min_info_probability`. `ignore_codes` accepts only the seven check codes.
+`min_info_probability`. `ignore_codes` accepts only the eight check codes.
 
 ## What is sent
 

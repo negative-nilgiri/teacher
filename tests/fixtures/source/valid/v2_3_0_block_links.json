@@ -1,0 +1,17 @@
+{
+  "schema_version": "2.3.0",
+  "title": "Block links",
+  "blocks": [
+    {
+      "type": "code",
+      "id": "queue-def",
+      "language": "rust",
+      "source": { "kind": "inline", "content": "struct Queue {\n    items: Vec<u32>,\n}" }
+    },
+    {
+      "type": "markdown",
+      "id": "use",
+      "source": { "kind": "inline", "content": "`pop` reads from the [`Queue`](#queue-def:1-3) buffer." }
+    }
+  ]
+}

@@ -117,6 +117,12 @@ export type LessonNode =
   | DiffNode
   | MultipleChoiceNode;
 
+/** Where a block link points: a node and, optionally, displayed lines. */
+export interface BlockLink {
+  target: NodeId;
+  lines?: { start: number; end: number };
+}
+
 export interface PublicLesson {
   title: string;
   /** The lesson source relative to the filesystem root, when recorded. */
@@ -124,6 +130,8 @@ export interface PublicLesson {
   /** The `.learn` file as given to `learn serve`. */
   artifact_path?: string;
   nodes: LessonNode[];
+  /** Block links by destination without the `#`, such as `queue-def:12-18`. */
+  links?: Record<string, BlockLink>;
 }
 
 export interface Attempt {

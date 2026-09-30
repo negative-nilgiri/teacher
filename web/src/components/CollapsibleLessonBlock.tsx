@@ -1,4 +1,5 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { blockAnchor } from "../links";
 
 interface CollapsibleLessonBlockProps {
   children: ReactNode;
@@ -15,13 +16,33 @@ export function CollapsibleLessonBlock({
   actions,
 }: CollapsibleLessonBlockProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [flashing, setFlashing] = useState(false);
   const contentId = useId();
+  const anchor = blockAnchor(sourceId);
+
+  // A jump to this block expands it and flashes it briefly.
+  useEffect(() => {
+    let timer: number | undefined;
+    const onHash = () => {
+      if (window.location.hash !== `#${anchor}`) return;
+      setCollapsed(false);
+      setFlashing(true);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setFlashing(false), 1600);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      window.clearTimeout(timer);
+    };
+  }, [anchor]);
   const action = collapsed ? "Expand" : "Collapse";
 
   return (
     <section
       aria-label={`${kind} block: ${sourceId}`}
-      className={`lesson-block lesson-block-shell${collapsed ? " lesson-block-collapsed" : ""}`}
+      className={`lesson-block lesson-block-shell${collapsed ? " lesson-block-collapsed" : ""}${flashing ? " lesson-block-flash" : ""}`}
+      id={anchor}
     >
       <header className="lesson-block-toolbar">
         <div className="lesson-block-identity">

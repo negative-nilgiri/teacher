@@ -8,7 +8,7 @@ for a learner to understand one change at a time.
 Use the compiler as the source of truth:
 
 ```console
-learnc schema --version 2.1.0
+learnc schema --version 2.3.0
 learnc check lesson.json
 learnc lint lesson.json
 learnc build lesson.json
@@ -51,7 +51,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "2.2.0",
+  "schema_version": "2.3.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -68,7 +68,9 @@ schema `2.0.0` changes the multiple-choice `prompt` from a string to a Markdown
 source object so it can be inline or file-backed. This is a breaking source
 shape. Source schema `2.1.0` adds optional Markdown annotations to code
 highlight groups, and `2.2.0` adds optional per-choice explanations for
-distractors. Use `2.2.0` for new lessons.
+distractors. Source schema `2.3.0` has the same shape and turns `#block-id`
+links into block links (see [Linking blocks](#linking-blocks)). Use `2.3.0`
+for new lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -513,6 +515,31 @@ inspection. Remove that directory when finished. From a source checkout,
 workflow and removes the temporary repository when the server exits. The
 integration test invokes the same setup script, so the documented example and
 tested fixture cannot silently diverge.
+
+## Linking blocks
+
+Since source schema `2.3.0`, any Markdown can link to another block by its ID,
+so a later block can point at a definition instead of repeating it:
+
+```markdown
+`pop_front` returns an item of the [`Queue`](#queue-def) buffer, whose
+[`items` field](#queue-def:12-18) holds the values.
+```
+
+`#queue-def:12-18` links part of a code or diff block, using the line numbers
+its gutter shows: file lines for file and Git-blob code, positions for inline
+code, and new-side lines for diffs. Learners get a preview of the target on
+hover or focus, trimmed to the linked lines, and clicking jumps to the block
+(Back returns). A preview of a question shows only its prompt.
+
+`learnc check` rejects a link to an unknown block
+(`source.reference.unknown_block`), a malformed or out-of-range line range
+(`source.reference.invalid_lines`), and a range on a Markdown or question
+block (`source.reference.lines_on_non_code`). Lint then reports previews
+longer than 15 lines, links to the next or previous block, links to a later
+block, excerpts repeated far apart, and names formatted as code that no nearby
+block shows; `learnverify` asks whether each link's target shows what its text
+says. In schemas before `2.3.0`, `#…` links remain ordinary links.
 
 ## Questions about a lesson
 

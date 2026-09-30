@@ -10,7 +10,7 @@ use crate::repository::{RenderedSegment, ResolvedDiff};
 use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_5_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_6_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
@@ -30,17 +30,21 @@ pub enum ArtifactVersion {
     /// Adds blob IDs, `HEAD` commits, and the lesson path for references.
     #[serde(rename = "1.5.0")]
     V1_5_0,
+    /// Adds the lesson-wide table of block links.
+    #[serde(rename = "1.6.0")]
+    V1_6_0,
 }
 
 impl ArtifactVersion {
     /// Every artifact version the runtime can load.
-    pub const SUPPORTED: [Self; 6] = [
+    pub const SUPPORTED: [Self; 7] = [
         Self::V1_0_0,
         Self::V1_1_0,
         Self::V1_2_0,
         Self::V1_3_0,
         Self::V1_4_0,
         Self::V1_5_0,
+        Self::V1_6_0,
     ];
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -57,6 +61,7 @@ impl ArtifactVersion {
             Self::V1_3_0 => "1.3.0",
             Self::V1_4_0 => "1.4.0",
             Self::V1_5_0 => "1.5.0",
+            Self::V1_6_0 => "1.6.0",
         }
     }
 }
@@ -84,6 +89,27 @@ pub struct LessonPresentation {
     pub title: String,
     /// Authored order is preserved. Node IDs are dense indices into this list.
     pub nodes: Vec<CompiledNode>,
+    /// Block links by destination without the `#`, such as `queue-def:12-18`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub links: BTreeMap<String, BlockLink>,
+}
+
+/// Where a block link points.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockLink {
+    pub target: NodeId,
+    /// Lines as the target displays them: file lines for code (fragment
+    /// positions for inline code), new-side lines for diffs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<LinkedLines>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LinkedLines {
+    pub start: u32,
+    pub end: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -473,6 +499,18 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
         }
     }
 
+    for (destination, link) in &artifact.presentation.links {
+        if link.target.get() as usize >= artifact.presentation.nodes.len()
+            || link
+                .lines
+                .is_some_and(|lines| lines.start == 0 || lines.end < lines.start)
+        {
+            return Err(ArtifactValidationError::new(format!(
+                "block link `#{destination}` has an invalid target or line range"
+            )));
+        }
+    }
+
     let mut answered = BTreeSet::new();
     for answer in &artifact.private.answers {
         if !answered.insert(answer.node_id) {
@@ -550,6 +588,7 @@ mod tests {
             artifact_version: CURRENT_ARTIFACT_VERSION,
             presentation: LessonPresentation {
                 title: "Test".into(),
+                links: Default::default(),
                 nodes: vec![CompiledNode {
                     node_id: NodeId::new(0),
                     source_id: "question".into(),

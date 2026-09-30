@@ -75,8 +75,11 @@ Answer the user's question in the session; a reference never needs a rebuild.
 
 - **Local teaching units.** Explain a concept, show its code or diff right
   there, then ask any follow-up question before moving on. Do not collect
-  diffs at the end. Repeat a small relevant fragment rather than pointing back
-  to a distant block.
+  diffs at the end. Show a definition once and link it where later blocks rely
+  on it: `` [`Queue`](#queue-def) `` or, for part of a block,
+  `#queue-def:12-18` (the lines its gutter shows; source schema 2.3.0).
+  Learners preview the target in place. Still repeat a small fragment when the
+  learner must compare it line by line with nearby code.
 - **Captions** (code and diff) are for what the learner cannot infer from the
   content, mainly a Mermaid diagram's assumption or omission. Never narrate
   arrows, labels, reading direction, or adjacent Markdown.

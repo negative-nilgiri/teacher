@@ -246,6 +246,10 @@ fn lint_help_exposes_each_config_threshold_as_a_flag() {
         "--max-inline-prose-chars",
         "--diff-addition-heavy-min-lines",
         "--diff-max-deletion-ratio",
+        "--max-reference-preview-lines",
+        "--repeated-excerpt-gap",
+        "--repeated-excerpt-min-lines",
+        "--code-reference-gap",
         "--ignore-code",
     ] {
         assert!(help.contains(flag), "missing {flag} from lint help");

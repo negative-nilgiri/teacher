@@ -271,7 +271,7 @@ ignore_codes = []
 - All probabilities lie in `[0, 1]`. `min_warning_probability` and
   `min_contradiction_warning_probability` must each be at least
   `min_info_probability`.
-- `ignore_codes` accepts only the seven check codes. Unlike lint, every check
+- `ignore_codes` accepts only the check codes (eight since `verify.reference_mismatch`). Unlike lint, every check
   is ignorable, because none is stronger than `warning`; `verify.unavailable`
   is not a check and is rejected.
 - Every key also has a CLI flag, and the packaged `verify.example.toml` lists
@@ -329,6 +329,9 @@ breaking change.
 - No request cap: calls are cheap, so only time is bounded.
 - No model pinning: everything is experimental, and each finding already
   records the resolved `model`.
+- Block links (source schema 2.3.0) add `verify.reference_mismatch`, asked in
+  one request per linking block, and link targets join quiz and highlight
+  excerpts; `CHECK_VERSION` 2.
 
 ## Open questions
 

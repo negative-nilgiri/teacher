@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { loadState, revealAnswer, submitChoice } from "./api";
 import { LessonNodeView } from "./components/LessonNodeView";
+import { LinkContext } from "./links";
 import type {
   ChoiceId,
   LessonProgress,
@@ -97,6 +98,7 @@ export function App() {
         </div>
       </header>
 
+      <LinkContext.Provider value={{ inPreview: false, links: lesson.links ?? {}, nodes: lesson.nodes }}>
       <main className="shell lesson">
         {error ? <p className="request-error" role="alert">{error}</p> : null}
         {lesson.nodes.map((node) => (
@@ -113,6 +115,7 @@ export function App() {
           />
         ))}
       </main>
+      </LinkContext.Provider>
     </>
   );
 }

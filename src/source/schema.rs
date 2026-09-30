@@ -2,7 +2,7 @@ use super::{
     SchemaVersion,
     model::{
         LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
-        LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0,
+        LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0, LessonSourceV2_3_0,
     },
 };
 
@@ -21,6 +21,7 @@ pub fn source_json_schema_for(version: SchemaVersion) -> serde_json::Value {
         SchemaVersion::V2_0_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_0_0)),
         SchemaVersion::V2_1_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_1_0)),
         SchemaVersion::V2_2_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_2_0)),
+        SchemaVersion::V2_3_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_3_0)),
     }
     .expect("generated lesson source schema must serialize")
 }

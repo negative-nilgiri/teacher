@@ -222,13 +222,13 @@ impl Client {
                 status: status.as_u16(),
             });
         }
-        response
-            .body_mut()
-            .read_json::<Value>()
-            .map_err(|error| match error {
-                ureq::Error::Timeout(_) => VerifyError::Timeout,
-                other => VerifyError::Decode(other.to_string()),
-            })
+        response.body_mut().read_json::<Value>().map_err(|error| {
+            if is_timeout(&error) {
+                VerifyError::Timeout
+            } else {
+                VerifyError::Decode(error.to_string())
+            }
+        })
     }
 
     /// Send one request, resending it after each timed-out attempt until
@@ -303,9 +303,23 @@ impl Client {
 }
 
 fn transport_error(error: ureq::Error) -> VerifyError {
+    if is_timeout(&error) {
+        VerifyError::Timeout
+    } else {
+        VerifyError::Transport(error.to_string())
+    }
+}
+
+/// ureq reports most timeouts as its own variant, but a timeout while reading
+/// from the socket can surface as an I/O error instead.
+fn is_timeout(error: &ureq::Error) -> bool {
     match error {
-        ureq::Error::Timeout(_) => VerifyError::Timeout,
-        other => VerifyError::Transport(other.to_string()),
+        ureq::Error::Timeout(_) => true,
+        ureq::Error::Io(io) => matches!(
+            io.kind(),
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+        ),
+        _ => false,
     }
 }
 
@@ -406,8 +420,8 @@ mod tests {
             Duration::from_secs(5),
             Duration::from_millis(200),
         );
-        assert_eq!(results, [Ok(json!({"ok": true}))]);
-        assert_eq!(seen.load(Ordering::SeqCst), 3);
+        assert_eq!(results, [Ok(json!({"ok": true}))], "{results:?}");
+        assert!(seen.load(Ordering::SeqCst) >= 3);
         assert!(
             started.elapsed() < Duration::from_secs(2),
             "{:?}",

@@ -240,6 +240,7 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
             lesson_path: artifact.provenance.lesson_path.clone(),
             artifact_path: None,
             nodes,
+            links: artifact.presentation.links.clone(),
         },
         answers,
     }
@@ -306,6 +307,9 @@ pub struct PublicLesson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact_path: Option<String>,
     pub nodes: Vec<PublicLessonNode>,
+    /// Block links by destination without the `#`.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub links: std::collections::BTreeMap<String, crate::artifact::BlockLink>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -430,6 +434,7 @@ pub(crate) mod tests {
             artifact_version: CURRENT_ARTIFACT_VERSION,
             presentation: LessonPresentation {
                 title: "Runtime test".into(),
+                links: Default::default(),
                 nodes: vec![CompiledNode {
                     node_id: NodeId::new(0),
                     source_id: "question".into(),

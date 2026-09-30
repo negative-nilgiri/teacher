@@ -7,6 +7,8 @@ use crate::source::{Block, CodeSource, DiffSource, GitDiffTarget, LessonSource, 
 
 use super::{LintConfig, LintDiagnostic, Severity, SourceLocation, SpanIndex};
 
+mod references;
+
 pub(super) fn collect(
     source: &LessonSource,
     artifact: &CompiledLesson,
@@ -121,6 +123,7 @@ pub(super) fn collect(
     }
     rules.question_ratio();
     rules.unshown_code_references();
+    rules.reference_rules();
     rules
         .findings
         .retain(|finding| !config.ignore_codes.contains(&finding.code));
@@ -983,12 +986,17 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.code.highlight_coverage"
         | "lint.question.uneven_choice_lengths"
         | "lint.mermaid.style_or_subgraph"
-        | "lint.diff.mostly_additions" => Severity::Warning,
+        | "lint.diff.mostly_additions"
+        | "lint.reference.large_preview" => Severity::Warning,
         "lint.code.no_highlights"
         | "lint.code.many_highlight_ranges"
         | "lint.code.filename_reference_far"
         | "lint.lesson.few_questions"
         | "lint.diff.markdown_patch"
+        | "lint.reference.forward"
+        | "lint.reference.adjacent"
+        | "lint.code.repeated_excerpt"
+        | "lint.markdown.distant_code_reference"
         | "lint.question.no_hints"
         | "lint.question.unexplained_distractors"
         | "lint.markdown.unshown_code_reference" => Severity::Info,
@@ -1425,6 +1433,135 @@ mod tests {
                 .contains("followed by a `git_blob` code source at revision `HEAD` with `lines`"),
             "{}",
             flagged.suggestion
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn md(id: &str, content: &str) -> Value {
+        json!({"type":"markdown","id":id,"source":{"kind":"inline","content":content}})
+    }
+
+    fn codes_of<'a>(found: &'a [LintDiagnostic], code: &str) -> Vec<&'a LintDiagnostic> {
+        found.iter().filter(|f| f.code == code).collect()
+    }
+
+    #[test]
+    fn block_links_report_large_previews_forward_and_adjacent_targets() {
+        let root = temp_root();
+        let long = (1..=20)
+            .map(|n| format!("let v{n} = {n};\n"))
+            .collect::<String>();
+        fs::write(root.join("long.rs"), &long).unwrap();
+        let lesson = json!({"schema_version":"2.3.0","title":"Links","blocks":[
+            {"type":"code","id":"long","source":{"kind":"file","path":"long.rs"},
+             "highlights":[{"lines":[{"start":4,"end":6}],"annotation":"The key part."}]},
+            md("whole", "See [all of it](#long)."),
+            md("ranged", "See [part](#long:4-6)."),
+            md("ahead", "Later: [the end](#end)."),
+            md("filler", "Filler."),
+            md("end", "The end.")
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let large = codes_of(&found, "lint.reference.large_preview");
+        assert_eq!(large.len(), 1);
+        assert_eq!(large[0].block_id.as_deref(), Some("whole"));
+        assert_eq!(large[0].message, "link to `long` previews 20 lines");
+        assert!(
+            large[0].suggestion.contains("`#long:4-6`"),
+            "{}",
+            large[0].suggestion
+        );
+        assert!(
+            large[0]
+                .suggestion
+                .contains("highlight group 0 covers lines 4–6")
+        );
+        assert_eq!(large[0].severity, Severity::Warning);
+        let adjacent = codes_of(&found, "lint.reference.adjacent");
+        assert_eq!(
+            adjacent
+                .iter()
+                .map(|f| f.block_id.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            ["whole"]
+        );
+        let forward = codes_of(&found, "lint.reference.forward");
+        assert_eq!(forward.len(), 1);
+        assert_eq!(forward[0].block_id.as_deref(), Some("ahead"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn repeated_excerpts_far_apart_are_reported_on_the_later_block() {
+        let root = temp_root();
+        fs::write(
+            root.join("q.rs"),
+            (1..=12).map(|n| format!("line {n}\n")).collect::<String>(),
+        )
+        .unwrap();
+        let code = |id: &str, start: u32, end: u32| json!({"type":"code","id":id,"source":{"kind":"file","path":"q.rs","lines":{"start":start,"end":end}}});
+        let lesson = json!({"schema_version":"2.3.0","title":"Repeat","blocks":[
+            code("first", 1, 10),
+            md("a", "A."), code("near", 2, 8), md("b", "B."),
+            md("c", "C."),
+            code("again", 3, 9)
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let repeated = codes_of(&found, "lint.code.repeated_excerpt");
+        // `near` is only one block after `first`; `again` is four blocks after it.
+        assert_eq!(repeated.len(), 1);
+        assert_eq!(repeated[0].block_id.as_deref(), Some("again"));
+        assert_eq!(repeated[0].pointer, "/blocks/5/source/lines");
+        assert_eq!(
+            repeated[0].message,
+            "lines 3–9 of q.rs are already shown in block `first`"
+        );
+        assert!(repeated[0].suggestion.contains("#first:3-9"));
+        assert_eq!(repeated[0].related.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn distant_names_suggest_a_link_and_never_overlap_unshown_names() {
+        let root = temp_root();
+        let lesson = json!({"schema_version":"2.3.0","title":"Names","blocks":[
+            {"type":"code","id":"queue-def","language":"rust","source":{"kind":"inline","content":"// buffer\nstruct Queue {}"}},
+            md("near", "`Queue` is close."),
+            md("f1", "One."), md("f2", "Two."), md("f3", "Three."),
+            md("far", "Later, `Queue`, `buffer` and `Missing` appear."),
+            md("linked", "Later, [`Queue`](#queue-def) is linked.")
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let distant = codes_of(&found, "lint.markdown.distant_code_reference");
+        assert_eq!(distant.len(), 1);
+        assert_eq!(distant[0].block_id.as_deref(), Some("far"));
+        assert_eq!(
+            distant[0].message,
+            "`Queue` is shown in block `queue-def`, 5 blocks away, but in no block within 3"
+        );
+        assert!(
+            distant[0].suggestion.contains("[`Queue`](#queue-def:2)"),
+            "{}",
+            distant[0].suggestion
+        );
+        // `buffer` only appears in a comment there: plain lowercase words are skipped.
+        assert!(distant.iter().all(|f| !f.message.contains("`buffer`")));
+        let unshown = codes_of(&found, "lint.markdown.unshown_code_reference");
+        assert!(unshown.iter().all(|f| f.message.contains("`Missing`")));
+        assert!(!unshown.is_empty());
+
+        // Older schemas cannot link, so the suggestion says what is needed.
+        let mut older = json!({"schema_version":"2.2.0","title":"Names","blocks":[
+            {"type":"code","id":"queue-def","language":"rust","source":{"kind":"inline","content":"struct Queue {}"}},
+            md("f1", "One."), md("f2", "Two."), md("f3", "Three."),
+            md("far", "Later, `Queue`.")
+        ]});
+        let found = findings(older.take(), &root, &LintConfig::default());
+        let distant = codes_of(&found, "lint.markdown.distant_code_reference");
+        assert!(
+            distant[0]
+                .suggestion
+                .ends_with("(block links need source schema 2.3.0).")
         );
         fs::remove_dir_all(root).unwrap();
     }

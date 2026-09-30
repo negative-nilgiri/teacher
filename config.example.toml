@@ -29,6 +29,15 @@ diff_addition_heavy_min_lines = 20
 # ...and its deleted lines are at most this fraction of its added lines.
 diff_max_deletion_ratio = 0.10
 
+# Warn when a block link's preview would show more than this many lines.
+max_reference_preview_lines = 15
+# Report two code blocks this many blocks apart that show the same lines...
+repeated_excerpt_gap = 3
+# ...when at least this many identical lines of one file repeat (minimum 1).
+repeated_excerpt_min_lines = 5
+# Report a name formatted as code that no block within this many blocks shows.
+code_reference_gap = 3
+
 # Error when inline code or diff content exceeds this many decoded characters.
 max_inline_code_diff_chars = 256
 # Error when inline Markdown or quiz prompt content exceeds this many characters.

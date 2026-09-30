@@ -7,8 +7,12 @@
 
 use serde_json::{Value, json};
 
+use crate::artifact::LinkedLines;
 use crate::artifact::{
     CompiledCodeHighlight, CompiledNode, CompiledNodeContent, ResourceProvenance,
+};
+use crate::compiler::links::{
+    LinkOccurrence, MarkdownField, find_links, markdown_fields, target_of,
 };
 use crate::lint::LoadedLesson;
 use crate::repository::{DiffLineKind, ResolvedDiff};
@@ -16,7 +20,7 @@ use crate::source::{Block, MultipleChoiceBlock};
 
 /// Version of the question wording and state shape. Changing either changes
 /// answers, so bump it with any such change; it is part of every cache key.
-pub(super) const CHECK_VERSION: u32 = 1;
+pub(super) const CHECK_VERSION: u32 = 2;
 
 const TRUNCATED: &str = "\n[… truncated]";
 
@@ -30,10 +34,11 @@ pub(super) enum Check {
     AnnotationDoesNotExplain,
     AnnotationContradictsCode,
     HighlightUnexplained,
+    ReferenceMismatch,
 }
 
 impl Check {
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 8] = [
         Self::HintRevealsAnswer,
         Self::ExplanationContradictsAnswer,
         Self::MultipleDefensibleChoices,
@@ -41,6 +46,7 @@ impl Check {
         Self::AnnotationDoesNotExplain,
         Self::AnnotationContradictsCode,
         Self::HighlightUnexplained,
+        Self::ReferenceMismatch,
     ];
 
     pub(super) const fn code(self) -> &'static str {
@@ -52,6 +58,7 @@ impl Check {
             Self::AnnotationDoesNotExplain => "verify.annotation_does_not_explain",
             Self::AnnotationContradictsCode => "verify.annotation_contradicts_code",
             Self::HighlightUnexplained => "verify.highlight_unexplained",
+            Self::ReferenceMismatch => "verify.reference_mismatch",
         }
     }
 
@@ -82,6 +89,9 @@ impl Check {
             Self::HighlightUnexplained => {
                 "Add an `annotation`, or explain the lines in the Markdown next to the block."
             }
+            Self::ReferenceMismatch => {
+                "Point the link at the block or lines it describes, or reword its text to match them."
+            }
         }
     }
 }
@@ -105,6 +115,18 @@ pub(super) struct Job {
     pub(super) block_index: usize,
     pub(super) state: Value,
     pub(super) questions: Vec<Question>,
+    /// For link jobs: the links asked about, in question order.
+    pub(super) links: Vec<JobLink>,
+}
+
+/// A block link a `link_N_mismatch` question is about, with where to report it.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct JobLink {
+    pub(super) field: MarkdownField,
+    pub(super) start_char: usize,
+    pub(super) end_char: usize,
+    pub(super) text: String,
+    pub(super) target_index: usize,
 }
 
 impl Job {
@@ -127,23 +149,177 @@ pub(super) fn plan(lesson: &LoadedLesson, max_context_chars: usize) -> Vec<Job> 
     for (index, (block, node)) in lesson.source.blocks.iter().zip(nodes).enumerate() {
         match (block, &node.content) {
             (Block::MultipleChoice(block), CompiledNodeContent::MultipleChoice { prompt, .. }) => {
-                let mut excerpt = unit_context(lesson, index, max_context_chars);
+                let (mut excerpt, unit, remaining) = unit_context(lesson, index, max_context_chars);
                 excerpt.push(quiz_entry(block, prompt));
+                let mut sources = unit;
+                sources.push(index);
+                add_linked_targets(lesson, &mut excerpt, &sources, remaining);
                 jobs.push(Job {
                     block_index: index,
                     state: lesson_state(title, excerpt, block.id.as_str()),
                     questions: quiz_questions(block),
+                    links: Vec::new(),
                 });
             }
             (Block::Code(_), CompiledNodeContent::Code { highlights, .. })
                 if !highlights.is_empty() =>
             {
-                jobs.push(highlight_job(title, nodes, index, max_context_chars));
+                jobs.push(highlight_job(lesson, index, max_context_chars));
             }
             _ => {}
         }
+        if let Some(job) = link_job(lesson, index, max_context_chars) {
+            jobs.push(job);
+        }
     }
     jobs
+}
+
+/// Links whose targets resolve, found in the Markdown fields of `blocks`.
+fn resolved_links(
+    lesson: &LoadedLesson,
+    blocks: &[usize],
+) -> Vec<(MarkdownField, LinkOccurrence, usize, Option<LinkedLines>)> {
+    let nodes = &lesson.artifact.presentation.nodes;
+    markdown_fields(&lesson.source, nodes)
+        .into_iter()
+        .filter(|field| blocks.contains(&field.block_index))
+        .flat_map(|field| {
+            find_links(&field.text)
+                .into_iter()
+                .filter_map(|link| {
+                    let (node, lines) = target_of(
+                        &lesson.artifact.presentation.links,
+                        nodes,
+                        &link.destination,
+                    )?;
+                    Some((field.clone(), link, node.node_id.get() as usize, lines))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// A linked block as context: the target with only its linked lines for a
+/// ranged code link, and only the prompt of a quiz, capped at `budget`.
+fn linked_entry(node: &CompiledNode, lines: Option<LinkedLines>, budget: usize) -> (Value, usize) {
+    match (&node.content, lines) {
+        (CompiledNodeContent::MultipleChoice { prompt, .. }, _) => {
+            let (prompt, used) = truncate(prompt, budget);
+            (
+                json!({ "id": node.source_id, "kind": "multiple_choice", "prompt": prompt }),
+                used,
+            )
+        }
+        (
+            CompiledNodeContent::Code {
+                content,
+                first_line,
+                ..
+            },
+            Some(lines),
+        ) => {
+            let first = first_line.unwrap_or(1);
+            let slice = content
+                .lines()
+                .skip((lines.start - first) as usize)
+                .take((lines.end - lines.start + 1) as usize)
+                .collect::<Vec<_>>()
+                .join("\n");
+            let (mut entry, _) = context_entry(node, budget);
+            let (slice, used) = truncate(&slice, budget);
+            entry["content"] = json!(slice);
+            entry["first_line"] = json!(lines.start);
+            (entry, used)
+        }
+        (_, lines) => {
+            let (mut entry, used) = context_entry(node, budget);
+            if let Some(lines) = lines {
+                entry["linked_lines"] = json!({ "start": lines.start, "end": lines.end });
+            }
+            (entry, used)
+        }
+    }
+}
+
+/// Add the targets of links found in `sources` that the excerpt lacks.
+fn add_linked_targets(
+    lesson: &LoadedLesson,
+    excerpt: &mut Vec<Value>,
+    sources: &[usize],
+    mut remaining: usize,
+) {
+    let nodes = &lesson.artifact.presentation.nodes;
+    for (_, _, target, lines) in resolved_links(lesson, sources) {
+        let id = &nodes[target].source_id;
+        if remaining == 0 || excerpt.iter().any(|entry| entry["id"] == id.as_str()) {
+            continue;
+        }
+        let (entry, used) = linked_entry(&nodes[target], lines, remaining);
+        remaining -= used.min(remaining);
+        excerpt.push(entry);
+    }
+}
+
+/// One request per block whose text contains block links: the block, each
+/// linked target, and one `link_N_mismatch` question per link.
+fn link_job(lesson: &LoadedLesson, index: usize, max_chars: usize) -> Option<Job> {
+    if !lesson.source.schema_version.has_block_links() {
+        return None;
+    }
+    let found = resolved_links(lesson, &[index]);
+    if found.is_empty() {
+        return None;
+    }
+    let nodes = &lesson.artifact.presentation.nodes;
+    let node = &nodes[index];
+    let (block_entry, used) = match (&lesson.source.blocks[index], &node.content) {
+        (Block::MultipleChoice(block), CompiledNodeContent::MultipleChoice { prompt, .. }) => {
+            (quiz_entry(block, prompt), 0)
+        }
+        _ => context_entry(node, max_chars),
+    };
+    let mut excerpt = vec![block_entry];
+    let mut remaining = max_chars.saturating_sub(used);
+    let mut links = Vec::new();
+    let mut described = Vec::new();
+    for (position, (field, link, target, lines)) in found.into_iter().enumerate() {
+        let target_id = nodes[target].source_id.clone();
+        if !excerpt
+            .iter()
+            .any(|entry| entry["id"] == target_id.as_str())
+            && remaining > 0
+        {
+            let (entry, used) = linked_entry(&nodes[target], lines, remaining);
+            remaining -= used.min(remaining);
+            excerpt.push(entry);
+        }
+        described.push(json!({
+            "id": format!("link_{position}"),
+            "text": link.text,
+            "destination": format!("#{}", link.destination),
+            "target": target_id,
+        }));
+        links.push(JobLink {
+            field,
+            start_char: link.start_char,
+            end_char: link.end_char,
+            text: link.text,
+            target_index: target,
+        });
+    }
+    let mut state = lesson_state(
+        &lesson.artifact.presentation.title,
+        excerpt,
+        &node.source_id,
+    );
+    state["links"] = json!(described);
+    Some(Job {
+        block_index: index,
+        state,
+        questions: (0..links.len()).map(link_mismatch).collect(),
+        links,
+    })
 }
 
 fn lesson_state(title: &str, excerpt: Vec<Value>, subject: &str) -> Value {
@@ -158,7 +334,11 @@ fn lesson_state(title: &str, excerpt: Vec<Value>, subject: &str) -> Value {
 /// one unit, so a question right after another still gets the unit before
 /// both. Blocks are kept nearest-first within `max_chars`; the block that
 /// crosses the limit is truncated and older ones are dropped.
-fn unit_context(lesson: &LoadedLesson, question_index: usize, max_chars: usize) -> Vec<Value> {
+fn unit_context(
+    lesson: &LoadedLesson,
+    question_index: usize,
+    max_chars: usize,
+) -> (Vec<Value>, Vec<usize>, usize) {
     let blocks = &lesson.source.blocks;
     let mut cursor = question_index;
     while cursor > 0 && matches!(blocks[cursor - 1], Block::MultipleChoice(_)) {
@@ -172,7 +352,7 @@ fn unit_context(lesson: &LoadedLesson, question_index: usize, max_chars: usize) 
 
     let mut remaining = max_chars;
     let mut entries = Vec::new();
-    for index in unit {
+    for &index in &unit {
         if remaining == 0 {
             break;
         }
@@ -182,7 +362,7 @@ fn unit_context(lesson: &LoadedLesson, question_index: usize, max_chars: usize) 
         entries.push(entry);
     }
     entries.reverse();
-    entries
+    (entries, unit, remaining)
 }
 
 /// A Markdown, code, or diff block as quiz context, with its content capped
@@ -296,7 +476,9 @@ fn quiz_questions(block: &MultipleChoiceBlock) -> Vec<Question> {
     questions
 }
 
-fn highlight_job(title: &str, nodes: &[CompiledNode], index: usize, max_chars: usize) -> Job {
+fn highlight_job(lesson: &LoadedLesson, index: usize, max_chars: usize) -> Job {
+    let nodes = &lesson.artifact.presentation.nodes;
+    let title = &lesson.artifact.presentation.title;
     let node = &nodes[index];
     let CompiledNodeContent::Code {
         content,
@@ -336,9 +518,14 @@ fn highlight_job(title: &str, nodes: &[CompiledNode], index: usize, max_chars: u
     if let Some((id, text)) = adjacent_markdown(nodes, index, false)
         && remaining > 0
     {
-        let (content, _) = truncate(text, remaining);
+        let (content, used) = truncate(text, remaining);
+        remaining -= used;
         excerpt.push(json!({ "id": id, "kind": "markdown", "content": content }));
     }
+    let mut sources = vec![index];
+    sources.extend(index.checked_sub(1));
+    sources.push(index + 1);
+    add_linked_targets(lesson, &mut excerpt, &sources, remaining);
 
     let questions = highlights
         .iter()
@@ -358,6 +545,7 @@ fn highlight_job(title: &str, nodes: &[CompiledNode], index: usize, max_chars: u
         block_index: index,
         state: lesson_state(title, excerpt, &node.source_id),
         questions,
+        links: Vec::new(),
     }
 }
 
@@ -626,6 +814,29 @@ fn annotation_contradicts_code(group: usize) -> Question {
     )
 }
 
+fn link_mismatch(index: usize) -> Question {
+    let link = format!("link_{index}");
+    yes_no(
+        format!("{link}_mismatch"),
+        Check::ReferenceMismatch,
+        index,
+        format!(
+            "In the block named by `subject`, does link `{link}` point at content that fails to show what its link text says?"
+        ),
+        format!(
+            "`{link}` is listed in `links`, with its text and `target`. Compare the text with the target block in the excerpt, or with its `content` when only some lines are linked. Yes means the link is wrong or stale, which is a problem."
+        ),
+        [
+            "The linked block or lines do not contain what the link text names or describes: for example another function, a different struct, or lines that moved after a code change. This is a problem.",
+            "A link whose target does show what the text names, even if it shows more around it.",
+        ],
+        [
+            "The linked block or lines show what the link text names or describes.",
+            "A target that only mentions the named thing in passing while the text promises its definition.",
+        ],
+    )
+}
+
 fn highlight_unexplained(group: usize) -> Question {
     yes_no(
         format!("group_{group}_highlight_unexplained"),
@@ -857,6 +1068,48 @@ mod tests {
     }
 
     #[test]
+    fn links_get_their_own_request_and_join_quiz_context() {
+        let root = Root::new();
+        let lesson = root.load(json!({"schema_version":"2.3.0","title":"Links","blocks":[
+            {"type":"code","id":"queue-def","language":"rust","source":{"kind":"inline","content":"// queue\nstruct Queue {\n    items: Vec<u32>,\n}"}},
+            quiz("earlier"),
+            markdown("far", "Far away."),
+            markdown("uses", "It stores a [`Queue`](#queue-def:2-4)."),
+            quiz("order")
+        ]}));
+        let jobs = plan(&lesson, 6000);
+        let link_job = jobs
+            .iter()
+            .find(|job| !job.links.is_empty())
+            .expect("a link job");
+        assert_eq!(link_job.block_index, 3);
+        assert_eq!(link_job.state["subject"], "uses");
+        assert_eq!(
+            link_job.state["links"],
+            json!([{"id":"link_0","text":"Queue","destination":"#queue-def:2-4","target":"queue-def"}])
+        );
+        assert_eq!(excerpt_ids(link_job), ["uses", "queue-def"]);
+        let target = &link_job.state["lesson"]["excerpt"][1];
+        assert_eq!(target["content"], "struct Queue {\n    items: Vec<u32>,\n}");
+        assert_eq!(target["first_line"], 2);
+        assert_eq!(link_job.questions[0].key, "link_0_mismatch");
+        assert_eq!(link_job.questions[0].check, Check::ReferenceMismatch);
+
+        // The quiz's unit is `far` and `uses`; the linked definition joins it.
+        let quiz_job = jobs
+            .iter()
+            .find(|job| job.state["subject"] == "order")
+            .unwrap();
+        assert_eq!(excerpt_ids(quiz_job), ["far", "uses", "order", "queue-def"]);
+
+        // Older schemas plan no link jobs.
+        let older = root.load(json!({"schema_version":"2.2.0","title":"Links","blocks":[
+            markdown("uses", "[x](#anything)")
+        ]}));
+        assert!(plan(&older, 6000).is_empty());
+    }
+
+    #[test]
     fn numbering_pads_to_the_widest_line_number() {
         assert_eq!(numbered("a\nb", 99), " 99 | a\n100 | b");
         assert_eq!(numbered("only", 1), "1 | only");
@@ -884,6 +1137,7 @@ mod tests {
             annotation_does_not_explain(0),
             annotation_contradicts_code(0),
             highlight_unexplained(0),
+            link_mismatch(0),
         ];
         for question in questions {
             let definition = &question.definition;

@@ -21,6 +21,10 @@ pub struct LintConfig {
     pub max_inline_prose_chars: usize,
     pub diff_addition_heavy_min_lines: usize,
     pub diff_max_deletion_ratio: f64,
+    pub max_reference_preview_lines: usize,
+    pub repeated_excerpt_gap: usize,
+    pub repeated_excerpt_min_lines: usize,
+    pub code_reference_gap: usize,
     /// `info` codes to suppress. Only `info` findings are guesses weak enough
     /// to switch off per rule; stronger findings are filtered by severity.
     pub ignore_codes: Vec<String>,
@@ -42,6 +46,10 @@ impl Default for LintConfig {
             max_inline_prose_chars: 512,
             diff_addition_heavy_min_lines: 20,
             diff_max_deletion_ratio: 0.10,
+            max_reference_preview_lines: 15,
+            repeated_excerpt_gap: 3,
+            repeated_excerpt_min_lines: 5,
+            code_reference_gap: 3,
             ignore_codes: Vec::new(),
         }
     }
@@ -104,6 +112,13 @@ impl LintConfig {
                     .with_suggestion("Copy the exact `code` from a lint finding."));
                 }
             }
+        }
+        if self.repeated_excerpt_min_lines == 0 {
+            return Err(Diagnostic::error(
+                "lint.config.threshold.invalid",
+                "",
+                "repeated_excerpt_min_lines must be at least 1",
+            ));
         }
         if self.many_highlight_ranges == 0 {
             return Err(Diagnostic::error(

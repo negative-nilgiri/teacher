@@ -27,6 +27,8 @@ use crate::source::{
     MarkdownSource,
 };
 
+pub(crate) mod links;
+
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug)]
@@ -120,6 +122,9 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
     };
 
     let schema_version = source.schema_version;
+    // Block links are resolved against the compiled nodes, from the source
+    // fields that the lowering loop below consumes.
+    let link_source = schema_version.has_block_links().then(|| source.clone());
     let mut diagnostics = Vec::new();
     let mut nodes = Vec::with_capacity(source.blocks.len());
     let mut answers = Vec::new();
@@ -252,12 +257,17 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
     if !diagnostics.is_empty() {
         return Err(diagnostics);
     }
+    let links = match &link_source {
+        Some(source) => links::resolve(source, &nodes)?,
+        None => Default::default(),
+    };
 
     let artifact = CompiledLesson {
         artifact_version: CURRENT_ARTIFACT_VERSION,
         presentation: LessonPresentation {
             title: source.title,
             nodes,
+            links,
         },
         private: PrivateLesson { answers },
         provenance: BuildProvenance {

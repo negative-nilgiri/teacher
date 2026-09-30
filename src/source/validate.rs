@@ -9,7 +9,7 @@ use super::{
     LineRange, MarkdownSource, RepoPath, SourceId, SymbolTable,
     model::{
         LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
-        LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0,
+        LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0, LessonSourceV2_3_0,
     },
 };
 
@@ -62,6 +62,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
         Some("2.0.0") => deserialize_source::<LessonSourceV2_0_0>(input).map(Into::into),
         Some("2.1.0") => deserialize_source::<LessonSourceV2_1_0>(input).map(Into::into),
         Some("2.2.0") => deserialize_source::<LessonSourceV2_2_0>(input).map(Into::into),
+        Some("2.3.0") => deserialize_source::<LessonSourceV2_3_0>(input).map(Into::into),
         _ => deserialize_source::<LessonSource>(input),
     }?;
     validate(source)

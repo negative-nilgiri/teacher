@@ -306,9 +306,9 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.15.0` | [`Cargo.toml`](../Cargo.toml) |
-| Authored schema | `2.2.0` | [`SchemaVersion`](../src/source/model.rs) |
-| Artifact schema | `1.5.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
+| Cargo package | `1.16.0` | [`Cargo.toml`](../Cargo.toml) |
+| Authored schema | `2.3.0` | [`SchemaVersion`](../src/source/model.rs) |
+| Artifact schema | `1.6.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -496,6 +496,12 @@ compact label and falls back to `Code` when no specific language is known:
   `Rendered | Source` switch; each segment is a complete block rendered by the
   normal `Markdown` component, with added and removed styling and hidden
   labels.
+- [`ReferenceLink`](../web/src/components/ReferenceLink.tsx) renders `#…`
+  links from the frozen table: a hover or focus preview in a portal (the
+  target through its normal renderer, trimmed by
+  [`previewNode`](../web/src/links.tsx), quizzes as prompt only), and jumps
+  through the URL hash to the block's `block-<id>` anchor, which expands and
+  flashes it.
 - [`AskAboutBlock`](../web/src/components/AskAboutBlock.tsx) adds a discreet
   toolbar icon (visible on hover or focus), a chip for selected code or diff
   lines, and a popover that copies an agent-ready reference built by
@@ -660,7 +666,8 @@ Tests are layered so failures identify the responsible boundary:
 - React interaction tests live in
   [`web/src/test/App.test.tsx`](../web/src/test/App.test.tsx); reference
   formatting, the ask popover, and selection mapping in
-  [`web/src/test/Reference.test.tsx`](../web/src/test/Reference.test.tsx).
+  [`web/src/test/Reference.test.tsx`](../web/src/test/Reference.test.tsx);
+  block links in [`web/src/test/Links.test.tsx`](../web/src/test/Links.test.tsx).
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
   schema fixtures, repository builds, selected diffs, moved refs, live HTTP quiz
   state, private-data projection, production assets, checker CLI output, and the
@@ -744,8 +751,12 @@ change may require a new `SchemaVersion` decoder while leaving artifacts stable;
 an artifact change requires explicit runtime compatibility handling. Never infer
 compatibility from the Cargo package version.
 
-The compiler decodes source schemas `1.0.0` through `1.3.0`, `2.0.0`, and
-`2.1.0`.
+The compiler decodes source schemas `1.0.0` through `1.3.0` and `2.0.0`
+through `2.3.0`. Schema `2.3.0` keeps the `2.2.0` shape and gives `#block-id`
+link destinations their meaning: [`links.rs`](../src/compiler/links.rs) finds
+them with `pulldown-cmark` in every Markdown-bearing field after file
+resolution, validates them against the compiled blocks, and freezes a
+lesson-wide table in artifact `1.6.0`.
 `1.1.0` adds the optional code-block `language` field, `1.2.0` adds optional
 Markdown captions to code and diff blocks, and `1.3.0` adds code highlights.
 Schema `2.0.0` is the breaking source transition from string quiz prompts to
@@ -766,7 +777,9 @@ Artifact `1.4.0` adds an optional `rendered` field to Markdown files in Git
 diffs; older artifacts omit it and show only the line diff. Artifact `1.5.0`
 adds `blob_id` and `head` to `file` provenance, `worktree_blob_ids` and `head`
 to Git diffs with a worktree target, and `lesson_path` to the build
-provenance; older artifacts omit them and give shorter references.
+provenance; older artifacts omit them and give shorter references. Artifact
+`1.6.0` adds `presentation.links`, block links keyed by destination; older
+artifacts have none.
 
 ### Change package contents
 

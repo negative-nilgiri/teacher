@@ -118,6 +118,18 @@ struct LintOverrides {
     /// Maximum ratio of deleted to added lines for a mostly-additions hunk.
     #[arg(long)]
     diff_max_deletion_ratio: Option<f64>,
+    /// Lines above which a block link's preview is reported.
+    #[arg(long)]
+    max_reference_preview_lines: Option<usize>,
+    /// Minimum blocks between two code blocks for a repeated excerpt.
+    #[arg(long)]
+    repeated_excerpt_gap: Option<usize>,
+    /// Minimum identical lines for a repeated excerpt.
+    #[arg(long)]
+    repeated_excerpt_min_lines: Option<usize>,
+    /// Blocks within which a name formatted as code should be shown.
+    #[arg(long)]
+    code_reference_gap: Option<usize>,
     /// Suppress one info finding code; repeat for several. Adds to ignore_codes.
     #[arg(long = "ignore-code", value_name = "CODE")]
     ignore_codes: Vec<String>,
@@ -163,6 +175,18 @@ impl LintOverrides {
         }
         if let Some(value) = self.diff_max_deletion_ratio {
             config.diff_max_deletion_ratio = value;
+        }
+        if let Some(value) = self.max_reference_preview_lines {
+            config.max_reference_preview_lines = value;
+        }
+        if let Some(value) = self.repeated_excerpt_gap {
+            config.repeated_excerpt_gap = value;
+        }
+        if let Some(value) = self.repeated_excerpt_min_lines {
+            config.repeated_excerpt_min_lines = value;
+        }
+        if let Some(value) = self.code_reference_gap {
+            config.code_reference_gap = value;
         }
         config.ignore_codes.extend(self.ignore_codes);
     }

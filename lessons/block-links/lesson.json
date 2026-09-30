@@ -1,0 +1,360 @@
+{
+  "schema_version": "2.3.0",
+  "title": "Reviewing block links",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "links-overview",
+      "source": {
+        "kind": "file",
+        "path": "lessons/block-links/01-overview.md"
+      }
+    },
+    {
+      "type": "markdown",
+      "id": "find",
+      "source": {
+        "kind": "file",
+        "path": "lessons/block-links/02-find.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "find-links-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 54,
+              "end": 57
+            }
+          ],
+          "annotation": "Only destinations starting with `#` open a link; the rest of the destination becomes its key."
+        },
+        {
+          "lines": [
+            {
+              "start": 59,
+              "end": 63
+            }
+          ],
+          "color": "green",
+          "annotation": "Text and code inside the link become its visible text, which the model later compares with the target."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/compiler/links.rs",
+        "lines": {
+          "start": 43,
+          "end": 78
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "code-span",
+      "prompt": {
+        "kind": "inline",
+        "content": "Which of these contains a block link in a 2.3.0 lesson?"
+      },
+      "choices": [
+        {
+          "content": "`[the queue](#queue-def)` written as a link",
+          "correct": true
+        },
+        {
+          "content": "`` `[the queue](#queue-def)` `` inside a code span",
+          "explanation": "The Markdown parser sees a code span, not a link, so nothing is resolved or checked."
+        },
+        {
+          "content": "`[the queue](https://x/#queue-def)` with a full URL",
+          "explanation": "Only destinations starting with `#` are block links; this one is an ordinary external link."
+        }
+      ],
+      "hints": [
+        "Where does the destination have to start?"
+      ],
+      "explanation": "Only a real Markdown link whose destination starts with `#` is a block link; code spans and full URLs are left alone."
+    },
+    {
+      "type": "markdown",
+      "id": "resolve",
+      "source": {
+        "kind": "file",
+        "path": "lessons/block-links/03-resolve.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "resolve-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 270,
+              "end": 274
+            }
+          ],
+          "annotation": "A range outside the target's displayed lines is `source.reference.invalid_lines`, naming both ranges."
+        },
+        {
+          "lines": [
+            {
+              "start": 287,
+              "end": 293
+            }
+          ],
+          "color": "green",
+          "annotation": "A valid link is frozen by its destination, with the target node and optional lines."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/compiler/links.rs",
+        "lines": {
+          "start": 270,
+          "end": 293
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "check-error",
+      "prompt": {
+        "kind": "inline",
+        "content": "A code block `queue-def` displays file lines 10–30. A 2.3.0 lesson links `#queue-def:40-45`. What happens?"
+      },
+      "choices": [
+        {
+          "content": "`learnc check` fails with an invalid-lines error",
+          "correct": true
+        },
+        {
+          "content": "`learnc lint` warns that the preview is empty",
+          "explanation": "Lines outside the block make the link invalid, which `check` reports before lint runs."
+        },
+        {
+          "content": "The preview silently shows the whole block",
+          "explanation": "A frozen link always resolves; an impossible range never reaches the artifact."
+        }
+      ],
+      "hints": [
+        "Which command decides whether a lesson is valid?"
+      ],
+      "explanation": "The range 40–45 lies outside the displayed 10–30, so `learnc check` reports `source.reference.invalid_lines` and the lesson does not build."
+    },
+    {
+      "type": "markdown",
+      "id": "preview",
+      "source": {
+        "kind": "file",
+        "path": "lessons/block-links/04-preview.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "preview-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 29,
+              "end": 31
+            }
+          ],
+          "annotation": "A question previews without choices or hints, so a link can never reveal an answer."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "web/src/links.tsx",
+        "lines": {
+          "start": 28,
+          "end": 36
+        }
+      }
+    },
+    {
+      "type": "code",
+      "id": "jump-code",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 27,
+              "end": 31
+            }
+          ],
+          "annotation": "When the hash names this block, it expands and flashes for 1.6 seconds."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "web/src/components/CollapsibleLessonBlock.tsx",
+        "lines": {
+          "start": 23,
+          "end": 38
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "preview-quiz",
+      "prompt": {
+        "kind": "inline",
+        "content": "A hint links to the question block `order`. What does its preview show?"
+      },
+      "choices": [
+        {
+          "content": "The question's prompt and nothing else",
+          "correct": true
+        },
+        {
+          "content": "The prompt with its choices, but no answer",
+          "explanation": "Choices are removed too, so a preview never helps pick one."
+        },
+        {
+          "content": "The prompt, the choices, and the explanation",
+          "explanation": "Explanations are private answer data and never leave the runtime's answer table."
+        }
+      ],
+      "hints": [
+        "What does `previewNode` keep for a question?"
+      ],
+      "explanation": "`previewNode` clears choices and hints for a question, so the preview is only the prompt."
+    },
+    {
+      "type": "markdown",
+      "id": "lint",
+      "source": {
+        "kind": "file",
+        "path": "lessons/block-links/05-lint.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "code-shaped",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 387,
+              "end": 391
+            }
+          ],
+          "annotation": "Calls, snake or screaming case, qualified names, and anything with an uppercase letter count; single lowercase words do not."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/lint/rules/references.rs",
+        "lines": {
+          "start": 383,
+          "end": 391
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "distant-name",
+      "prompt": {
+        "kind": "inline",
+        "content": "Prose five blocks after the only block showing them mentions `state` and `QueueState`. Which does `lint.markdown.distant_code_reference` report?"
+      },
+      "choices": [
+        {
+          "content": "Only `QueueState`",
+          "correct": true
+        },
+        {
+          "content": "Only `state`",
+          "explanation": "`state` is a single lowercase word, which the rule skips because it matches prose and comments."
+        },
+        {
+          "content": "Both of them",
+          "explanation": "The rule skips single lowercase words, so only the capitalized type name remains."
+        }
+      ],
+      "hints": [
+        "Which of the two names looks like code to `code_shaped`?"
+      ],
+      "explanation": "`QueueState` has an uppercase letter, so it counts; `state` is a single lowercase word and is skipped."
+    },
+    {
+      "type": "markdown",
+      "id": "verify",
+      "source": {
+        "kind": "file",
+        "path": "lessons/block-links/06-verify.md"
+      }
+    },
+    {
+      "type": "code",
+      "id": "linked-targets",
+      "highlights": [
+        {
+          "lines": [
+            {
+              "start": 253,
+              "end": 257
+            }
+          ],
+          "annotation": "Each resolved link target not already in the excerpt is considered, while the context budget lasts."
+        },
+        {
+          "lines": [
+            {
+              "start": 258,
+              "end": 260
+            }
+          ],
+          "color": "green",
+          "annotation": "The target joins the excerpt, trimmed to its linked lines."
+        }
+      ],
+      "source": {
+        "kind": "file",
+        "path": "src/learnverify/checks.rs",
+        "lines": {
+          "start": 246,
+          "end": 262
+        }
+      }
+    },
+    {
+      "type": "multiple_choice",
+      "id": "stale-range",
+      "prompt": {
+        "kind": "inline",
+        "content": "A link `[the Queue struct](#queue-def:12-18)` still passes check after the struct moved to lines 20–26. Which tool can catch it?"
+      },
+      "choices": [
+        {
+          "content": "`learnverify`, through `verify.reference_mismatch`",
+          "correct": true
+        },
+        {
+          "content": "`learnc check`, through an invalid-lines error",
+          "explanation": "Lines 12–18 still exist in the block, so the range is valid."
+        },
+        {
+          "content": "`learnc lint`, through a large-preview warning",
+          "explanation": "Seven lines are under the 15-line limit, and lint does not read what the lines contain."
+        }
+      ],
+      "hints": [
+        "Which tool compares what the link text claims with what the lines contain?"
+      ],
+      "explanation": "Only the model can judge that lines 12–18 no longer show the Queue struct; `check` and lint only see that the range exists and is small."
+    },
+    {
+      "type": "markdown",
+      "id": "review",
+      "source": {
+        "kind": "file",
+        "path": "lessons/block-links/07-review.md"
+      }
+    }
+  ]
+}
