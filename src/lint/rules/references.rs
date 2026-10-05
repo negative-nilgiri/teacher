@@ -384,7 +384,7 @@ impl Rules<'_> {
 /// word such as `state` or `check` also matches prose, comments, and strings in
 /// far-away blocks, so only qualified names, snake or screaming case, types,
 /// and calls count for distance checks.
-fn code_shaped(span: &str, name: &str) -> bool {
+pub(super) fn code_shaped(span: &str, name: &str) -> bool {
     span.trim().ends_with("()")
         || name.contains(['_', '.', ':', '-', '>'])
         || name.chars().any(char::is_uppercase)

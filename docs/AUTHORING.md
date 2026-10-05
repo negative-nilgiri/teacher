@@ -452,7 +452,11 @@ the artifact's private answer data and appears under its choice only after the
 question is answered correctly or the answer is revealed; a wrong attempt never
 shows it. The correct choice cannot have one (`source.quiz.choice_explanation.on_correct`):
 its reasoning belongs in the block `explanation`. Lint reports questions with
-three or more choices where some distractor has no explanation.
+three or more choices where some distractor has no explanation, and questions
+whose prompt, hints, correct choice, or explanation format as code a
+code-shaped name (`pop_front`, `self.len`, `Queue`, `push()`) that no code or
+diff block shows (`lint.question.unshown_answer_code`, a warning):
+show the code a question relies on before asking it.
 
 In source schema `2.0.0`, only the prompt uses a Markdown source object. Choices,
 hints, and explanations remain inline Markdown strings. Use a file source when

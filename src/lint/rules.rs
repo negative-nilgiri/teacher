@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::artifact::{CompiledLesson, CompiledNodeContent};
@@ -628,11 +628,15 @@ enum TextPlace {
     File(PathBuf),
 }
 
+const UNSHOWN_ANSWER_CODE_SUGGESTION: &str = "Show the code the answer relies on before the question (or link the block that shows it); if the name is a concept rather than code, drop the code formatting.";
+
 impl Rules<'_> {
     /// Report Markdown inline code that names something no code or diff block
     /// shows. This is a guess, hence `info`: the name may be a standard type or
-    /// a concept. Choices and explanations are skipped because distractors
-    /// deliberately name things that do not exist.
+    /// a concept. A code-shaped name in a question's prompt or hints is a
+    /// `warning` instead (`lint.question.unshown_answer_code`), since the
+    /// learner must answer from code they can see. Choices and explanations are skipped here
+    /// because distractors deliberately name things that do not exist.
     fn unshown_code_references(&mut self) {
         let mut shown = HashSet::new();
         for node in &self.artifact.presentation.nodes {
@@ -682,7 +686,9 @@ impl Rules<'_> {
         }
 
         let texts = self.scanned_texts();
+        let mut question_reported: HashMap<usize, HashSet<String>> = HashMap::new();
         for (index, text, place) in texts {
+            let question = matches!(self.source.blocks[index], Block::MultipleChoice(_));
             let mut reported = HashSet::new();
             for span in inline_code_spans(&text) {
                 let Some(name) = code_reference_name(span.content) else {
@@ -731,16 +737,110 @@ impl Rules<'_> {
                             .collect::<Vec<_>>()
                     })
                     .collect::<Vec<_>>();
+                let (code, message, suggestion) = if question
+                    && references::code_shaped(span.content, name)
+                {
+                    question_reported
+                        .entry(index)
+                        .or_default()
+                        .insert(name.to_owned());
+                    (
+                        "lint.question.unshown_answer_code",
+                        format!(
+                            "the question relies on `{name}`, which appears in no code or diff block"
+                        ),
+                        UNSHOWN_ANSWER_CODE_SUGGESTION,
+                    )
+                } else {
+                    (
+                        "lint.markdown.unshown_code_reference",
+                        format!(
+                            "`{name}` is formatted as code but appears in no code or diff block"
+                        ),
+                        "If the learner needs to see it, show the relevant code; otherwise check the name, or drop the code formatting if it names a concept.",
+                    )
+                };
                 self.add(
                     Some(index),
-                    "lint.markdown.unshown_code_reference",
+                    code,
                     &pointer,
-                    format!("`{name}` is formatted as code but appears in no code or diff block"),
-                    "If the learner needs to see it, show the relevant code; otherwise check the name, or drop the code formatting if it names a concept.",
+                    message,
+                    suggestion,
                     Some(location),
                 )
                 .related
                 .extend(related);
+            }
+        }
+
+        self.unshown_answer_code(&shown, question_reported);
+    }
+
+    /// Report code-shaped names formatted as code in a question's correct
+    /// choice or its explanation that no code or diff block shows: the answer
+    /// then relies on code the learner never saw. Single all-lowercase words
+    /// are skipped, since they are often tools, keys, or values. Distractors and their explanations stay
+    /// excluded, since they may name things that do not exist; names already
+    /// reported in the question's prompt or hints are not repeated.
+    fn unshown_answer_code(
+        &mut self,
+        shown: &HashSet<String>,
+        mut question_reported: HashMap<usize, HashSet<String>>,
+    ) {
+        let unshown = |text: &str| {
+            inline_code_spans(text)
+                .into_iter()
+                .filter_map(|span| {
+                    let name = code_reference_name(span.content)?;
+                    (references::code_shaped(span.content, name)
+                        && !identifier_segments(name).all(|segment| shown.contains(segment)))
+                    .then(|| {
+                        (
+                            name.to_owned(),
+                            span.start_char,
+                            span.content.chars().count(),
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        for (index, block) in self.source.blocks.iter().enumerate() {
+            let Block::MultipleChoice(block) = block else {
+                continue;
+            };
+            let reported = question_reported.entry(index).or_default();
+            let Some(correct) = block.choices.iter().position(|choice| choice.correct) else {
+                continue;
+            };
+            let places = [
+                (
+                    format!("/blocks/{index}/choices/{correct}/content"),
+                    "correct choice",
+                    block.choices[correct].content.as_str(),
+                ),
+                (
+                    format!("/blocks/{index}/explanation"),
+                    "explanation",
+                    block.explanation.as_str(),
+                ),
+            ];
+            for (pointer, kind, text) in places {
+                for (name, start, length) in unshown(text) {
+                    if !reported.insert(name.clone()) {
+                        continue;
+                    }
+                    let location = self.spans.string_range(&pointer, start, start + length);
+                    self.add(
+                        Some(index),
+                        "lint.question.unshown_answer_code",
+                        &pointer,
+                        format!(
+                            "the {kind} relies on `{name}`, which appears in no code or diff block"
+                        ),
+                        UNSHOWN_ANSWER_CODE_SUGGESTION,
+                        Some(location),
+                    );
+                }
             }
         }
     }
@@ -987,7 +1087,8 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.question.uneven_choice_lengths"
         | "lint.mermaid.style_or_subgraph"
         | "lint.diff.mostly_additions"
-        | "lint.reference.large_preview" => Severity::Warning,
+        | "lint.reference.large_preview"
+        | "lint.question.unshown_answer_code" => Severity::Warning,
         "lint.code.no_highlights"
         | "lint.code.many_highlight_ranges"
         | "lint.code.filename_reference_far"
@@ -1738,9 +1839,9 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
-        // `push` is shown, `queue.rs` is a filename, and `ghost` appears only
-        // in a choice.
-        assert_eq!(names, [("intro", "head_ptr"), ("quiz", "tail_ptr")]);
+        // `push` is shown, `queue.rs` is a filename, `ghost` appears only in a
+        // choice, and the quiz's `tail_ptr` is `lint.question.unshown_answer_code`.
+        assert_eq!(names, [("intro", "head_ptr")]);
         assert_eq!(unshown[0].severity, Severity::Info);
         let related = unshown[0]
             .related
@@ -1770,6 +1871,88 @@ mod tests {
                 .iter()
                 .all(|f| f.code != "lint.markdown.unshown_code_reference")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reports_questions_relying_on_unshown_code() {
+        let root = temp_root();
+        let quiz = |id: &str, prompt: &str, hints: &[&str], correct: &str, explanation: &str| {
+            json!({"type":"multiple_choice","id":id,
+                "prompt":{"kind":"inline","content":prompt},
+                "hints":hints,
+                "choices":[
+                    {"content":correct,"correct":true},
+                    {"content":"It calls `drain_all`","explanation":"There is no `drain_all`."}
+                ],
+                "explanation":explanation})
+        };
+        let lesson = json!({
+            "schema_version":"2.3.0", "title":"Queue", "blocks":[
+                {"type":"code","id":"impl","language":"rust","source":{"kind":"inline",
+                 "content":"struct Queue { items: Vec<u32> }\nfn push(queue: &mut Queue) {}"}},
+                quiz("empty", "What happens when the queue is empty?", &[],
+                     "`pop_front` returns `None` because `self.len` is zero",
+                     "`pop_front` checks `self.len` first, unlike `push`."),
+                quiz("named", "What does `pop_front` return?", &["Look at `pop_front`."],
+                     "It returns `None` when `items` is empty",
+                     "`pop_front` checks `items` before removing."),
+                quiz("lowercase", "Why does `pop` fail?", &[], "`len` is zero",
+                     "`create` parses `HOME_CURRENCY` into `RealizedPnlParams`. `record_fx_quote` \
+                      then keeps only GBP quotes, `unit_value_home` divides by the mid, and \
+                      `parse_request` rejects other currencies."),
+            ]
+        });
+        let found = findings(lesson, &root, &LintConfig::default());
+        let reported = codes_of(&found, "lint.question.unshown_answer_code")
+            .into_iter()
+            .map(|f| {
+                assert_eq!(f.severity, Severity::Warning);
+                (
+                    f.block_id.as_deref().unwrap(),
+                    f.pointer.as_str(),
+                    f.message.split('`').nth(1).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        // Distractors and their explanations are never scanned, `push` and
+        // `items` are shown, and each code-shaped name is reported once per
+        // question, where it first appears: prompt, hints, correct choice,
+        // explanation.
+        assert_eq!(
+            reported,
+            [
+                ("named", "/blocks/2/prompt/content", "pop_front"),
+                ("named", "/blocks/2/hints/0", "pop_front"),
+                ("empty", "/blocks/1/choices/0/content", "pop_front"),
+                ("empty", "/blocks/1/choices/0/content", "self.len"),
+                ("lowercase", "/blocks/3/explanation", "HOME_CURRENCY"),
+                ("lowercase", "/blocks/3/explanation", "RealizedPnlParams"),
+                ("lowercase", "/blocks/3/explanation", "record_fx_quote"),
+                ("lowercase", "/blocks/3/explanation", "unit_value_home"),
+                ("lowercase", "/blocks/3/explanation", "parse_request"),
+            ]
+        );
+        // Single all-lowercase words are often tools, keys, or values: in a
+        // prompt or hint they stay an `info` guess, and in the answer they are
+        // not reported (`len`, `create`).
+        let words = codes_of(&found, "lint.markdown.unshown_code_reference")
+            .into_iter()
+            .map(|f| (f.pointer.as_str(), f.message.split('`').nth(1).unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(words, [("/blocks/3/prompt/content", "pop")]);
+
+        let ignored = findings(
+            json!({"schema_version":"2.3.0","title":"T","blocks":[
+                quiz("q", "Why?", &[], "Because of `missing`", "See `missing`.")
+            ]}),
+            &root,
+            &LintConfig {
+                ignore_codes: vec!["lint.question.unshown_answer_code".to_owned()],
+                ..LintConfig::default()
+            },
+        );
+        assert!(codes_of(&ignored, "lint.question.unshown_answer_code").is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 

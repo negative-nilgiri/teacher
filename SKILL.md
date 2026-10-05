@@ -94,7 +94,8 @@ Answer the user's question in the session; a reference never needs a rebuild.
 - **Questions** should be hard because the alternatives are plausible (real
   misconceptions, nearby APIs, believable consequences), never because they are
   ambiguous. Exactly one choice must be defensibly correct, and the full
-  reasoning goes in `explanation`. Give each distractor its own `explanation`
+  reasoning goes in `explanation`. Show the code a question relies on before
+  asking it: lint only catches names formatted as code. Give each distractor its own `explanation`
   saying why it is wrong; learners see it only after answering or revealing.
   Hints should nudge toward the reasoning, never name the answer. Do not rotate the correct answer yourself; `learnc`
   shuffles choices.
