@@ -29,7 +29,7 @@ export type ResourceReference =
 interface LessonNodeBase {
   node_id: NodeId;
   source_id: string;
-  /** Absent for quizzes, which have no source resource. */
+  /** Absent for quizzes and external artifacts, which have no source resource. */
   reference?: ResourceReference;
 }
 
@@ -129,12 +129,30 @@ export interface RunCodeNode extends LessonNodeBase {
   expected_output?: string;
 }
 
+export type ExternalArtifactKind = "image" | "audio" | "video";
+
+/**
+ * A media file produced outside the compiler. Only its text is certain to be
+ * shown: `alt` describes the media and `fallback` is Markdown shown in its
+ * place. It has no `reference`, like a quiz.
+ */
+export interface ExternalArtifactNode extends LessonNodeBase {
+  type: "external_artifact";
+  kind: ExternalArtifactKind;
+  /** A bare file name. */
+  file: string;
+  alt: string;
+  fallback: string;
+  caption?: string;
+}
+
 export type LessonNode =
   | MarkdownNode
   | CodeNode
   | DiffNode
   | MultipleChoiceNode
-  | RunCodeNode;
+  | RunCodeNode
+  | ExternalArtifactNode;
 
 /** Where a block link points: a node and, optionally, displayed lines. */
 export interface BlockLink {

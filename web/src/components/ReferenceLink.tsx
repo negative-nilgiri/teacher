@@ -4,6 +4,7 @@ import { blockAnchor, LinkContext, previewNode, useLinks } from "../links";
 import type { LessonNode } from "../types";
 import { CodeBlock } from "./CodeBlock";
 import { DiffBlock } from "./DiffBlock";
+import { ExternalArtifactPreview } from "./ExternalArtifactBlock";
 import { Markdown } from "./Markdown";
 import { RunCodeBlock } from "./RunCodeBlock";
 
@@ -129,6 +130,9 @@ export function TargetPreview({
       break;
     case "run_code":
       preview = <RunCodeBlock node={node} />;
+      break;
+    case "external_artifact":
+      preview = <ExternalArtifactPreview node={node} />;
       break;
   }
   return <LinkContext.Provider value={{ ...context, inPreview: true }}>{preview}</LinkContext.Provider>;

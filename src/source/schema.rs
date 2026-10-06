@@ -3,7 +3,7 @@ use super::{
     model::{
         LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
         LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0, LessonSourceV2_3_0,
-        LessonSourceV2_4_0,
+        LessonSourceV2_4_0, LessonSourceV2_5_0,
     },
 };
 
@@ -24,6 +24,7 @@ pub fn source_json_schema_for(version: SchemaVersion) -> serde_json::Value {
         SchemaVersion::V2_2_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_2_0)),
         SchemaVersion::V2_3_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_3_0)),
         SchemaVersion::V2_4_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_4_0)),
+        SchemaVersion::V2_5_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_5_0)),
     }
     .expect("generated lesson source schema must serialize")
 }
@@ -50,7 +51,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_names_all_five_block_types_and_current_version() {
+    fn schema_names_all_six_block_types_and_current_version() {
         let schema = source_json_schema().to_string();
         for expected in [
             "markdown",
@@ -58,7 +59,8 @@ mod tests {
             "diff",
             "multiple_choice",
             "run_code",
-            "2.4.0",
+            "external_artifact",
+            "2.5.0",
         ] {
             assert!(schema.contains(expected), "schema omitted {expected}");
         }
@@ -150,31 +152,48 @@ mod tests {
             v2_2["properties"]["schema_version"]["$ref"],
             "#/$defs/SchemaVersionV2_2_0"
         );
-        // Only the current schema has the run_code block.
-        for older in [&v2_2, &v2_3] {
-            let kinds = definition(older, "Block")["oneOf"]
+        // Only 2.4.0 and later have the run_code block, and only the current
+        // schema has the external_artifact block.
+        let block_kinds = |schema: &Value| {
+            definition(schema, "Block")["oneOf"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .map(|block| block["properties"]["type"]["const"].clone())
-                .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
+        };
+        for older in [&v2_2, &v2_3] {
             assert_eq!(
-                kinds,
+                block_kinds(older),
                 ["markdown", "code", "diff", "multiple_choice"],
                 "the 2.2.0 and 2.3.0 block unions stay as they were"
             );
         }
-        let current = source_json_schema_for(SchemaVersion::V2_4_0);
-        assert!(
-            definition(&current, "Block")["oneOf"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|block| block["properties"]["type"]["const"] == "run_code")
+        let v2_4 = source_json_schema_for(SchemaVersion::V2_4_0);
+        assert_eq!(
+            block_kinds(&v2_4),
+            ["markdown", "code", "diff", "multiple_choice", "run_code"],
+            "the 2.4.0 block union stays as it was"
+        );
+        assert_eq!(
+            v2_4["properties"]["schema_version"]["$ref"],
+            "#/$defs/SchemaVersionV2_4_0"
+        );
+        let current = source_json_schema_for(SchemaVersion::V2_5_0);
+        assert_eq!(
+            block_kinds(&current),
+            [
+                "markdown",
+                "code",
+                "diff",
+                "multiple_choice",
+                "run_code",
+                "external_artifact"
+            ]
         );
         assert_eq!(
             current["properties"]["schema_version"]["$ref"],
-            "#/$defs/SchemaVersionV2_4_0"
+            "#/$defs/SchemaVersionV2_5_0"
         );
     }
 
@@ -246,6 +265,25 @@ mod tests {
         assert_eq!(run["required"], serde_json::json!(["type", "id"]));
         for field in ["highlights", "first_line"] {
             assert!(run["properties"].get(field).is_none(), "{field}");
+        }
+
+        let external = variant(&schema, "Block", "external_artifact");
+        assert_eq!(
+            external["required"],
+            serde_json::json!(["type", "id", "kind", "file", "alt", "fallback"])
+        );
+        assert_eq!(
+            definition(&schema, "ExternalArtifactKind")["enum"],
+            serde_json::json!(["image", "audio", "video"])
+        );
+        assert_eq!(external["properties"]["file"]["minLength"], 1);
+        assert!(external["properties"]["file"]["pattern"].is_string());
+        for field in ["alt", "fallback", "caption"] {
+            assert_eq!(external["properties"][field]["minLength"], 1, "{field}");
+            assert_eq!(external["properties"][field]["pattern"], r"\S", "{field}");
+        }
+        for field in ["source", "provenance", "sha256", "path"] {
+            assert!(external["properties"].get(field).is_none(), "{field}");
         }
 
         let question = variant(&schema, "Block", "multiple_choice");

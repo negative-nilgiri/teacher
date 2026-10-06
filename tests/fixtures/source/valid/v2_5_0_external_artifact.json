@@ -1,0 +1,36 @@
+{
+  "schema_version": "2.5.0",
+  "title": "Queues in motion",
+  "blocks": [
+    {
+      "type": "markdown",
+      "id": "intro",
+      "source": { "kind": "inline", "content": "A queue releases its **oldest** item first." }
+    },
+    {
+      "type": "external_artifact",
+      "id": "queue-demo",
+      "kind": "video",
+      "file": "queue-demo.mp4",
+      "alt": "Animation of items entering and leaving a FIFO queue",
+      "fallback": "Items enter at the back and leave from the front, so the **oldest** item always leaves first, as [the introduction](#intro) says.",
+      "caption": "Watch which item leaves first."
+    },
+    {
+      "type": "external_artifact",
+      "id": "queue-diagram",
+      "kind": "image",
+      "file": "Queue-Diagram.PNG",
+      "alt": "Boxes in a row with an arrow at each end",
+      "fallback": "Four boxes in a row. An arrow enters at the back and another leaves at the front."
+    },
+    {
+      "type": "external_artifact",
+      "id": "queue-narration",
+      "kind": "audio",
+      "file": "queue-narration.mp3",
+      "alt": "A spoken summary of how a queue works",
+      "fallback": "A queue is first in, first out."
+    }
+  ]
+}

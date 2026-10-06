@@ -54,7 +54,7 @@ impl Drop for TempDir {
 
 #[test]
 fn emitted_schema_and_valid_fixtures_match_the_decoder() {
-    let output = output_success(Command::new(learnc()).args(["schema", "--version", "2.4.0"]));
+    let output = output_success(Command::new(learnc()).args(["schema", "--version", "2.5.0"]));
     let emitted: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(emitted, agent_teacher::source::source_json_schema());
     let default_output = output_success(Command::new(learnc()).arg("schema"));
@@ -126,6 +126,24 @@ fn emitted_schema_and_valid_fixtures_match_the_decoder() {
     assert!(find_schema_block(&v2_3, "run_code").is_none());
     assert!(find_schema_block(&v2_3, "multiple_choice").is_some());
 
+    // Source schema 2.5.0 adds the external_artifact block; 2.4.0 keeps
+    // rejecting it and keeps run_code.
+    assert!(schema_block_has_property(
+        &emitted,
+        "external_artifact",
+        "fallback"
+    ));
+    assert!(schema_block_has_property(
+        &emitted,
+        "external_artifact",
+        "alt"
+    ));
+    let v2_4 = output_success(Command::new(learnc()).args(["schema", "--version", "2.4.0"]));
+    let v2_4: serde_json::Value = serde_json::from_slice(&v2_4.stdout).unwrap();
+    assert_ne!(v2_4, emitted);
+    assert!(find_schema_block(&v2_4, "external_artifact").is_none());
+    assert!(find_schema_block(&v2_4, "run_code").is_some());
+
     let valid = manifest_dir().join("tests/fixtures/source/valid");
     for entry in fs::read_dir(valid).unwrap() {
         let path = entry.unwrap().path();
@@ -178,7 +196,7 @@ fn compiler_freezes_file_backed_question_prompts() {
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(root.path().join("lesson.learn")).unwrap()).unwrap();
     assert_eq!(artifact.provenance.source_schema_version.as_str(), "2.1.0");
-    assert_eq!(artifact.artifact_version.as_str(), "1.8.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.9.0");
     assert_eq!(
         artifact.provenance.compiler_version,
         env!("CARGO_PKG_VERSION")
@@ -273,6 +291,18 @@ fn invalid_fixtures_return_stable_agent_diagnostics() {
         ("unknown_field.json", "source.deserialize"),
         ("future_version.json", "source.deserialize"),
         ("run_code_no_runner.json", "source.run_code.no_runner"),
+        (
+            "external_artifact_wrong_extension.json",
+            "source.external_artifact.extension_not_allowed",
+        ),
+        (
+            "external_artifact_path_file.json",
+            "source.external_artifact.invalid_file_name",
+        ),
+        (
+            "external_artifact_blank_fallback.json",
+            "source.content.empty",
+        ),
     ];
 
     for (name, code) in expected {
@@ -967,7 +997,7 @@ fn run_blocks_compile_serve_and_stay_display_only() {
     let artifact_path = root.path().join("lesson.learn");
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
-    assert_eq!(artifact.artifact_version.as_str(), "1.8.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.9.0");
     // The compiler resolves the command and scratch file; nothing else does.
     let frozen: serde_json::Value =
         serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
@@ -1301,6 +1331,101 @@ fn run_blocks_run_only_with_allow_run_a_token_and_a_loopback_host() {
         })
         .count();
     assert_eq!(leftovers, 0);
+}
+
+#[test]
+fn external_artifact_blocks_compile_without_inputs_and_serve_only_their_fallback() {
+    let root = TempDir::new("external-artifact");
+    let lesson = root.path().join("lesson.json");
+    let source = serde_json::json!({
+        "schema_version": "2.5.0",
+        "title": "Queues in motion",
+        "blocks": [
+            {
+                "type": "markdown",
+                "id": "intro",
+                "source": {"kind": "inline", "content": "A queue releases its oldest item first."}
+            },
+            {
+                "type": "external_artifact",
+                "id": "queue-demo",
+                "kind": "video",
+                "file": "queue-demo.mp4",
+                "alt": "Animation of items entering and leaving a FIFO queue",
+                "fallback": "Items leave from the **front**, as [the introduction](#intro) says.",
+                "caption": "Watch which item leaves first."
+            }
+        ]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+
+    // No file exists, and no root or repository is needed to build.
+    let missing_root = root.path().join("no-such-root");
+    for command in ["check", "build"] {
+        output_success(
+            Command::new(learnc())
+                .arg(command)
+                .arg("--root")
+                .arg(&missing_root)
+                .arg(&lesson),
+        );
+    }
+    let artifact_path = root.path().join("lesson.learn");
+    let frozen: serde_json::Value =
+        serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
+    assert_eq!(frozen["artifact_version"], "1.9.0");
+    let node = &frozen["presentation"]["nodes"][1];
+    assert_eq!(node["type"], "external_artifact");
+    assert_eq!(node["file"], "queue-demo.mp4");
+    assert!(node.get("provenance").is_none());
+    assert_eq!(frozen["presentation"]["links"]["intro"]["target"], 0);
+    assert!(!root.path().join("queue-demo.mp4").exists());
+
+    let mut server = ChildGuard::spawn(&artifact_path);
+    let startup = server.startup();
+    assert_eq!(
+        startup["status"], "serving",
+        "learn failed to start: {startup}"
+    );
+    let address = startup["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("http://")
+        .unwrap()
+        .trim_end_matches('/')
+        .to_owned();
+    let state = request_json(&address, "GET", "/api/v1/state", None);
+    let node = &state["lesson"]["nodes"][1];
+    assert_eq!(node["type"], "external_artifact");
+    assert_eq!(node["kind"], "video");
+    assert_eq!(node["file"], "queue-demo.mp4");
+    assert_eq!(
+        node["alt"],
+        "Animation of items entering and leaving a FIFO queue"
+    );
+    assert_eq!(
+        node["fallback"],
+        "Items leave from the **front**, as [the introduction](#intro) says."
+    );
+    assert_eq!(node["caption"], "Watch which item leaves first.");
+    // Like a quiz, the block has no source resource to refer to.
+    assert!(node.get("reference").is_none());
+    assert_eq!(state["lesson"]["links"]["intro"]["target"], 0);
+    // Nothing in the data offers the file: only text and the bare name.
+    let public = serde_json::to_string(&state).unwrap();
+    assert!(!public.contains("/media") && !public.contains("sidecar"));
+    server.stop();
+
+    // Older schemas keep rejecting the new block.
+    source_with_version(&lesson, &source, "2.4.0");
+    let output = Command::new(learnc())
+        .arg("check")
+        .arg(&lesson)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["diagnostics"][0]["code"], "source.deserialize");
 }
 
 fn source_with_version(path: &Path, source: &serde_json::Value, version: &str) {
@@ -1936,7 +2061,7 @@ fn artifacts_record_blob_ids_heads_and_the_lesson_path_for_references() {
     assert!(!marker.exists(), "a plain-file lesson invoked Git");
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(repo.join("lessons/plain.learn")).unwrap()).unwrap();
-    assert_eq!(artifact.artifact_version.as_str(), "1.8.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.9.0");
     assert_eq!(
         artifact.provenance.lesson_path.as_deref(),
         Some("lessons/plain.json")

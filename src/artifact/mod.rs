@@ -7,10 +7,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::language::{Language, RUN_FILE_PLACEHOLDER};
 use crate::repository::{RenderedSegment, ResolvedDiff};
-use crate::source::{HighlightColor, NodeId, SchemaVersion};
+use crate::source::{
+    ExternalArtifactKind, HighlightColor, NodeId, SchemaVersion, external_artifact_file_error,
+};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_8_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_9_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
@@ -39,11 +41,14 @@ pub enum ArtifactVersion {
     /// Adds `run_code` nodes.
     #[serde(rename = "1.8.0")]
     V1_8_0,
+    /// Adds `external_artifact` nodes.
+    #[serde(rename = "1.9.0")]
+    V1_9_0,
 }
 
 impl ArtifactVersion {
     /// Every artifact version the runtime can load.
-    pub const SUPPORTED: [Self; 9] = [
+    pub const SUPPORTED: [Self; 10] = [
         Self::V1_0_0,
         Self::V1_1_0,
         Self::V1_2_0,
@@ -53,6 +58,7 @@ impl ArtifactVersion {
         Self::V1_6_0,
         Self::V1_7_0,
         Self::V1_8_0,
+        Self::V1_9_0,
     ];
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -72,6 +78,7 @@ impl ArtifactVersion {
             Self::V1_6_0 => "1.6.0",
             Self::V1_7_0 => "1.7.0",
             Self::V1_8_0 => "1.8.0",
+            Self::V1_9_0 => "1.9.0",
         }
     }
 }
@@ -210,6 +217,20 @@ pub enum CompiledNodeContent {
         /// Literal text the code produced when the lesson was built.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expected_output: Option<String>,
+    },
+    /// An image, audio, or video file produced outside the compiler. The file
+    /// is neither embedded nor looked for: it has no provenance, and only the
+    /// fallback is ever certain to be shown.
+    ExternalArtifact {
+        kind: ExternalArtifactKind,
+        /// A bare file name whose extension suits `kind`.
+        file: String,
+        /// Plain text describing the media.
+        alt: String,
+        /// Markdown shown in place of the media.
+        fallback: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
     },
 }
 
@@ -588,6 +609,30 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
                         }
                     }
                 }
+            }
+        }
+        if let CompiledNodeContent::ExternalArtifact {
+            kind,
+            file,
+            alt,
+            fallback,
+            ..
+        } = &node.content
+        {
+            let invalid = |message: &str| {
+                ArtifactValidationError::new(format!(
+                    "external artifact node {} {message}",
+                    node.node_id
+                ))
+            };
+            if external_artifact_file_error(file).is_some() {
+                return Err(invalid("has an invalid file name"));
+            }
+            if !kind.allows_file(file) {
+                return Err(invalid("has a file extension that does not suit its kind"));
+            }
+            if alt.trim().is_empty() || fallback.trim().is_empty() {
+                return Err(invalid("has an empty alt text or fallback"));
             }
         }
         if let CompiledNodeContent::MultipleChoice {
@@ -999,7 +1044,7 @@ mod tests {
             node: NodeId::new(1),
         }))
         .unwrap();
-        assert_eq!(value["artifact_version"], "1.8.0");
+        assert_eq!(value["artifact_version"], "1.9.0");
         let node = &value["presentation"]["nodes"][2];
         assert_eq!(node["type"], "run_code");
         assert_eq!(node["code"], serde_json::json!({"kind": "of", "node": 1}));
@@ -1089,6 +1134,111 @@ mod tests {
             }),
         });
         assert!(validate_artifact(&artifact).is_err(), "first_line 0");
+    }
+
+    fn external_artifact_node(
+        kind: ExternalArtifactKind,
+        file: &str,
+        alt: &str,
+        fallback: &str,
+    ) -> CompiledNode {
+        CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "demo".into(),
+            content: CompiledNodeContent::ExternalArtifact {
+                kind,
+                file: file.into(),
+                alt: alt.into(),
+                fallback: fallback.into(),
+                caption: Some("A caption.".into()),
+            },
+        }
+    }
+
+    #[test]
+    fn external_artifact_nodes_round_trip_without_any_provenance() {
+        let mut artifact = quiz_artifact();
+        artifact.presentation.nodes.push(external_artifact_node(
+            ExternalArtifactKind::Video,
+            "queue-demo.MP4",
+            "A queue",
+            "Items leave from the front.",
+        ));
+        validate_artifact(&artifact).unwrap();
+        let json = serde_json::to_string_pretty(&artifact).unwrap();
+        let decoded: CompiledLesson = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, artifact);
+        let value = serde_json::to_value(&artifact).unwrap();
+        assert_eq!(value["artifact_version"], "1.9.0");
+        assert_eq!(
+            value["presentation"]["nodes"][1],
+            serde_json::json!({
+                "node_id": 1,
+                "source_id": "demo",
+                "type": "external_artifact",
+                "kind": "video",
+                "file": "queue-demo.MP4",
+                "alt": "A queue",
+                "fallback": "Items leave from the front.",
+                "caption": "A caption."
+            })
+        );
+    }
+
+    #[test]
+    fn validation_rejects_external_artifact_nodes_the_browser_could_not_show() {
+        for (label, kind, file, alt, fallback) in [
+            (
+                "path",
+                ExternalArtifactKind::Image,
+                "a/b.png",
+                "alt",
+                "text",
+            ),
+            (
+                "hidden file",
+                ExternalArtifactKind::Image,
+                ".b.png",
+                "alt",
+                "text",
+            ),
+            ("empty name", ExternalArtifactKind::Image, "", "alt", "text"),
+            (
+                "wrong extension",
+                ExternalArtifactKind::Image,
+                "b.mp4",
+                "alt",
+                "text",
+            ),
+            (
+                "no extension",
+                ExternalArtifactKind::Audio,
+                "b",
+                "alt",
+                "text",
+            ),
+            (
+                "blank alt",
+                ExternalArtifactKind::Image,
+                "b.png",
+                " ",
+                "text",
+            ),
+            (
+                "blank fallback",
+                ExternalArtifactKind::Image,
+                "b.png",
+                "alt",
+                "\n",
+            ),
+        ] {
+            let mut artifact = quiz_artifact();
+            artifact
+                .presentation
+                .nodes
+                .push(external_artifact_node(kind, file, alt, fallback));
+            assert!(validate_artifact(&artifact).is_err(), "{label}");
+        }
     }
 
     #[test]

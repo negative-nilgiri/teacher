@@ -43,6 +43,9 @@ button, input { font: inherit; }
 .lesson-block-content > .question { border: 0; border-radius: 0; }
 .run-block > .code-block { border: 0; border-radius: 0; }
 .run-target { margin: 0; padding: .75rem 1rem; font-size: .9rem; }
+.external-fallback { padding: .75rem 1rem; }
+.external-notice { margin: 0 0 .4rem; color: var(--muted); font-size: .8rem; }
+.external-alt { margin: 0 0 .5rem; color: var(--muted); font-size: .85rem; font-style: italic; }
 .run-output { border-top: 1px solid var(--line); }
 .run-output:first-child { border-top: 0; }
 .run-output-header { justify-content: space-between; gap: 1rem; }

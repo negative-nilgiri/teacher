@@ -85,6 +85,20 @@ Answer the user's question in the session; a reference never needs a rebuild.
   that finish in well under 10 seconds (the timeout stops a run at
   `timeout_secs`, default 10); the code that runs is the frozen copy, never the
   learner's repository.
+- **External media** (`external_artifact`, source schema 2.5.0) is for an
+  image, audio, or video that explains something text and code cannot, such as
+  an animation of a process or a diagram. Give its `kind`, a bare `file` name
+  with an extension that suits the kind (the allowlist is in
+  `docs/AUTHORING.md`), plain-text `alt`, and Markdown `fallback`. Always
+  write a real `fallback` that tells the learner in words what the media would
+  have shown or said: this version of `learn` shows only the fallback, and the
+  file may never exist. Never invent a file: name only one you produce
+  yourself, out of band, with tools you already have (`ffmpeg`, `graphviz`,
+  `matplotlib`, or a paid service you are allowed to use), and never expect
+  `learnc` to create, find, or check it (`check` cannot tell whether the file
+  exists, because it is made after the build). Never call a generation API from
+  the compiler or put a key in the lesson. Do not use media for something a
+  code block or a few sentences already make clear.
 
 ## Judgment lint cannot check
 

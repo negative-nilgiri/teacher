@@ -8,7 +8,7 @@ for a learner to understand one change at a time.
 Use the compiler as the source of truth:
 
 ```console
-learnc schema --version 2.4.0
+learnc schema --version 2.5.0
 learnc check lesson.json
 learnc lint lesson.json
 learnc build lesson.json
@@ -36,6 +36,7 @@ flowchart LR
     L --> D["diff<br/>caption? · inline | file | git"]:::repository
     L --> Q["multiple_choice<br/>prompt: inline | file<br/>choices · hints · explanation"]:::quiz
     L --> R["run_code<br/>language? · caption? · inline | file | git_blob, or of<br/>argv? · timeout_secs? · expected_output?"]:::content
+    L --> X["external_artifact<br/>kind · file name · alt · fallback · caption?"]:::content
 
     subgraph Legend
       LE["Document envelope"]:::envelope
@@ -52,7 +53,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "2.4.0",
+  "schema_version": "2.5.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -72,7 +73,9 @@ highlight groups, and `2.2.0` adds optional per-choice explanations for
 distractors. Source schema `2.3.0` has the same shape and turns `#block-id`
 links into block links (see [Linking blocks](#linking-blocks)). Source schema
 `2.4.0` adds the `run_code` block (see [Running code](#running-code)); older
-schemas reject it. Use `2.4.0` for new lessons.
+schemas reject it. Source schema `2.5.0` adds the `external_artifact` block
+(see [External media](#external-media)); older schemas reject it too. Use
+`2.5.0` for new lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -92,6 +95,8 @@ therefore enforced only by `learnc check` and `learnc build`. These include:
   overlap between different colors;
 - a run block giving exactly one of `source` and `of`, `of` naming a code
   block, a runnable language, and an `argv` that contains `{file}`;
+- an external-artifact file name being a bare name whose extension suits its
+  `kind`;
 - unique and non-empty Git file selections and range/change intersection;
 - path ownership, file existence and UTF-8 decoding;
 - Git revision resolution, owning-repository boundaries, ignored-file rules,
@@ -115,7 +120,8 @@ but no hints or with unexplained distractors, diff hunks that are mostly
 additions, names formatted as code in prose but
 never shown in a code, diff, or run block, run blocks without an
 `expected_output`, and Mermaid `subgraph`/`style` use in
-flowcharts and class diagrams. The
+flowcharts and class diagrams. External-media blocks have no lint rules of
+their own yet. The
 complete rule and threshold table is in [`LINT_DESIGN.md`](LINT_DESIGN.md).
 
 Lint emits `{"diagnostics":[]}` for a clean JSON run, or no text with `-t`.
@@ -606,6 +612,111 @@ streamed output, saved runs, running the real project or its dependencies, and
 `learnverify` checks of run blocks. The code that runs is always the frozen
 copy in the artifact, never the worktree.
 
+## External media
+
+An `external_artifact` block (source schema `2.5.0`) refers to an image, audio,
+or video file that is produced outside the compiler, and always carries text to
+show when that file is not available. This version of `learn` never serves the
+file: the block shows only its caption and its `fallback`, labelled so the
+learner knows the media itself is not available. Serving the file is planned
+for a later version (see [The sidecar contract](#the-sidecar-contract)), so
+write every block to work as text alone.
+
+```json
+{
+  "type": "external_artifact",
+  "id": "queue-demo",
+  "kind": "video",
+  "file": "queue-demo.mp4",
+  "alt": "Animation of items entering and leaving a FIFO queue",
+  "fallback": "Items enter at the back and leave from the front, so the **oldest** item always leaves first.",
+  "caption": "Optional Markdown."
+}
+```
+
+- `kind` is `image`, `audio`, or `video`.
+- `file` is a bare file name, such as `queue-demo.mp4`, not a path. It must not
+  be empty, contain `/` or `\`, be `.` or `..`, start with `.`, or contain a
+  control character (`source.external_artifact.invalid_file_name`).
+- `alt` is required plain text that describes the media for someone who cannot
+  see or hear it. It is not Markdown.
+- `fallback` is required Markdown, an inline string like a code block's
+  `caption` (there is no file form): block links (`[the code](#queue-def)`)
+  and KaTeX work as in any other Markdown field.
+- `caption` is optional Markdown, like a code block's.
+
+`alt`, `fallback`, and `caption` must not be blank (`source.content.empty`),
+the same code other blank fields use.
+
+**Extensions.** The extension of `file` must belong to its `kind`, compared
+case-insensitively (`Queue.MP4` is fine), or `check` fails with
+`source.external_artifact.extension_not_allowed`. A name with no extension is
+rejected the same way. The allowlist is:
+
+| `kind` | Extensions |
+| --- | --- |
+| `image` | `png`, `jpg`, `jpeg`, `gif`, `webp`, `svg`, `avif` |
+| `audio` | `mp3`, `wav`, `ogg`, `m4a`, `aac`, `flac` |
+| `video` | `mp4`, `webm`, `mov`, `ogv` |
+
+The check compares names only; it does not inspect any file, so it cannot tell
+that a file named `x.mp4` is really a video.
+
+**Write a real fallback.** The fallback is what a learner reads when the file
+is missing, which in this version is always. Say in words what the media would
+have shown or said: the steps of the animation, the labels and arrows of the
+diagram, the content of the narration. Do not write "see the video", a
+placeholder, or a restatement of the file name. Do not invent a file either:
+only name a file that you have produced, or will produce, yourself.
+
+**Producing the file.** The file is made out of band, by whatever tool the
+authoring agent already has and is allowed to use: `ffmpeg`, `graphviz`,
+`matplotlib`, or a paid generation service. Neither `learnc` nor `learn`
+generates media, calls any generation API, or holds a key for one, and neither
+will. A generated file is never part of the lesson source or the artifact, and
+the block works the same whether or not the agent ever produces it.
+
+**Why `check` cannot verify the file.** `learnc check` and `build` read only the
+lesson JSON and the inputs it references; an external artifact references
+none, so they touch no file system or repository for it (a lesson made only of
+external-artifact and other inline blocks compiles with no root and no
+repository). That is deliberate: the file is expected to be produced after the
+build, because generating video is slow and costs money, so its absence at
+build time is normal and a missing or misspelled file name is not detected.
+`build` freezes only `kind`, `file`, `alt`, `fallback`, and `caption`; there is
+no hash or provenance for the file.
+
+### The sidecar contract
+
+This describes what a later version of `learn` is intended to do; the current
+version does none of it. The file will not be embedded in the artifact.
+Instead `learn serve queue.learn` will look for `file` in the directory next to
+the artifact whose name replaces `.learn` with `.assets` (`queue.assets/`). If
+the file is there it will be shown; if not, the fallback is. Availability will
+be evaluated on every state request, so a file produced while `learn` runs
+appears after a browser refresh, and `learn serve` will warn at startup about
+files it cannot find. The accepted consequence is that an artifact with such
+blocks is not fully self-contained: moving a `.learn` file without its
+`.assets/` directory loses the media, though the fallback still renders. An
+agent can already create `queue.assets/` and put files in it today; nothing
+reads it yet.
+
+A media block is an ordinary block in every other way: it folds, can be asked
+about, and can be the target of a whole-block link (`#queue-demo`, but not a
+line range, because it is not a code block). A link to it previews its `alt`
+text and its fallback. Links in its `fallback` and `caption` are checked like
+any other Markdown, so a link to an unknown block fails with
+`source.reference.unknown_block`. Like a quiz, it has no source resource, so a
+learner's copied reference names the block and the fallback text, and the
+exact text lives in the lesson. `learnverify` includes the block's text as
+quiz context; neither lint nor `learnverify` has rules for it yet.
+
+| Diagnostic | Meaning |
+| --- | --- |
+| `source.external_artifact.invalid_file_name` | `file` is empty, has a path separator, is `.` or `..`, starts with `.`, or has a control character. |
+| `source.external_artifact.extension_not_allowed` | The extension of `file` is missing or not in the allowlist of its `kind`. |
+| `source.content.empty` | `alt`, `fallback`, or `caption` is blank. |
+
 ## Filesystem root, repositories, and freezing
 
 Every authored path is relative to one filesystem root. The root defaults to
@@ -667,8 +778,9 @@ hover or focus, trimmed to the linked lines, and clicking jumps to the block
 `learnc check` rejects a link to an unknown block
 (`source.reference.unknown_block`), a malformed or out-of-range line range
 (`source.reference.invalid_lines`), and a range on a Markdown, question,
-or run block (`source.reference.lines_on_non_code`). Lint then reports previews
-longer than 15 lines (a run block previews its whole code), links to the next or previous block, links to a later
+run, or external-media block (`source.reference.lines_on_non_code`). Lint then
+reports previews longer than 15 lines (a run block previews its whole code, an
+external-media block its alt text and fallback), links to the next or previous block, links to a later
 block, excerpts repeated far apart, and names formatted as code that no nearby
 block shows; `learnverify` asks whether each link's target shows what its text
 says. In schemas before `2.3.0`, `#…` links remain ordinary links.

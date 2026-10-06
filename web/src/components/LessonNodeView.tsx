@@ -5,6 +5,7 @@ import { specificLanguageDisplayName } from "../languages";
 import { CodeBlock } from "./CodeBlock";
 import { CollapsibleLessonBlock } from "./CollapsibleLessonBlock";
 import { DiffBlock } from "./DiffBlock";
+import { ExternalArtifactBlock } from "./ExternalArtifactBlock";
 import { Markdown } from "./Markdown";
 import { MultipleChoiceBlock } from "./MultipleChoiceBlock";
 import { RunCodeBlock, type RunControls } from "./RunCodeBlock";
@@ -58,6 +59,10 @@ export function LessonNodeView(props: LessonNodeViewProps) {
     case "run_code":
       kind = "Run code";
       content = <RunCodeBlock node={node} run={props.run} />;
+      break;
+    case "external_artifact":
+      kind = node.kind[0].toUpperCase() + node.kind.slice(1);
+      content = <ExternalArtifactBlock node={node} />;
       break;
   }
 

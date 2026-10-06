@@ -13,6 +13,7 @@ const KIND_LABELS: Record<LessonNode["type"], string> = {
   diff: "diff",
   multiple_choice: "question",
   run_code: "runnable code",
+  external_artifact: "external media",
 };
 
 function span(start: number, end: number): string {
@@ -32,6 +33,8 @@ function shown(node: LessonNode): string | null {
     const count = node.content.split("\n").length - (node.content.endsWith("\n") ? 1 : 0);
     return `${reference.path}, ${span(node.first_line, node.first_line + Math.max(count, 1) - 1)}`;
   }
+  // The file is never read at build time, so what the learner sees is the text.
+  if (node.type === "external_artifact") return `fallback text of ${node.kind} ${node.file}`;
   if (!reference) return null;
   switch (reference.kind) {
     case "file":

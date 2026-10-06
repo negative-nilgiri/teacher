@@ -10,9 +10,10 @@ mod validate;
 
 pub use ids::{NodeId, SourceId, SourceIdError, SymbolTable};
 pub use model::{
-    Block, Choice, CodeBlock, CodeHighlight, CodeSource, DiffBlock, DiffSource, GitDiffFile,
-    GitDiffTarget, GitRevision, HighlightColor, LessonSource, LineRange, MarkdownBlock,
-    MarkdownSource, MultipleChoiceBlock, OutputSource, RepoPath, RunCodeBlock, SchemaVersion,
+    Block, Choice, CodeBlock, CodeHighlight, CodeSource, DiffBlock, DiffSource,
+    ExternalArtifactBlock, ExternalArtifactKind, GitDiffFile, GitDiffTarget, GitRevision,
+    HighlightColor, LessonSource, LineRange, MarkdownBlock, MarkdownSource, MultipleChoiceBlock,
+    OutputSource, RepoPath, RunCodeBlock, SchemaVersion, external_artifact_file_error,
 };
 pub use schema::{source_json_schema, source_json_schema_for};
 pub use validate::{ValidatedLesson, parse_and_validate, validate};

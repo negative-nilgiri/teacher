@@ -101,8 +101,9 @@ pub(crate) fn parse_destination(destination: &str) -> (&str, LinkLines) {
 }
 
 /// The Markdown-bearing fields of a compiled lesson: Markdown blocks (after
-/// resolving files), captions, highlight annotations, quiz prompts, choices,
-/// choice explanations, hints, and explanations.
+/// resolving files), captions, highlight annotations, external-artifact
+/// fallbacks, quiz prompts, choices, choice explanations, hints, and
+/// explanations.
 pub(crate) fn markdown_fields(source: &LessonSource, nodes: &[CompiledNode]) -> Vec<MarkdownField> {
     let mut fields = Vec::new();
     for (index, (block, node)) in source.blocks.iter().zip(nodes).enumerate() {
@@ -148,6 +149,12 @@ pub(crate) fn markdown_fields(source: &LessonSource, nodes: &[CompiledNode]) -> 
                 }
             }
             (Block::RunCode(block), _) => {
+                if let Some(caption) = &block.caption {
+                    push(format!("{base}/caption"), caption, None);
+                }
+            }
+            (Block::ExternalArtifact(block), _) => {
+                push(format!("{base}/fallback"), &block.fallback, None);
                 if let Some(caption) = &block.caption {
                     push(format!("{base}/caption"), caption, None);
                 }

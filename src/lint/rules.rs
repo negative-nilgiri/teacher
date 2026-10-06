@@ -124,6 +124,8 @@ pub(super) fn collect(
             (Block::RunCode(block), CompiledNodeContent::RunCode { code, .. }) => {
                 rules.run_code(index, block, code);
             }
+            // External artifacts have no lint rules of their own yet.
+            (Block::ExternalArtifact(_), CompiledNodeContent::ExternalArtifact { .. }) => {}
             _ => unreachable!("compiled nodes retain the source block order and kind"),
         }
     }
@@ -1857,6 +1859,36 @@ mod tests {
                 .iter()
                 .all(|finding| finding.block_id.as_deref() != Some("uses-of"))
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_artifacts_have_no_rules_yet_but_their_text_links_and_previews_are_handled() {
+        let root = temp_root();
+        let fallback = (1..=16).map(|n| format!("Step {n}.\n")).collect::<String>();
+        let lesson = json!({"schema_version":"2.5.0","title":"Media","blocks":[
+            {"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"print(1)\n"}},
+            {"type":"external_artifact","id":"short","kind":"image","file":"short.png","alt":"Short",
+             "fallback":"One line.","caption":"The [code](#shown)."},
+            {"type":"external_artifact","id":"long","kind":"video","file":"long.mp4","alt":"Long",
+             "fallback":fallback},
+            md("far", "Filler."), md("farther", "Filler."),
+            md("uses", "See [the picture](#short) and [the video](#long).")
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        // The caption link is checked by the block-link rules.
+        let on_media = found
+            .iter()
+            .filter(|finding| matches!(finding.block_id.as_deref(), Some("short" | "long")))
+            .map(|finding| (finding.code.as_str(), finding.pointer.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(on_media, [("lint.reference.adjacent", "/blocks/1/caption")]);
+        // The long fallback makes a large preview: its alt line and fallback.
+        let large = codes_of(&found, "lint.reference.large_preview");
+        assert_eq!(large.len(), 1);
+        assert_eq!(large[0].block_id.as_deref(), Some("uses"));
+        assert!(large[0].message.contains("`long` previews 17 lines"));
+        assert!(large[0].suggestion.contains("fallback"));
         fs::remove_dir_all(root).unwrap();
     }
 

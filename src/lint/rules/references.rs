@@ -83,6 +83,8 @@ fn preview_lines(node: &CompiledNode, lines: Option<(u32, u32)>) -> usize {
             },
             _,
         ) => 1,
+        // An external artifact previews whole, as its alt text and fallback.
+        (CompiledNodeContent::ExternalArtifact { fallback, .. }, _) => 1 + fallback.lines().count(),
     }
 }
 
@@ -158,6 +160,8 @@ impl Rules<'_> {
                 .unwrap_or_else(|| format!("#{target_id}:12-18"));
             let suggestion = if matches!(target.content, CompiledNodeContent::RunCode { .. }) {
                 "A link to a run block previews all of its code and takes no line range; shorten the code, or link a shorter block.".to_owned()
+            } else if matches!(target.content, CompiledNodeContent::ExternalArtifact { .. }) {
+                "A link to an external artifact previews its alt text and fallback and takes no line range; shorten the fallback, or link a shorter block.".to_owned()
             } else if groups.is_empty() {
                 format!("Link only the lines the reader needs, e.g. `{example}`.")
             } else {

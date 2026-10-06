@@ -7,12 +7,13 @@ use crate::diagnostics::{Diagnostic, DiagnosticBag};
 use crate::language::{Language, RUN_FILE_PLACEHOLDER};
 
 use super::{
-    Block, CodeHighlight, CodeSource, DiffSource, GitDiffTarget, GitRevision, LessonSource,
-    LineRange, MarkdownSource, OutputSource, RepoPath, RunCodeBlock, SourceId, SymbolTable,
+    Block, CodeHighlight, CodeSource, DiffSource, ExternalArtifactBlock, GitDiffTarget,
+    GitRevision, LessonSource, LineRange, MarkdownSource, OutputSource, RepoPath, RunCodeBlock,
+    SourceId, SymbolTable, external_artifact_file_error,
     model::{
         LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
         LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0, LessonSourceV2_3_0,
-        LessonSourceV2_4_0,
+        LessonSourceV2_4_0, LessonSourceV2_5_0,
     },
 };
 
@@ -67,6 +68,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
         Some("2.2.0") => deserialize_source::<LessonSourceV2_2_0>(input).map(Into::into),
         Some("2.3.0") => deserialize_source::<LessonSourceV2_3_0>(input).map(Into::into),
         Some("2.4.0") => deserialize_source::<LessonSourceV2_4_0>(input).map(Into::into),
+        Some("2.5.0") => deserialize_source::<LessonSourceV2_5_0>(input).map(Into::into),
         _ => deserialize_source::<LessonSource>(input),
     }?;
     validate(source)
@@ -217,6 +219,9 @@ pub fn validate(source: LessonSource) -> Result<ValidatedLesson, Vec<Diagnostic>
             }
             Block::RunCode(block) => {
                 validate_run_code(block, &base, &blocks_by_id, &mut diagnostics)
+            }
+            Block::ExternalArtifact(block) => {
+                validate_external_artifact(block, &base, &mut diagnostics)
             }
         }
     }
@@ -625,6 +630,50 @@ fn validate_run_code(
             repo_path(path, &format!("{base}/expected_output/path"), diagnostics)
         }
         None => {}
+    }
+}
+
+fn validate_external_artifact(
+    block: &ExternalArtifactBlock,
+    base: &str,
+    diagnostics: &mut DiagnosticBag,
+) {
+    let pointer = format!("{base}/file");
+    if let Some(message) = external_artifact_file_error(&block.file) {
+        diagnostics.push(
+            Diagnostic::error(
+                "source.external_artifact.invalid_file_name",
+                &pointer,
+                format!("invalid file name: {message}"),
+            )
+            .with_suggestion("Use a bare file name such as `queue-demo.mp4`, not a path."),
+        );
+    } else if !block.kind.allows_file(&block.file) {
+        diagnostics.push(
+            Diagnostic::error(
+                "source.external_artifact.extension_not_allowed",
+                &pointer,
+                format!(
+                    "`{}` is not a {} file this block can show; the extension must be one of: {}",
+                    block.file,
+                    block.kind.as_str(),
+                    block.kind.extensions().join(", ")
+                ),
+            )
+            .with_suggestion(
+                "Use a file with an allowed extension, or change `kind` to match the file.",
+            ),
+        );
+    }
+    nonempty(&block.alt, &format!("{base}/alt"), "alt text", diagnostics);
+    nonempty(
+        &block.fallback,
+        &format!("{base}/fallback"),
+        "fallback",
+        diagnostics,
+    );
+    if let Some(caption) = &block.caption {
+        nonempty(caption, &format!("{base}/caption"), "caption", diagnostics);
     }
 }
 
@@ -1323,7 +1372,7 @@ mod tests {
         assert!(matches!(lesson.source().blocks[0], Block::RunCode(_)));
         assert_eq!(
             lesson.source().schema_version,
-            super::super::SchemaVersion::CURRENT
+            super::super::SchemaVersion::V2_4_0
         );
     }
 
@@ -1518,6 +1567,171 @@ mod tests {
                 .message
                 .contains("unknown field `highlights`")
         );
+    }
+
+    const EXTERNAL: &str = r#"{"type":"external_artifact","id":"demo","kind":"video","file":"queue-demo.mp4",
+        "alt":"A queue animation","fallback":"Items leave from the **front**."}"#;
+
+    fn external_codes(block: &str) -> Vec<(String, String)> {
+        parse_and_validate(&run_lesson("2.5.0", block))
+            .expect_err("external artifact is invalid")
+            .into_iter()
+            .map(|diagnostic| (diagnostic.code, diagnostic.pointer))
+            .collect()
+    }
+
+    /// The block with one field replaced, as JSON.
+    fn external_with(field: &str, value: serde_json::Value) -> String {
+        let mut block: serde_json::Value = serde_json::from_str(EXTERNAL).unwrap();
+        block[field] = value;
+        block.to_string()
+    }
+
+    #[test]
+    fn external_artifacts_begin_in_source_2_5_and_older_schemas_reject_them() {
+        for version in ["2.0.0", "2.2.0", "2.3.0", "2.4.0"] {
+            let diagnostics = parse_and_validate(&run_lesson(version, EXTERNAL))
+                .expect_err("older schemas are closed shapes");
+            assert_eq!(diagnostics[0].code, "source.deserialize", "{version}");
+            assert_eq!(diagnostics[0].pointer, "/blocks/0/type", "{version}");
+            assert!(
+                diagnostics[0]
+                    .message
+                    .contains("unknown variant `external_artifact`"),
+                "{version}: {}",
+                diagnostics[0].message
+            );
+        }
+        let lesson = parse_and_validate(&run_lesson("2.5.0", EXTERNAL)).expect("2.5.0 accepts it");
+        assert!(matches!(
+            lesson.source().blocks[0],
+            Block::ExternalArtifact(_)
+        ));
+        assert_eq!(
+            lesson.source().schema_version,
+            super::super::SchemaVersion::CURRENT
+        );
+    }
+
+    #[test]
+    fn external_artifacts_accept_every_kind_extension_in_any_case() {
+        let mut blocks = Vec::new();
+        for kind in [
+            super::super::ExternalArtifactKind::Image,
+            super::super::ExternalArtifactKind::Audio,
+            super::super::ExternalArtifactKind::Video,
+        ] {
+            for (index, extension) in kind.extensions().iter().enumerate() {
+                for file in [
+                    format!("clip.{extension}"),
+                    format!("Clip.{}", extension.to_uppercase()),
+                ] {
+                    blocks.push(
+                        serde_json::json!({
+                            "type": "external_artifact",
+                            "id": format!("{}-{index}-{file}", kind.as_str()),
+                            "kind": kind.as_str(),
+                            "file": file,
+                            "alt": "Alt text",
+                            "fallback": "Fallback *text*.",
+                            "caption": "A [caption](#demo)."
+                        })
+                        .to_string(),
+                    );
+                }
+            }
+        }
+        blocks.push(EXTERNAL.to_owned());
+        parse_and_validate(&run_lesson("2.5.0", &blocks.join(","))).expect("valid blocks");
+    }
+
+    #[test]
+    fn external_artifact_file_names_are_bare_names() {
+        for file in [
+            "",
+            "a/b.mp4",
+            "a\\b.mp4",
+            ".",
+            "..",
+            ".hidden.mp4",
+            "a\n.mp4",
+            "a\u{7f}.mp4",
+        ] {
+            assert_eq!(
+                external_codes(&external_with("file", file.into())),
+                [(
+                    "source.external_artifact.invalid_file_name".into(),
+                    "/blocks/0/file".into()
+                )],
+                "{file:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn external_artifact_extensions_must_suit_the_kind() {
+        for (kind, file) in [
+            ("video", "clip.png"),
+            ("image", "clip.mp4"),
+            ("audio", "clip.webm"),
+            ("video", "clip"),
+            ("video", "clip."),
+            ("video", "mp4"),
+            ("video", "clip.mp4.exe"),
+            ("image", "clip.mp3"),
+        ] {
+            let block =
+                external_with("file", file.into()).replace("\"video\"", &format!("\"{kind}\""));
+            assert_eq!(
+                external_codes(&block),
+                [(
+                    "source.external_artifact.extension_not_allowed".into(),
+                    "/blocks/0/file".into()
+                )],
+                "{kind} {file}"
+            );
+        }
+    }
+
+    #[test]
+    fn external_artifact_text_fields_are_checked_like_other_prose() {
+        for field in ["alt", "fallback", "caption"] {
+            assert_eq!(
+                external_codes(&external_with(field, " \n".into())),
+                [("source.content.empty".into(), format!("/blocks/0/{field}"))],
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn external_artifacts_require_every_field_but_caption_and_reject_strays() {
+        for field in ["kind", "file", "alt", "fallback"] {
+            let mut block: serde_json::Value = serde_json::from_str(EXTERNAL).unwrap();
+            block.as_object_mut().unwrap().remove(field);
+            let diagnostics = parse_and_validate(&run_lesson("2.5.0", &block.to_string()))
+                .expect_err("a required field is missing");
+            assert_eq!(diagnostics[0].code, "source.deserialize", "{field}");
+            assert!(
+                diagnostics[0]
+                    .message
+                    .contains(&format!("missing field `{field}`")),
+                "{field}: {}",
+                diagnostics[0].message
+            );
+        }
+        for (field, value) in [
+            ("kind", serde_json::json!("document")),
+            (
+                "source",
+                serde_json::json!({"kind": "inline", "content": "x"}),
+            ),
+        ] {
+            let diagnostics =
+                parse_and_validate(&run_lesson("2.5.0", &external_with(field, value)))
+                    .expect_err("closed shape");
+            assert_eq!(diagnostics[0].code, "source.deserialize", "{field}");
+        }
     }
 
     #[test]

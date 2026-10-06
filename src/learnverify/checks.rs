@@ -365,8 +365,9 @@ fn unit_context(
     (entries, unit, remaining)
 }
 
-/// A Markdown, code, diff, or run block as quiz context, with its content capped
-/// at `budget` characters. Returns the entry and the characters it used.
+/// A Markdown, code, diff, run, or external-artifact block as quiz context,
+/// with its content capped at `budget` characters. Returns the entry and the
+/// characters it used.
 fn context_entry(node: &CompiledNode, budget: usize) -> (Value, usize) {
     let id = node.source_id.as_str();
     match &node.content {
@@ -437,6 +438,28 @@ fn context_entry(node: &CompiledNode, budget: usize) -> (Value, usize) {
                 entry["expected_output"] = json!(output);
                 used += spent;
             }
+            if let Some(caption) = caption {
+                entry["caption"] = json!(caption);
+            }
+            (entry, used)
+        }
+        CompiledNodeContent::ExternalArtifact {
+            kind,
+            alt,
+            fallback,
+            caption,
+            ..
+        } => {
+            // The learner reads the fallback, so that is the context; the file
+            // is never inspected.
+            let (fallback, used) = truncate(fallback, budget);
+            let mut entry = json!({
+                "id": id,
+                "kind": "external_artifact",
+                "media": kind.as_str(),
+                "alt": alt,
+                "fallback": fallback,
+            });
             if let Some(caption) = caption {
                 entry["caption"] = json!(caption);
             }
@@ -1146,6 +1169,49 @@ mod tests {
         let (entry, used) = context_entry(&lesson.artifact.presentation.nodes[1], 1);
         assert_eq!(entry["expected_output"], format!("2{TRUNCATED}"));
         assert_eq!(used, 1);
+    }
+
+    #[test]
+    fn external_artifacts_are_quiz_context_and_link_sources_without_panicking() {
+        let root = Root::new();
+        let lesson = root.load(json!({"schema_version":"2.5.0","title":"Media","blocks":[
+            markdown("intro", "A queue releases the oldest item first."),
+            {"type":"external_artifact","id":"demo","kind":"video","file":"queue-demo.mp4",
+             "alt":"A queue animation","fallback":"Items leave from the front, as in [the intro](#intro).",
+             "caption":"Watch the front."},
+            quiz("which-leaves")
+        ]}));
+        let jobs = plan(&lesson, 6000);
+        let quiz_job = jobs
+            .iter()
+            .find(|job| job.block_index == 2)
+            .expect("a quiz job");
+        assert_eq!(excerpt_ids(quiz_job), ["intro", "demo", "which-leaves"]);
+        let entry = &quiz_job.state["lesson"]["excerpt"][1];
+        assert_eq!(entry["kind"], "external_artifact");
+        assert_eq!(entry["media"], "video");
+        assert_eq!(entry["alt"], "A queue animation");
+        assert_eq!(
+            entry["fallback"],
+            "Items leave from the front, as in [the intro](#intro)."
+        );
+        assert_eq!(entry["caption"], "Watch the front.");
+        assert!(entry.get("file").is_none(), "the file is never inspected");
+
+        // The link in the fallback gets its own request, with the block as context.
+        let linking = jobs
+            .iter()
+            .filter(|job| !job.links.is_empty())
+            .map(|job| job.block_index)
+            .collect::<Vec<_>>();
+        assert_eq!(linking, [1]);
+        let link_job = jobs.iter().find(|job| job.block_index == 1).unwrap();
+        assert_eq!(excerpt_ids(link_job), ["demo", "intro"]);
+
+        // The context budget caps the fallback.
+        let (entry, used) = context_entry(&lesson.artifact.presentation.nodes[1], 5);
+        assert_eq!(entry["fallback"], format!("Items{TRUNCATED}"));
+        assert_eq!(used, 5);
     }
 
     #[test]

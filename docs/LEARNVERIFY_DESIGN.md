@@ -188,7 +188,12 @@ code block, so `state` is an excerpt of the lesson in authored order, with
   the unit as an entry of kind `run_code` with its language, its own code (an
   `of` block has none: the code block it runs is context in its own right),
   and its expected output, all within the same budget. Run blocks have no
-  checks of their own.
+  checks of their own. An `external_artifact` block joins the unit as an entry
+  of kind `external_artifact` with its media kind, `alt`, `fallback` (within
+  the same budget), and `caption`; the file is never inspected, and the block
+  has no checks of its own. Links in its `fallback` and `caption` get link
+  requests like any other Markdown. Neither addition changes the request of a
+  lesson without these blocks, so `CHECK_VERSION` is unchanged.
 - Choices come from the authored source in authored order, because the
   compiled artifact shuffles them without recording the original order; only
   the resolved prompt text comes from the artifact.

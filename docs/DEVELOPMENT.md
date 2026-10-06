@@ -233,7 +233,9 @@ The concrete orchestration starts in
    invoke Git. For learner references, `file` content records its Git blob ID
    (computed in Rust, so still without Git) and, only when the lesson already
    uses that repository through Git sources, the repository's `HEAD`.
-4. Markdown, code, diff, quiz, and run blocks are lowered in authored block order.
+4. Markdown, code, diff, quiz, run, and external-artifact blocks are lowered in
+   authored block order. An external artifact is lowered from the source alone:
+   no path is collected for it and the file is never looked for.
    Code languages are normalized or inferred from source paths during lowering;
    choices inside each quiz are scrambled before dense choice IDs are assigned.
    The order is a keyed hash of the question's source ID, prompt, and choices,
@@ -294,8 +296,9 @@ flowchart LR
 
 - [`LessonSource`](../src/source/model.rs) contains only
   `schema_version`, `title`, and ordered `blocks`.
-- [`Block`](../src/source/model.rs) has five variants: `markdown`, `code`,
-  `diff`, `multiple_choice`, and (source schema 2.4.0) `run_code`.
+- [`Block`](../src/source/model.rs) has six variants: `markdown`, `code`,
+  `diff`, `multiple_choice`, (source schema 2.4.0) `run_code`, and (source
+  schema 2.5.0) `external_artifact`.
 - [`SourceId`](../src/source/ids.rs) remains in the artifact for diagnostics;
   runtime state and routes use [`NodeId`](../src/source/ids.rs).
 - Choices are not nodes. The compiler removes `correct` markers, generates
@@ -309,9 +312,9 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.19.0` | [`Cargo.toml`](../Cargo.toml) |
-| Authored schema | `2.4.0` | [`SchemaVersion`](../src/source/model.rs) |
-| Artifact schema | `1.8.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
+| Cargo package | `1.20.0` | [`Cargo.toml`](../Cargo.toml) |
+| Authored schema | `2.5.0` | [`SchemaVersion`](../src/source/model.rs) |
+| Artifact schema | `1.9.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -426,7 +429,7 @@ The v1 routes are registered in
 
 | Method | Path | Effect |
 | --- | --- | --- |
-| `GET` | `/api/v1/state` | Returns public lesson data and current progress. The lesson includes its root-relative `lesson_path`, the `artifact_path` given to `learn serve`, and a `reference` (frozen provenance) on every non-quiz node. It also carries `run` (`{enabled, token}`) and `runs` (the last `RunResult` of each run block that has run, by node ID). |
+| `GET` | `/api/v1/state` | Returns public lesson data and current progress. The lesson includes its root-relative `lesson_path`, the `artifact_path` given to `learn serve`, and a `reference` (frozen provenance) on every node except quizzes and external artifacts. It also carries `run` (`{enabled, token}`) and `runs` (the last `RunResult` of each run block that has run, by node ID). |
 | `POST` | `/api/v1/questions/{node_id}/submit` | Records `{ "choice_id": n }`, grades it, and returns authoritative progress plus the focused question. |
 | `POST` | `/api/v1/questions/{node_id}/reveal` | Records an explicit reveal and returns the same mutation shape. |
 | `POST` | `/api/v1/runs/{node_id}` | Runs a `run_code` block once and returns `{ "run": RunResult }`. Needs `--allow-run`, the `X-Learn-Token` header, and a loopback `Host`; see [Running code](#running-code). |
@@ -581,6 +584,11 @@ compact label and falls back to `Code` when no specific language is known:
   lines, a highlight group, or old/new diff lines.
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
+- [`ExternalArtifactBlock`](../web/src/components/ExternalArtifactBlock.tsx)
+  shows a media block's caption and its fallback Markdown, with a notice that
+  the media itself is not available and the block's alt text. It renders no
+  media element; a block link to it previews only the alt text and the
+  fallback (`ExternalArtifactPreview`).
 - [`RunCodeBlock`](../web/src/components/RunCodeBlock.tsx) shows a run block's
   caption, its own code through `CodeBlock` (or "Runs `<id>`" as a
   [`ReferenceLink`](../web/src/components/ReferenceLink.tsx) for an `of` block,
@@ -754,7 +762,9 @@ Tests are layered so failures identify the responsible boundary:
   go to definition in
   [`web/src/test/Definitions.test.tsx`](../web/src/test/Definitions.test.tsx);
   run blocks, including running them through `App`, in
-  [`web/src/test/RunCode.test.tsx`](../web/src/test/RunCode.test.tsx).
+  [`web/src/test/RunCode.test.tsx`](../web/src/test/RunCode.test.tsx); media
+  blocks in
+  [`web/src/test/ExternalArtifact.test.tsx`](../web/src/test/ExternalArtifact.test.tsx).
   Per-language definition tests live in
   [`src/compiler/definitions.rs`](../src/compiler/definitions.rs).
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
@@ -804,7 +814,10 @@ asset in isolation:
 ### Add a display-only block
 
 1. Add the authored variant and fields in
-   [`src/source/model.rs`](../src/source/model.rs).
+   [`src/source/model.rs`](../src/source/model.rs), with a new source schema
+   version. Give the previous version its own block union without the variant
+   so its emitted schema stays byte-identical, and diff `learnc schema
+   --version X` for every older `X` before and after.
 2. Add semantic validation in
    [`src/source/validate.rs`](../src/source/validate.rs).
 3. Collect any repository paths and lower the source in
@@ -815,7 +828,10 @@ asset in isolation:
    [`src/runtime/model.rs`](../src/runtime/model.rs).
 6. Extend the discriminated union in
    [`web/src/types.ts`](../web/src/types.ts), add a component, and update
-   [`LessonNodeView`](../web/src/components/LessonNodeView.tsx).
+   [`LessonNodeView`](../web/src/components/LessonNodeView.tsx), the block-link
+   preview in [`ReferenceLink`](../web/src/components/ReferenceLink.tsx) and
+   `previewNode` in [`links.tsx`](../web/src/links.tsx), and the labels in
+   [`reference.ts`](../web/src/reference.ts).
 7. Handle the new block wherever the codebase matches on block kind: the
    Markdown fields in [`links.rs`](../src/compiler/links.rs), the match in
    [`lint/rules.rs`](../src/lint/rules.rs) and its preview measure in
@@ -849,9 +865,12 @@ an artifact change requires explicit runtime compatibility handling. Never infer
 compatibility from the Cargo package version.
 
 The compiler decodes source schemas `1.0.0` through `1.3.0` and `2.0.0`
-through `2.4.0`. Schema `2.4.0` adds the `run_code` block; `2.2.0` and `2.3.0`
-decode through a block union without it, so their emitted schemas are
-unchanged and reject the new block. Schema `2.3.0` keeps the `2.2.0` shape and
+through `2.5.0`. Schema `2.5.0` adds the `external_artifact` block and `2.4.0`
+the `run_code` block. Each decodes through its own block union (`2.4.0` through
+one that has `run_code` but not `external_artifact`, `2.2.0` and `2.3.0`
+through one that has neither), so older schemas keep their exact emitted shape
+and reject the new blocks; compare `learnc schema --version X` before and
+after a change for every older version. Schema `2.3.0` keeps the `2.2.0` shape and
 gives `#block-id` link destinations their meaning: [`links.rs`](../src/compiler/links.rs) finds
 them with `pulldown-cmark` in every Markdown-bearing field after file
 resolution, validates them against the compiled blocks, and freezes a
@@ -903,6 +922,29 @@ keeps them (and the code to run) server-side for the run route, described under
 runtime reads the same fields. Every `source.run_code.*` check is source-level
 ([`validate.rs`](../src/source/validate.rs)): a code block's language is a pure
 function of its source, so `of` and the runner table need no resolution.
+Artifact `1.9.0` adds the `external_artifact` node and is otherwise additive:
+older artifacts load unchanged, and a runtime from before `1.9.0` rejects it
+through the version gate. The node is `{kind, file, alt, fallback, caption?}`
+and nothing else: no resource hash and no provenance, because the compiler
+never reads, hashes, or looks for the file, and the lesson compiles without a
+filesystem root or repository. Artifact validation repeats the file-name and
+extension rules of the source (`source.external_artifact.invalid_file_name` and
+`.extension_not_allowed`; blank text is `source.content.empty`) so a
+hand-edited artifact cannot hand the browser a path or a mismatched kind. The
+`fallback` and `caption` are Markdown fields of
+[`links.rs`](../src/compiler/links.rs), so their `#block-id` links are
+validated and enter `presentation.links`; a link to the block itself is a
+whole-block link (a line range is `source.reference.lines_on_non_code`). The
+public projection carries `kind`, `file`, `alt`, `fallback`, and `caption`, and
+no `reference`: like a quiz, the block has no source resource, so a learner's
+copied reference names the block and its fallback text. The projection offers
+no way to fetch the file, and this version adds no route, directory lookup, or
+serving for it; the sidecar contract in
+[`AUTHORING.md`](AUTHORING.md#the-sidecar-contract) is documented intent for a
+later version, which will change the runtime and not the artifact. The
+extension allowlist per kind lives in
+[`ExternalArtifactKind`](../src/source/model.rs) and is shared by the source
+check and the artifact check.
 
 ### Change package contents
 
@@ -920,6 +962,9 @@ binaries must not.
 - No authentication, TLS, CSRF layer, or hostile-artifact hardening in the
   trusted single-user local v1 model. The exception is the opt-in run route,
   which needs the per-launch token and a loopback `Host`; it is not a sandbox.
+- `external_artifact` blocks show only their fallback: `learn` neither serves
+  nor looks for the media file, and neither `learnc` nor `learn` ever generates
+  media or calls a generation API.
 - Filesystem path containment is lexical; hostile symlink protection is not a
   v1 goal.
 - `.learn` artifacts are readable, disposable build outputs rather than secret

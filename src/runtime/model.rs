@@ -13,7 +13,7 @@ use crate::artifact::{
     CompiledNodeContent, RunCodeSource, validate_artifact,
 };
 use crate::repository::{DiffLine, ResolvedDiff};
-use crate::source::NodeId;
+use crate::source::{ExternalArtifactKind, NodeId};
 
 use super::runner::{RunResult, RunSpec};
 
@@ -275,6 +275,19 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                         expected_output: expected_output.clone(),
                     }
                 }
+                CompiledNodeContent::ExternalArtifact {
+                    kind,
+                    file,
+                    alt,
+                    fallback,
+                    caption,
+                } => PublicLessonNodeContent::ExternalArtifact {
+                    kind: *kind,
+                    file: file.clone(),
+                    alt: alt.clone(),
+                    fallback: fallback.clone(),
+                    caption: caption.clone(),
+                },
             };
             PublicLessonNode {
                 node_id: node.node_id,
@@ -313,7 +326,9 @@ fn code_to_run<'a>(nodes: &'a [CompiledNode], code: &'a RunCodeSource) -> Option
 
 /// Where a block's content came from, for references the learner copies to an
 /// agent. Quizzes have no source resource; their references name the block.
-/// A run block of `of` has none of its own and refers to the code it runs.
+/// So do external artifacts: the file is neither embedded nor hashed, and the
+/// text the learner sees is part of the lesson. A run block of `of` has none
+/// of its own and refers to the code it runs.
 fn node_reference(
     nodes: &[CompiledNode],
     content: &CompiledNodeContent,
@@ -332,7 +347,8 @@ fn node_reference(
         } => nodes
             .get(node.get() as usize)
             .and_then(|target| node_reference(nodes, &target.content)),
-        CompiledNodeContent::MultipleChoice { .. } => None,
+        CompiledNodeContent::MultipleChoice { .. }
+        | CompiledNodeContent::ExternalArtifact { .. } => None,
     }
 }
 
@@ -398,7 +414,8 @@ pub struct PublicLesson {
 pub struct PublicLessonNode {
     pub node_id: NodeId,
     pub source_id: String,
-    /// Frozen provenance of the block's content; `None` for quizzes.
+    /// Frozen provenance of the block's content; `None` for quizzes and
+    /// external artifacts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reference: Option<crate::artifact::ResourceProvenance>,
     #[serde(flatten)]
@@ -453,6 +470,16 @@ pub enum PublicLessonNodeContent {
         /// Output frozen when the lesson was built.
         #[serde(skip_serializing_if = "Option::is_none")]
         expected_output: Option<String>,
+    },
+    /// A media file the lesson refers to, with the text shown in its place.
+    /// Only the fallback is shown until the runtime serves the file.
+    ExternalArtifact {
+        kind: ExternalArtifactKind,
+        file: String,
+        alt: String,
+        fallback: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
     },
 }
 
@@ -757,6 +784,43 @@ pub(crate) mod tests {
         let text = projection.to_string();
         assert!(!text.contains("argv") && !text.contains("file_name"));
         assert!(!text.contains("python3"));
+    }
+
+    #[test]
+    fn public_projection_of_external_artifacts_carries_text_and_no_file_provenance() {
+        let mut artifact = quiz_artifact();
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "demo".into(),
+            content: CompiledNodeContent::ExternalArtifact {
+                kind: ExternalArtifactKind::Video,
+                file: "queue-demo.mp4".into(),
+                alt: "A queue".into(),
+                fallback: "Items leave from the **front**.".into(),
+                caption: Some("The oldest leaves first.".into()),
+            },
+        });
+        crate::artifact::validate_artifact(&artifact).unwrap();
+
+        let lesson = project_runtime_lesson(&artifact);
+        let projection = serde_json::to_value(&lesson.public).unwrap();
+        assert_eq!(
+            projection["nodes"][1],
+            serde_json::json!({
+                "node_id": 1,
+                "source_id": "demo",
+                "type": "external_artifact",
+                "kind": "video",
+                "file": "queue-demo.mp4",
+                "alt": "A queue",
+                "fallback": "Items leave from the **front**.",
+                "caption": "The oldest leaves first."
+            }),
+            "like a quiz, the block has no source resource, so no reference"
+        );
+        // Nothing to answer and nothing to run.
+        assert!(!lesson.answers.contains_key(&NodeId::new(1)));
+        assert!(lesson.runs.is_empty());
     }
 
     /// A quiz (0), a shell code block (1), a run block that runs it (2), and a

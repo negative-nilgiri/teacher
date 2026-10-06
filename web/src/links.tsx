@@ -25,7 +25,8 @@ export function blockAnchor(sourceId: string): string {
  * The part of a node a link previews. Code ranges keep only those lines and
  * the highlight ranges overlapping them; diff ranges keep the hunk lines in
  * that new-side range and the deletions between them; quizzes keep only their
- * prompt, never choices or answers.
+ * prompt, never choices or answers. Every other block, including an external
+ * artifact, previews whole.
  */
 export function previewNode(node: LessonNode, lines?: { start: number; end: number }): LessonNode {
   if (node.type === "multiple_choice") {

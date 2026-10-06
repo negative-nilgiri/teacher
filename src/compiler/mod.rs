@@ -174,6 +174,14 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
                 repository.as_ref(),
                 &block_pointer,
             ),
+            // Pure lowering: the file is never read or looked for.
+            Block::ExternalArtifact(block) => Ok(CompiledNodeContent::ExternalArtifact {
+                kind: block.kind,
+                file: block.file,
+                alt: block.alt,
+                fallback: block.fallback,
+                caption: block.caption,
+            }),
             Block::MultipleChoice(block) => {
                 let prompt_pointer = format!("/blocks/{index}/prompt");
                 let prompt = match resolve_markdown_source(
@@ -901,6 +909,7 @@ fn repository_paths(source: &LessonSource) -> Result<RepositoryPaths, Vec<Diagno
                 }
                 values
             }
+            Block::ExternalArtifact(_) => vec![],
         };
         for (value, is_git, pointer) in values {
             match repository_path(value, &pointer) {
@@ -1910,6 +1919,95 @@ mod tests {
             crate::source::NodeId::new(0)
         );
         let diagnostics = compile(&lesson("#demo:1-1"), &CompileOptions::new(".")).unwrap_err();
+        assert_eq!(diagnostics[0].code, "source.reference.lines_on_non_code");
+    }
+
+    #[test]
+    fn lowers_external_artifacts_without_touching_a_filesystem_or_repository() {
+        let lesson = r##"{
+            "schema_version":"2.5.0",
+            "title":"Media",
+            "blocks":[
+                {"type":"code","id":"queue","language":"python","source":{"kind":"inline","content":"q.pop(0)\n"}},
+                {"type":"external_artifact","id":"demo","kind":"video","file":"Queue-Demo.MP4",
+                 "alt":"Items leave a queue","fallback":"The oldest item leaves first, as in [the code](#queue).",
+                 "caption":"Compare with [line one](#queue:1-1)."},
+                {"type":"external_artifact","id":"plain","kind":"audio","file":"narration.mp3",
+                 "alt":"Narration","fallback":"Spoken summary."}
+            ]
+        }"##;
+        // Nothing here names a root or a repository, so none is needed.
+        let artifact = compile(lesson, &CompileOptions::new("/path/that/need/not/exist")).unwrap();
+        assert_eq!(artifact.artifact_version, CURRENT_ARTIFACT_VERSION);
+        assert_eq!(
+            artifact.presentation.nodes[1].content,
+            CompiledNodeContent::ExternalArtifact {
+                kind: crate::source::ExternalArtifactKind::Video,
+                file: "Queue-Demo.MP4".into(),
+                alt: "Items leave a queue".into(),
+                fallback: "The oldest item leaves first, as in [the code](#queue).".into(),
+                caption: Some("Compare with [line one](#queue:1-1).".into()),
+            }
+        );
+        let encoded = serde_json::to_value(&artifact.presentation.nodes[2]).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "node_id": 2,
+                "source_id": "plain",
+                "type": "external_artifact",
+                "kind": "audio",
+                "file": "narration.mp3",
+                "alt": "Narration",
+                "fallback": "Spoken summary."
+            }),
+            "no provenance, hash, or path: the file is never read"
+        );
+        // Links in the fallback and the caption are block links.
+        assert_eq!(
+            artifact.presentation.links["queue"].target,
+            crate::source::NodeId::new(0)
+        );
+        assert_eq!(
+            artifact.presentation.links["queue:1-1"].lines,
+            Some(crate::artifact::LinkedLines { start: 1, end: 1 })
+        );
+    }
+
+    #[test]
+    fn links_in_external_artifact_text_are_validated_and_can_target_the_block() {
+        let lesson = |fallback: &str, caption: &str| {
+            format!(
+                r##"{{"schema_version":"2.5.0","title":"Media","blocks":[
+                    {{"type":"external_artifact","id":"demo","kind":"image","file":"queue.png",
+                      "alt":"A queue","fallback":"{fallback}","caption":"{caption}"}},
+                    {{"type":"markdown","id":"text","source":{{"kind":"inline","content":"See [the picture](#demo)."}}}}
+                ]}}"##
+            )
+        };
+        let options = CompileOptions::new(".");
+        let artifact = compile(&lesson("Fine.", "Fine."), &options).unwrap();
+        assert_eq!(
+            artifact.presentation.links["demo"].target,
+            crate::source::NodeId::new(0)
+        );
+
+        let diagnostics = compile(&lesson("See [it](#nowhere).", "Fine."), &options).unwrap_err();
+        assert_eq!(diagnostics[0].code, "source.reference.unknown_block");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0/fallback");
+        let diagnostics = compile(&lesson("Fine.", "See [it](#nowhere)."), &options).unwrap_err();
+        assert_eq!(diagnostics[0].code, "source.reference.unknown_block");
+        assert_eq!(diagnostics[0].pointer, "/blocks/0/caption");
+
+        // A link text in code does not count; only real links are checked.
+        compile(&lesson("`[x](#nowhere)`", "Fine."), &options).unwrap();
+
+        // A picture has no lines to select.
+        let diagnostics = compile(
+            &lesson("Fine.", "Fine.").replace("(#demo)", "(#demo:1-2)"),
+            &options,
+        )
+        .unwrap_err();
         assert_eq!(diagnostics[0].code, "source.reference.lines_on_non_code");
     }
 

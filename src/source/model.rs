@@ -38,11 +38,15 @@ pub enum SchemaVersion {
     #[serde(rename = "2.4.0")]
     #[schemars(rename = "2.4.0")]
     V2_4_0,
+    /// Adds the `external_artifact` block.
+    #[serde(rename = "2.5.0")]
+    #[schemars(rename = "2.5.0")]
+    V2_5_0,
 }
 
 impl SchemaVersion {
-    pub const CURRENT: Self = Self::V2_4_0;
-    pub const SUPPORTED: [Self; 9] = [
+    pub const CURRENT: Self = Self::V2_5_0;
+    pub const SUPPORTED: [Self; 10] = [
         Self::V1_0_0,
         Self::V1_1_0,
         Self::V1_2_0,
@@ -52,6 +56,7 @@ impl SchemaVersion {
         Self::V2_2_0,
         Self::V2_3_0,
         Self::V2_4_0,
+        Self::V2_5_0,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -65,13 +70,14 @@ impl SchemaVersion {
             Self::V2_2_0 => "2.2.0",
             Self::V2_3_0 => "2.3.0",
             Self::V2_4_0 => "2.4.0",
+            Self::V2_5_0 => "2.5.0",
         }
     }
 
     /// Whether `#block-id` link destinations are block links, validated by
     /// the compiler. Older lessons keep them as ordinary links.
     pub const fn has_block_links(self) -> bool {
-        matches!(self, Self::V2_3_0 | Self::V2_4_0)
+        matches!(self, Self::V2_3_0 | Self::V2_4_0 | Self::V2_5_0)
     }
 }
 
@@ -463,6 +469,35 @@ impl From<BlockV2_1_0> for Block {
     }
 }
 
+/// Exact decoder/schema model for source schema 2.5.0: the 2.4.0 blocks plus
+/// `external_artifact`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(title = "LessonSource")]
+pub(crate) struct LessonSourceV2_5_0 {
+    schema_version: SchemaVersionV2_5_0,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    title: String,
+    blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+enum SchemaVersionV2_5_0 {
+    #[serde(rename = "2.5.0")]
+    #[schemars(rename = "2.5.0")]
+    V2_5_0,
+}
+
+impl From<LessonSourceV2_5_0> for LessonSource {
+    fn from(source: LessonSourceV2_5_0) -> Self {
+        Self {
+            schema_version: SchemaVersion::V2_5_0,
+            title: source.title,
+            blocks: source.blocks,
+        }
+    }
+}
+
 /// Exact decoder/schema model for source schema 2.4.0: the 2.3.0 blocks plus
 /// `run_code`.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -472,7 +507,7 @@ pub(crate) struct LessonSourceV2_4_0 {
     schema_version: SchemaVersionV2_4_0,
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     title: String,
-    blocks: Vec<Block>,
+    blocks: Vec<BlockBeforeV2_5_0>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -487,7 +522,7 @@ impl From<LessonSourceV2_4_0> for LessonSource {
         Self {
             schema_version: SchemaVersion::V2_4_0,
             title: source.title,
-            blocks: source.blocks,
+            blocks: source.blocks.into_iter().map(Block::from).collect(),
         }
     }
 }
@@ -572,6 +607,31 @@ impl From<BlockBeforeV2_4_0> for Block {
     }
 }
 
+// Not a doc comment: schema 2.4.0 keeps its exact emitted shape. It has
+// `run_code` but not `external_artifact`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "Block")]
+enum BlockBeforeV2_5_0 {
+    Markdown(MarkdownBlock),
+    Code(CodeBlock),
+    Diff(DiffBlock),
+    MultipleChoice(MultipleChoiceBlock),
+    RunCode(RunCodeBlock),
+}
+
+impl From<BlockBeforeV2_5_0> for Block {
+    fn from(block: BlockBeforeV2_5_0) -> Self {
+        match block {
+            BlockBeforeV2_5_0::Markdown(block) => Self::Markdown(block),
+            BlockBeforeV2_5_0::Code(block) => Self::Code(block),
+            BlockBeforeV2_5_0::Diff(block) => Self::Diff(block),
+            BlockBeforeV2_5_0::MultipleChoice(block) => Self::MultipleChoice(block),
+            BlockBeforeV2_5_0::RunCode(block) => Self::RunCode(block),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "CodeBlock")]
@@ -632,6 +692,7 @@ pub enum Block {
     Diff(DiffBlock),
     MultipleChoice(MultipleChoiceBlock),
     RunCode(RunCodeBlock),
+    ExternalArtifact(ExternalArtifactBlock),
 }
 
 impl Block {
@@ -642,6 +703,7 @@ impl Block {
             Self::Diff(block) => &block.id,
             Self::MultipleChoice(block) => &block.id,
             Self::RunCode(block) => &block.id,
+            Self::ExternalArtifact(block) => &block.id,
         }
     }
 }
@@ -769,6 +831,92 @@ pub struct RunCodeBlock {
     /// written, before and without a run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_output: Option<OutputSource>,
+}
+
+/// An image, audio, or video file produced outside the compiler, with the text
+/// shown in its place when the file is not available.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalArtifactBlock {
+    pub id: SourceId,
+    /// Allowed file extensions: image `png jpg jpeg gif webp svg avif`, audio
+    /// `mp3 wav ogg m4a aac flac`, video `mp4 webm mov ogv`.
+    pub kind: ExternalArtifactKind,
+    /// A bare file name, not a path, with an extension that suits `kind`. The
+    /// compiler never looks for the file.
+    #[schemars(
+        length(min = 1),
+        regex(pattern = r"^(?!\.)[^/\\\u0000-\u001F\u007F-\u009F]+$")
+    )]
+    pub file: String,
+    /// Plain text describing the media for a learner who cannot see or hear it.
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub alt: String,
+    /// Markdown shown in place of the media: what the learner would have seen
+    /// or heard, in words.
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub fallback: String,
+    /// Optional Markdown for non-obvious, block-specific explanation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub caption: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalArtifactKind {
+    Image,
+    Audio,
+    Video,
+}
+
+impl ExternalArtifactKind {
+    /// File extensions a file of this kind may have, lowercase. Compared
+    /// case-insensitively.
+    pub const fn extensions(self) -> &'static [&'static str] {
+        match self {
+            Self::Image => &["png", "jpg", "jpeg", "gif", "webp", "svg", "avif"],
+            Self::Audio => &["mp3", "wav", "ogg", "m4a", "aac", "flac"],
+            Self::Video => &["mp4", "webm", "mov", "ogv"],
+        }
+    }
+
+    /// Whether the extension of `file` is one of [`Self::extensions`].
+    pub fn allows_file(self, file: &str) -> bool {
+        file.rsplit_once('.').is_some_and(|(_, extension)| {
+            self.extensions()
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(extension))
+        })
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Image => "image",
+            Self::Audio => "audio",
+            Self::Video => "video",
+        }
+    }
+}
+
+/// Why `file` is not a bare file name, if it is not one.
+pub fn external_artifact_file_error(file: &str) -> Option<&'static str> {
+    if file.is_empty() {
+        return Some("must not be empty");
+    }
+    if file.contains('/') || file.contains('\\') {
+        return Some("must be a bare file name without `/` or `\\`");
+    }
+    if file == "." || file == ".." {
+        return Some("must not be `.` or `..`");
+    }
+    if file.starts_with('.') {
+        return Some("must not start with `.`");
+    }
+    if file.chars().any(char::is_control) {
+        return Some("must not contain control characters");
+    }
+    None
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
