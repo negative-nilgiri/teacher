@@ -183,9 +183,12 @@ mod tests {
             ..LintConfig::default()
         };
         assert!(
-            config(&["lint.markdown.unshown_code_reference"])
-                .validate()
-                .is_ok()
+            config(&[
+                "lint.markdown.unshown_code_reference",
+                "lint.run_code.no_expected_output"
+            ])
+            .validate()
+            .is_ok()
         );
         for code in ["lint.code.plain_text", "lint.diff.new_file", "lint.nope"] {
             let error = config(&[code]).validate().unwrap_err();

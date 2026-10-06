@@ -4,11 +4,12 @@
 
 use std::collections::HashSet;
 
-use crate::artifact::{CompiledNode, CompiledNodeContent, ResourceProvenance};
+use crate::artifact::{CompiledNode, CompiledNodeContent, ResourceProvenance, RunCodeSource};
 use crate::compiler::links::{MarkdownField, find_links, markdown_fields};
 
 use super::{
-    Rules, TextPlace, code_reference_name, identifier_segments, identifier_words, inline_code_spans,
+    Rules, TextPlace, code_reference_name, displayed_code, identifier_segments, identifier_words,
+    inline_code_spans,
 };
 use crate::lint::{RelatedLintLocation, SourceLocation};
 
@@ -66,8 +67,22 @@ fn preview_lines(node: &CompiledNode, lines: Option<(u32, u32)>) -> usize {
             .sum(),
         (CompiledNodeContent::Markdown { content, .. }, _) => content.lines().count(),
         (CompiledNodeContent::MultipleChoice { prompt, .. }, _) => prompt.lines().count(),
-        // Run blocks have no lint rules yet, so a preview of one goes unmeasured.
-        (CompiledNodeContent::RunCode { .. }, _) => 0,
+        // A run block previews whole, since a link to one takes no line range:
+        // its own code, or the pointer to the code it runs.
+        (
+            CompiledNodeContent::RunCode {
+                code: RunCodeSource::Own { content, .. },
+                ..
+            },
+            _,
+        ) => content.lines().count(),
+        (
+            CompiledNodeContent::RunCode {
+                code: RunCodeSource::Of { .. },
+                ..
+            },
+            _,
+        ) => 1,
     }
 }
 
@@ -141,7 +156,9 @@ impl Rules<'_> {
                 .first()
                 .map(|(_, start, end)| format!("#{target_id}:{}", span(*start, *end)))
                 .unwrap_or_else(|| format!("#{target_id}:12-18"));
-            let suggestion = if groups.is_empty() {
+            let suggestion = if matches!(target.content, CompiledNodeContent::RunCode { .. }) {
+                "A link to a run block previews all of its code and takes no line range; shorten the code, or link a shorter block.".to_owned()
+            } else if groups.is_empty() {
                 format!("Link only the lines the reader needs, e.g. `{example}`.")
             } else {
                 format!(
@@ -287,17 +304,16 @@ impl Rules<'_> {
         let shown_by = nodes
             .iter()
             .map(|node| match &node.content {
-                CompiledNodeContent::Code { content, .. } => {
-                    identifier_words(content).collect::<HashSet<_>>()
-                }
                 CompiledNodeContent::Diff { diff, .. } => diff
                     .files
                     .iter()
                     .flat_map(|file| &file.hunks)
                     .flat_map(|hunk| &hunk.lines)
                     .flat_map(|line| identifier_words(&line.content))
-                    .collect(),
-                _ => HashSet::new(),
+                    .collect::<HashSet<_>>(),
+                other => displayed_code(other)
+                    .map(|code| identifier_words(code).collect())
+                    .unwrap_or_default(),
             })
             .collect::<Vec<_>>();
         let shows = |node: usize, name: &str| {
@@ -393,7 +409,8 @@ pub(super) fn code_shaped(span: &str, name: &str) -> bool {
 }
 
 /// The first displayed line of `node` that contains `word` as a whole word,
-/// in the numbers a block link uses.
+/// in the numbers a block link uses. A run block has none: a link to it takes
+/// no line range.
 fn name_line(node: &CompiledNode, word: &str) -> Option<u32> {
     match &node.content {
         CompiledNodeContent::Code {

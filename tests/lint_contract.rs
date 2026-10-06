@@ -227,6 +227,77 @@ fn cli_thresholds_override_file_values_and_validate_effective_config() {
 }
 
 #[test]
+fn run_blocks_are_linted_with_editable_spans_and_their_info_code_can_be_ignored() {
+    let root = TempRoot::new();
+    root.write(
+        "lesson.json",
+        &format!(
+            r#"{{"schema_version":"2.4.0","title":"Run","blocks":[
+            {{"type":"run_code","id":"big","language":"python","source":{{"kind":"inline","content":"print('{}')\n"}},
+             "expected_output":{{"kind":"inline","content":"{}"}}}},
+            {{"type":"run_code","id":"bare","language":"python","source":{{"kind":"inline","content":"print(1)\n"}}}}
+        ]}}"#,
+            "a".repeat(300),
+            "b".repeat(300)
+        ),
+    );
+    let linted = root.learnc(&["lint", "--min-question-ratio", "0", "lesson.json"]);
+    // Oversized inline source and expected output are lint errors.
+    assert!(!linted.status.success());
+    let diagnostics = json_output(&linted)["diagnostics"].clone();
+    let found = diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| {
+            (
+                finding["code"].as_str().unwrap(),
+                finding["severity"].as_str().unwrap(),
+                finding["pointer"].as_str().unwrap(),
+                finding["location"]["start"]["line"].as_u64().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        found,
+        [
+            (
+                "lint.inline.code_diff.too_large",
+                "error",
+                "/blocks/0/source/content",
+                2
+            ),
+            (
+                "lint.inline.code_diff.too_large",
+                "error",
+                "/blocks/0/expected_output/content",
+                3
+            ),
+            ("lint.run_code.no_expected_output", "info", "/blocks/1", 4),
+        ]
+    );
+
+    let ignored = root.learnc(&[
+        "lint",
+        "--min-question-ratio",
+        "0",
+        "--ignore-code",
+        "lint.run_code.no_expected_output",
+        "lesson.json",
+    ]);
+    let codes = json_output(&ignored)["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|finding| finding["code"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(codes, ["lint.inline.code_diff.too_large"; 2]);
+
+    // Lint advice never changes whether the lesson checks.
+    assert!(root.learnc(&["check", "lesson.json"]).status.success());
+}
+
+#[test]
 fn lint_help_exposes_each_config_threshold_as_a_flag() {
     let root = TempRoot::new();
     let output = root.learnc(&["lint", "-t", "--help"]);

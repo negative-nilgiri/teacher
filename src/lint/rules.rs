@@ -1,9 +1,12 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::artifact::{CompiledLesson, CompiledNodeContent};
+use crate::artifact::{CompiledLesson, CompiledNodeContent, RunCodeSource};
 use crate::language::Language;
-use crate::source::{Block, CodeSource, DiffSource, GitDiffTarget, LessonSource, MarkdownSource};
+use crate::source::{
+    Block, CodeSource, DiffSource, GitDiffTarget, LessonSource, MarkdownSource, OutputSource,
+    RunCodeBlock,
+};
 
 use super::{LintConfig, LintDiagnostic, Severity, SourceLocation, SpanIndex};
 
@@ -118,8 +121,9 @@ pub(super) fn collect(
                 rules.missing_hints(index, block);
                 rules.unexplained_distractors(index, block);
             }
-            // Run blocks have no lint rules of their own yet.
-            (Block::RunCode(_), CompiledNodeContent::RunCode { .. }) => {}
+            (Block::RunCode(block), CompiledNodeContent::RunCode { code, .. }) => {
+                rules.run_code(index, block, code);
+            }
             _ => unreachable!("compiled nodes retain the source block order and kind"),
         }
     }
@@ -239,23 +243,7 @@ impl Rules<'_> {
         }
 
         let lines = content.lines().count();
-        if lines > self.config.max_code_lines {
-            let pointer = match block.source {
-                CodeSource::Inline { .. } => format!("{base}/source/content"),
-                _ => format!("{base}/source/lines"),
-            };
-            self.add(
-                Some(index),
-                "lint.code.too_many_lines",
-                &pointer,
-                format!(
-                    "code block displays {lines} lines, exceeding the limit of {}",
-                    self.config.max_code_lines
-                ),
-                "Split the excerpt into focused code blocks, with explanations where useful.",
-                None,
-            );
-        }
+        self.too_many_lines(index, &block.source, lines, "code block");
 
         let highlight_capable =
             !matches!(block.source, CodeSource::Inline { .. }) && language != Language::Mermaid;
@@ -310,6 +298,68 @@ impl Rules<'_> {
         self.filename_gap(index, block);
         if language == Language::Mermaid {
             self.mermaid_style(index, &block.source, content);
+        }
+    }
+
+    /// Report a block that displays more than `max_code_lines` of its own
+    /// code. `what` names the block in the message.
+    fn too_many_lines(&mut self, index: usize, source: &CodeSource, lines: usize, what: &str) {
+        if lines > self.config.max_code_lines {
+            let pointer = match source {
+                CodeSource::Inline { .. } => format!("/blocks/{index}/source/content"),
+                _ => format!("/blocks/{index}/source/lines"),
+            };
+            self.add(
+                Some(index),
+                "lint.code.too_many_lines",
+                &pointer,
+                format!(
+                    "{what} displays {lines} lines, exceeding the limit of {}",
+                    self.config.max_code_lines
+                ),
+                "Split the excerpt into focused code blocks, with explanations where useful.",
+                None,
+            );
+        }
+    }
+
+    /// A run block with its own source displays code like a code block, so the
+    /// same size limits apply to it; the expected output counts against the
+    /// inline code limit too. A block of `of` displays no code of its own.
+    fn run_code(&mut self, index: usize, block: &RunCodeBlock, code: &RunCodeSource) {
+        if let Some(CodeSource::Inline { content }) = &block.source {
+            self.inline_size(
+                index,
+                content,
+                self.config.max_inline_code_diff_chars,
+                "run code",
+                "lint.inline.code_diff.too_large",
+            );
+        }
+        if let Some(OutputSource::Inline { content }) = &block.expected_output {
+            self.inline_size_at(
+                index,
+                content,
+                self.config.max_inline_code_diff_chars,
+                "expected output",
+                &format!("/blocks/{index}/expected_output/content"),
+                "lint.inline.code_diff.too_large",
+            );
+        }
+        if let (Some(source), RunCodeSource::Own { content, .. }) = (&block.source, code) {
+            self.too_many_lines(index, source, content.lines().count(), "run block");
+        }
+        // Running is off unless the learner starts `learn serve --allow-run`,
+        // so without frozen output the block shows only its code.
+        if block.expected_output.is_none() {
+            self.add(
+                Some(index),
+                "lint.run_code.no_expected_output",
+                &format!("/blocks/{index}"),
+                "run block has no `expected_output`, so it shows only code unless the learner runs it",
+                "Run the code once yourself and add its output as `expected_output`.",
+                None,
+            );
         }
     }
 
@@ -643,9 +693,6 @@ impl Rules<'_> {
         let mut shown = HashSet::new();
         for node in &self.artifact.presentation.nodes {
             match &node.content {
-                CompiledNodeContent::Code { content, .. } => {
-                    shown.extend(identifier_words(content))
-                }
                 CompiledNodeContent::Diff { diff, .. } => {
                     for line in diff
                         .files
@@ -656,7 +703,11 @@ impl Rules<'_> {
                         shown.extend(identifier_words(&line.content));
                     }
                 }
-                _ => {}
+                other => {
+                    if let Some(code) = displayed_code(other) {
+                        shown.extend(identifier_words(code));
+                    }
+                }
             }
         }
 
@@ -923,6 +974,19 @@ impl Rules<'_> {
     }
 }
 
+/// The code a node displays itself. A run block of `of` shows none: the code
+/// block it runs does.
+fn displayed_code(node: &CompiledNodeContent) -> Option<&str> {
+    match node {
+        CompiledNodeContent::Code { content, .. }
+        | CompiledNodeContent::RunCode {
+            code: RunCodeSource::Own { content, .. },
+            ..
+        } => Some(content),
+        _ => None,
+    }
+}
+
 /// Every identifier-like word (`[A-Za-z0-9_]+`) in displayed code.
 fn identifier_words(content: &str) -> impl Iterator<Item = String> + '_ {
     content
@@ -1101,6 +1165,7 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.code.repeated_excerpt"
         | "lint.markdown.distant_code_reference"
         | "lint.question.no_hints"
+        | "lint.run_code.no_expected_output"
         | "lint.question.unexplained_distractors"
         | "lint.markdown.unshown_code_reference" => Severity::Info,
         _ => return None,
@@ -1595,19 +1660,179 @@ mod tests {
     }
 
     #[test]
-    fn run_blocks_have_no_rules_yet_but_their_captions_and_links_to_them_are_handled() {
+    fn run_blocks_with_their_own_source_show_code_and_blocks_of_show_none() {
+        let root = temp_root();
+        let quiz = |id: &str, correct: &str, explanation: &str| {
+            json!({"type":"multiple_choice","id":id,
+                "prompt":{"kind":"inline","content":"What does the run print?"},
+                "choices":[{"content":correct,"correct":true},{"content":"Nothing"}],
+                "explanation":explanation})
+        };
+        let lesson = json!({"schema_version":"2.4.0","title":"Run","blocks":[
+            {"type":"code","id":"base","language":"python","source":{"kind":"inline","content":"def base_total(): pass\n"}},
+            {"type":"run_code","id":"run-of","of":"base","expected_output":{"kind":"inline","content":"1\n"}},
+            {"type":"run_code","id":"run-own","language":"python","source":{"kind":"inline","content":"print(own_total())\n"}, "expected_output":{"kind":"inline","content":"2\n"}},
+            md("near", "Both `base_total` and `own_total` are shown, but `ghost_total` is not."),
+            quiz("asks", "It prints `own_total`", "`ghost_total` is never defined."),
+            md("far-one", "Filler one."), md("far-two", "Filler two."), md("far-three", "Filler three."),
+            md("far", "Back to `own_total()` much later.")
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let names = |code: &str| {
+            codes_of(&found, code)
+                .into_iter()
+                .map(|f| {
+                    (
+                        f.block_id.as_deref().unwrap(),
+                        f.message.split('`').nth(1).unwrap(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        // A run block's own source shows its names; a block of `of` shows
+        // nothing itself, and the code block it runs already does.
+        assert_eq!(
+            names("lint.markdown.unshown_code_reference"),
+            [("near", "ghost_total")]
+        );
+        assert_eq!(
+            names("lint.question.unshown_answer_code"),
+            [("asks", "ghost_total")]
+        );
+        let distant = codes_of(&found, "lint.markdown.distant_code_reference");
+        assert_eq!(distant.len(), 1);
+        assert_eq!(distant[0].block_id.as_deref(), Some("far"));
+        assert!(distant[0].message.contains("block `run-own`"));
+        // A link to a run block takes no line range, so none is suggested.
+        assert!(distant[0].suggestion.contains("(#run-own)"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_blocks_extend_the_size_rules_to_their_own_source_and_expected_output() {
+        let root = temp_root();
+        let long = |label: &str, count: usize| {
+            (1..=count)
+                .map(|n| format!("print('{label} {n}')\n"))
+                .collect::<String>()
+        };
+        fs::write(root.join("run.py"), long("file", 8)).unwrap();
+        let inline = |content: &str| json!({"kind":"inline","content":content});
+        let lesson = json!({"schema_version":"2.4.0","title":"Sizes","blocks":[
+            {"type":"code","id":"base","language":"python","source":inline(&long("base", 8))},
+            {"type":"run_code","id":"of","of":"base","expected_output":inline(&long("out", 1))},
+            {"type":"run_code","id":"big-source","language":"python","source":inline(&long("big", 40)),
+             "expected_output":inline("done\n")},
+            {"type":"run_code","id":"big-output","language":"python","source":inline("print(1)\n"),
+             "expected_output":inline(&"x".repeat(300))},
+            {"type":"run_code","id":"fits","language":"python","source":inline(&long("fits", 4)),
+             "expected_output":inline(&"y".repeat(256))},
+            {"type":"run_code","id":"file","source":{"kind":"file","path":"run.py"},
+             "expected_output":{"kind":"file","path":"run.py"}},
+            {"type":"run_code","id":"file-lines","source":{"kind":"file","path":"run.py","lines":{"start":1,"end":6}},
+             "expected_output":inline("ok\n")}
+        ]});
+        let config = LintConfig {
+            max_code_lines: 5,
+            max_inline_code_diff_chars: 256,
+            ..LintConfig::default()
+        };
+        let found = findings(lesson, &root, &config);
+        let on = |code: &str| {
+            codes_of(&found, code)
+                .into_iter()
+                .map(|f| (f.block_id.as_deref().unwrap(), f.pointer.as_str()))
+                .collect::<Vec<_>>()
+        };
+        // The oversized inline source and expected output are errors; file
+        // sources and a block of `of` are not measured by characters.
+        let too_large = codes_of(&found, "lint.inline.code_diff.too_large");
+        assert!(too_large.iter().all(|f| f.severity == Severity::Error));
+        assert_eq!(
+            on("lint.inline.code_diff.too_large"),
+            [
+                ("big-source", "/blocks/2/source/content"),
+                ("big-output", "/blocks/3/expected_output/content"),
+            ]
+        );
+        assert!(too_large[0].message.starts_with("inline run code has"));
+        assert!(
+            too_large[1]
+                .message
+                .starts_with("inline expected output has 300")
+        );
+        // Displayed lines of own source count against `max_code_lines`.
+        let long_blocks = codes_of(&found, "lint.code.too_many_lines");
+        assert!(long_blocks.iter().all(|f| f.severity == Severity::Warning));
+        assert_eq!(
+            on("lint.code.too_many_lines"),
+            [
+                ("base", "/blocks/0/source/content"),
+                ("big-source", "/blocks/2/source/content"),
+                ("file", "/blocks/5/source/lines"),
+                ("file-lines", "/blocks/6/source/lines"),
+            ]
+        );
+        assert!(
+            long_blocks[1]
+                .message
+                .starts_with("run block displays 40 lines")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_blocks_without_expected_output_are_reported_as_info() {
+        let root = temp_root();
+        let lesson = json!({"schema_version":"2.4.0","title":"Output","blocks":[
+            {"type":"code","id":"base","language":"python","source":{"kind":"inline","content":"print(1)\n"}},
+            {"type":"run_code","id":"bare-of","of":"base"},
+            {"type":"run_code","id":"bare-own","language":"python","source":{"kind":"inline","content":"print(2)\n"}},
+            {"type":"run_code","id":"framed","of":"base","expected_output":{"kind":"inline","content":"1\n"}}
+        ]});
+        let found = findings(lesson.clone(), &root, &LintConfig::default());
+        let missing = codes_of(&found, "lint.run_code.no_expected_output");
+        assert_eq!(
+            missing
+                .iter()
+                .map(|f| (f.block_id.as_deref().unwrap(), f.pointer.as_str()))
+                .collect::<Vec<_>>(),
+            [("bare-of", "/blocks/1"), ("bare-own", "/blocks/2")]
+        );
+        assert!(missing.iter().all(|f| f.severity == Severity::Info));
+        assert_eq!(missing[0].location.start.line, 12);
+
+        let ignored = findings(
+            lesson,
+            &root,
+            &LintConfig {
+                ignore_codes: vec!["lint.run_code.no_expected_output".to_owned()],
+                ..LintConfig::default()
+            },
+        );
+        assert!(codes_of(&ignored, "lint.run_code.no_expected_output").is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn links_to_run_blocks_preview_their_code_and_never_suggest_a_line_range() {
         let root = temp_root();
         let output = (1..=20).map(|n| format!("{n}\n")).collect::<String>();
+        let own = (1..=20)
+            .map(|n| format!("print({n})\n"))
+            .collect::<String>();
         let lesson = json!({"schema_version":"2.4.0","title":"Run","blocks":[
             {"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"for n in range(20): print(n + 1)\n"}},
             {"type":"run_code","id":"run-shown","of":"shown","caption":"Runs [the loop](#shown).",
              "expected_output":{"kind":"inline","content":output}},
-            {"type":"run_code","id":"run-own","language":"python","source":{"kind":"inline","content":"print(2)\n"}},
+            {"type":"run_code","id":"run-own","language":"python","source":{"kind":"inline","content":own},
+             "expected_output":{"kind":"inline","content":"1\n"}},
             md("far", "Filler one."), md("farther", "Filler two."),
-            md("uses", "The [run](#run-shown) prints twenty lines.")
+            md("uses-of", "The [run](#run-shown) prints twenty lines."),
+            md("uses-own", "The [long run](#run-own) prints twenty lines.")
         ]});
         let found = findings(lesson, &root, &LintConfig::default());
-        // Only the link in the caption is checked, by the block-link rules.
+        // The caption's link is checked like any Markdown link.
         let on_runs = found
             .iter()
             .filter(|finding| {
@@ -1619,11 +1844,18 @@ mod tests {
             .map(|finding| (finding.code.as_str(), finding.pointer.as_str()))
             .collect::<Vec<_>>();
         assert_eq!(on_runs, [("lint.reference.adjacent", "/blocks/1/caption")]);
-        // The link to the run block resolves and is not measured or flagged.
+        // A block of `of` previews as one pointer line, however long its
+        // expected output; a block of its own code previews that code, and no
+        // line range can make the link smaller.
+        let large = codes_of(&found, "lint.reference.large_preview");
+        assert_eq!(large.len(), 1);
+        assert_eq!(large[0].block_id.as_deref(), Some("uses-own"));
+        assert_eq!(large[0].message, "link to `run-own` previews 20 lines");
+        assert!(!large[0].suggestion.contains("#run-own:"));
         assert!(
             found
                 .iter()
-                .all(|finding| finding.block_id.as_deref() != Some("uses"))
+                .all(|finding| finding.block_id.as_deref() != Some("uses-of"))
         );
         fs::remove_dir_all(root).unwrap();
     }

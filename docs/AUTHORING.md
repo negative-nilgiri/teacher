@@ -105,14 +105,16 @@ Passing generic JSON Schema validation is useful but not sufficient. Always run
 
 Run `learnc lint lesson.json` after `check` to get advice about presentation
 choices. Lint runs the compilation checks first and reports their failures
-unchanged. Its own findings never affect `check` or `build`. An inline code or
-diff source over 256 decoded characters, inline Markdown or quiz prompt over
-512 characters, or a diff that presents a new file is a lint `error` by default.
+unchanged. Its own findings never affect `check` or `build`. An inline code,
+diff, or run-block source, or an inline run-block `expected_output`, over 256
+decoded characters, inline Markdown or quiz prompt over 512 characters, or a
+diff that presents a new file is a lint `error` by default.
 Other rules cover code language and length, highlights, filename context,
 answer-choice balance, question frequency, questions with three or more choices
 but no hints or with unexplained distractors, diff hunks that are mostly
 additions, names formatted as code in prose but
-never shown in a code or diff block, and Mermaid `subgraph`/`style` use in
+never shown in a code, diff, or run block, run blocks without an
+`expected_output`, and Mermaid `subgraph`/`style` use in
 flowcharts and class diagrams. The
 complete rule and threshold table is in [`LINT_DESIGN.md`](LINT_DESIGN.md).
 
@@ -579,7 +581,13 @@ optional `caption` is Markdown, like a code block's.
 A run block is an ordinary block in every other way: it folds, can be asked
 about, and can be the target of a whole-block link (`#demo`, but not a line
 range, because it is not a code block). A caption's links are checked like any
-other Markdown. Lint has no rules of its own for run blocks yet.
+other Markdown. Lint treats a run block's own `source` like a code block's:
+it counts as code the lesson shows, an inline source or inline
+`expected_output` over 256 characters is an `error`, and more than 60 displayed
+lines is a warning. A block of `of` shows no code of its own. Lint also reports
+a run block without `expected_output`
+(`lint.run_code.no_expected_output`, `info`), since without a run it shows only
+its code.
 
 | Diagnostic | Meaning |
 | --- | --- |
@@ -660,7 +668,7 @@ hover or focus, trimmed to the linked lines, and clicking jumps to the block
 (`source.reference.unknown_block`), a malformed or out-of-range line range
 (`source.reference.invalid_lines`), and a range on a Markdown, question,
 or run block (`source.reference.lines_on_non_code`). Lint then reports previews
-longer than 15 lines, links to the next or previous block, links to a later
+longer than 15 lines (a run block previews its whole code), links to the next or previous block, links to a later
 block, excerpts repeated far apart, and names formatted as code that no nearby
 block shows; `learnverify` asks whether each link's target shows what its text
 says. In schemas before `2.3.0`, `#…` links remain ordinary links.
