@@ -7,13 +7,15 @@ import { CollapsibleLessonBlock } from "./CollapsibleLessonBlock";
 import { DiffBlock } from "./DiffBlock";
 import { Markdown } from "./Markdown";
 import { MultipleChoiceBlock } from "./MultipleChoiceBlock";
-import { RunCodeBlock } from "./RunCodeBlock";
+import { RunCodeBlock, type RunControls } from "./RunCodeBlock";
 
 interface LessonNodeViewProps {
   node: LessonNode;
   /** When present, the block offers a copyable reference for an agent. */
   lesson?: LessonContext;
   questionState?: QuestionState;
+  /** What a run block needs to run; without it, a run block cannot run. */
+  run?: RunControls;
   busy: boolean;
   onSubmit: (choiceId: ChoiceId) => Promise<void>;
   onReveal: () => Promise<void>;
@@ -55,7 +57,7 @@ export function LessonNodeView(props: LessonNodeViewProps) {
       break;
     case "run_code":
       kind = "Run code";
-      content = <RunCodeBlock node={node} />;
+      content = <RunCodeBlock node={node} run={props.run} />;
       break;
   }
 

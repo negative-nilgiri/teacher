@@ -485,12 +485,35 @@ them; a correct attempt or explicit reveal does.
 ## Running code
 
 A `run_code` block (source schema `2.4.0`) is code the learner can run during
-the lesson, with the output shown in place. This version of `learn` does not
-run anything yet: a run block shows its code (or a pointer to the block it
-runs) and its `expected_output`, the output frozen when the lesson was built.
-A later version will run the frozen code only when the learner starts
-`learn serve` with `--allow-run`, so author every run block to be useful
-without a run, which means giving it an `expected_output`.
+the lesson, with the output shown in place. Nothing runs unless the learner
+starts `learn serve --allow-run` themselves (authoring agents never start
+`learn`). Without the flag a run block shows its code (or a pointer to the
+block it runs) and its `expected_output`, the output frozen when the lesson was
+built, plus a hint about the flag. So author every run block to be useful
+without a run, which means giving it an `expected_output` that you produced by
+running the code.
+
+With `--allow-run` the block gets a Run button. A run:
+
+- executes the frozen code, never the worktree or the real project, written to
+  the frozen scratch file name in a fresh scratch directory that is removed
+  afterwards, which is also the working directory;
+- spawns the frozen command directly with stdin closed and the learner's
+  environment, so the interpreter must be installed on the learner's machine
+  (a missing one is shown as an error, not a failure of the lesson), and the
+  code has the learner's permissions;
+- is stopped at `timeout_secs`, together with every process it started, and is
+  then shown as timed out;
+- keeps at most 64 KiB of each of stdout and stderr and says when it cut them;
+- shows stdout, stderr (set apart), the exit code, and the duration. A
+  non-zero exit or a timeout is an ordinary result, not an error;
+- runs once at a time per block, and the last result of each block survives a
+  browser refresh but is lost when `learn` stops. A run never affects quiz
+  progress.
+
+The frozen `expected_output` stays visible beside a real result, labelled as
+frozen, so a learner can compare them. Keep programs deterministic and free of
+network, clock, or input dependencies, or the two will differ for no reason.
 
 ```json
 {

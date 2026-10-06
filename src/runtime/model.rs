@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,8 @@ use crate::artifact::{
 };
 use crate::repository::{DiffLine, ResolvedDiff};
 use crate::source::NodeId;
+
+use super::runner::{RunResult, RunSpec};
 
 /// Load and structurally validate a self-contained `.learn` artifact.
 ///
@@ -134,6 +137,9 @@ impl std::error::Error for ArtifactLoadError {
 pub(crate) struct RuntimeLesson {
     pub public: PublicLesson,
     pub answers: BTreeMap<NodeId, RuntimeAnswer>,
+    /// What a run of each `run_code` block needs. The command and scratch file
+    /// stay here, never in the public lesson.
+    pub runs: BTreeMap<NodeId, RunSpec>,
 }
 
 #[derive(Clone, Debug)]
@@ -177,6 +183,7 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
         })
         .collect::<BTreeMap<_, _>>();
 
+    let mut runs = BTreeMap::new();
     let nodes = artifact
         .presentation
         .nodes
@@ -228,10 +235,22 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                     code,
                     language,
                     caption,
+                    argv,
+                    file_name,
                     timeout_secs,
                     expected_output,
-                    ..
                 } => {
+                    if let Some(code) = code_to_run(&artifact.presentation.nodes, code) {
+                        runs.insert(
+                            node.node_id,
+                            RunSpec {
+                                argv: argv.clone(),
+                                file_name: file_name.clone(),
+                                code: code.to_owned(),
+                                timeout: Duration::from_secs(u64::from(*timeout_secs)),
+                            },
+                        );
+                    }
                     let (content, first_line, filename, of) = match code {
                         RunCodeSource::Own {
                             content,
@@ -276,6 +295,19 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
             definitions: artifact.presentation.definitions.clone(),
         },
         answers,
+        runs,
+    }
+}
+
+/// The code a run block runs: its own, or what the code block it points at
+/// shows. Artifact validation makes that node a code block.
+fn code_to_run<'a>(nodes: &'a [CompiledNode], code: &'a RunCodeSource) -> Option<&'a str> {
+    match code {
+        RunCodeSource::Own { content, .. } => Some(content),
+        RunCodeSource::Of { node } => match &nodes.get(node.get() as usize)?.content {
+            CompiledNodeContent::Code { content, .. } => Some(content),
+            _ => None,
+        },
     }
 }
 
@@ -403,8 +435,8 @@ pub enum PublicLessonNodeContent {
         hints: Vec<String>,
     },
     /// Code to run, which is either the block's own `content` or the code
-    /// block `of` that it runs. The command and scratch file stay in the
-    /// artifact until a run needs them.
+    /// block `of` that it runs. The command and scratch file never leave the
+    /// runtime.
     RunCode {
         #[serde(skip_serializing_if = "Option::is_none")]
         content: Option<String>,
@@ -445,6 +477,22 @@ pub struct PublicDiffHunk {
 pub struct StateResponse {
     pub lesson: PublicLesson,
     pub progress: LessonProgress,
+    pub run: RunStatus,
+    /// The last result of each run block that has run, by node.
+    pub runs: BTreeMap<NodeId, RunResult>,
+}
+
+/// Whether this launch lets the learner run code.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RunStatus {
+    pub enabled: bool,
+    /// The secret a run request must carry; `null` unless running is enabled.
+    pub token: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RunResponse {
+    pub run: RunResult,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -709,6 +757,81 @@ pub(crate) mod tests {
         let text = projection.to_string();
         assert!(!text.contains("argv") && !text.contains("file_name"));
         assert!(!text.contains("python3"));
+    }
+
+    /// A quiz (0), a shell code block (1), a run block that runs it (2), and a
+    /// run block with shell code of its own (3).
+    pub(crate) fn run_artifact() -> CompiledLesson {
+        use crate::artifact::{ResourceProvenance, RunCodeSource};
+        use crate::language::Language;
+
+        let mut artifact = quiz_artifact();
+        let inline = || ResourceProvenance::Inline {
+            sha256: "0".repeat(64),
+        };
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "shown".into(),
+            content: CompiledNodeContent::Code {
+                content: "echo shown\n".into(),
+                language: Language::Shell,
+                caption: None,
+                highlights: Vec::new(),
+                first_line: None,
+                provenance: inline(),
+            },
+        });
+        let run =
+            |node_id: u32, source_id: &str, code: RunCodeSource, timeout_secs: u32| CompiledNode {
+                node_id: NodeId::new(node_id),
+                source_id: source_id.into(),
+                content: CompiledNodeContent::RunCode {
+                    code,
+                    language: Language::Shell,
+                    caption: None,
+                    argv: vec!["sh".into(), "{file}".into()],
+                    file_name: "main.sh".into(),
+                    timeout_secs,
+                    expected_output: None,
+                },
+            };
+        artifact.presentation.nodes.push(run(
+            2,
+            "run-shown",
+            RunCodeSource::Of {
+                node: NodeId::new(1),
+            },
+            10,
+        ));
+        artifact.presentation.nodes.push(run(
+            3,
+            "run-own",
+            RunCodeSource::Own {
+                content: "echo own\n".into(),
+                first_line: None,
+                provenance: Box::new(inline()),
+            },
+            3,
+        ));
+        crate::artifact::validate_artifact(&artifact).unwrap();
+        artifact
+    }
+
+    #[test]
+    fn the_runtime_keeps_what_a_run_needs_and_reads_of_code_from_the_node_it_runs() {
+        let lesson = project_runtime_lesson(&run_artifact());
+        assert_eq!(lesson.runs.len(), 2);
+        let of = &lesson.runs[&NodeId::new(2)];
+        assert_eq!(of.code, "echo shown\n");
+        assert_eq!(of.argv, ["sh", "{file}"]);
+        assert_eq!(of.file_name, "main.sh");
+        assert_eq!(of.timeout, Duration::from_secs(10));
+        let own = &lesson.runs[&NodeId::new(3)];
+        assert_eq!(own.code, "echo own\n");
+        assert_eq!(own.timeout, Duration::from_secs(3));
+        // Only run blocks can run.
+        assert!(!lesson.runs.contains_key(&NodeId::new(0)));
+        assert!(!lesson.runs.contains_key(&NodeId::new(1)));
     }
 
     #[test]

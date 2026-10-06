@@ -26,6 +26,10 @@ enum Command {
         /// Open the generated loopback URL in the default browser.
         #[arg(long)]
         open: bool,
+        /// Let the learner run the lesson's `run_code` blocks. Without this
+        /// flag nothing in a lesson can execute.
+        #[arg(long)]
+        allow_run: bool,
         /// Compiled lesson artifact produced by `learnc build`.
         artifact: PathBuf,
     },
@@ -36,6 +40,8 @@ struct StartupOutput<'a> {
     status: &'static str,
     url: &'a str,
     artifact: String,
+    /// Whether `run_code` blocks can be run in this session.
+    run_enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -96,7 +102,11 @@ async fn main() {
 
     let text = cli.text;
     let result = match cli.command {
-        Command::Serve { open, artifact } => serve(&artifact, open, text).await,
+        Command::Serve {
+            open,
+            allow_run,
+            artifact,
+        } => serve(&artifact, open, allow_run, text).await,
     };
     if let Err(error) = result {
         emit_error(error.code(), error.to_string(), text);
@@ -104,16 +114,27 @@ async fn main() {
     }
 }
 
-async fn serve(artifact: &Path, open: bool, text: bool) -> Result<(), RuntimeError> {
-    let server = bind(artifact).await?;
+async fn serve(
+    artifact: &Path,
+    open: bool,
+    allow_run: bool,
+    text: bool,
+) -> Result<(), RuntimeError> {
+    let server = bind(artifact, allow_run).await?;
     let url = server.url();
     if text {
-        println!("Serving {} at {url}", artifact.display());
+        let running = if allow_run {
+            "running code is enabled"
+        } else {
+            "running code is off"
+        };
+        println!("Serving {} at {url} ({running})", artifact.display());
     } else {
         let output = StartupOutput {
             status: "serving",
             url: &url,
             artifact: artifact.display().to_string(),
+            run_enabled: allow_run,
         };
         println!(
             "{}",
@@ -189,8 +210,21 @@ mod tests {
             cli.command,
             Command::Serve {
                 open: true,
+                allow_run: false,
                 artifact
             } if artifact == Path::new("lesson.learn")
+        ));
+    }
+
+    #[test]
+    fn running_code_is_opt_in() {
+        let cli = Cli::try_parse_from(["learn", "serve", "--allow-run", "lesson.learn"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Serve {
+                allow_run: true,
+                ..
+            }
         ));
     }
 }

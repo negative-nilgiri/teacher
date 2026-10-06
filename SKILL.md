@@ -76,11 +76,14 @@ Answer the user's question in the session; a reference never needs a rebuild.
   shows the code, so the code appears once and the run block shows only "Runs
   `<id>`". Python, JavaScript, and shell run without more; any other language
   needs `argv` (for example `["ruby", "{file}"]`). Always give an
-  `expected_output`: running needs the learner to start `learn serve` with
-  `--allow-run`, and without it (and in versions that cannot run code yet) the
-  block shows its code and that frozen output. Produce the output by running
-  the code yourself, never by guessing it. Prefer small programs that finish in well under 10 seconds; the
-  code that runs is the frozen copy, never the learner's repository.
+  `expected_output`: the learner can only run the block if they start
+  `learn serve` with `--allow-run` themselves, and otherwise the block shows
+  its code and that frozen output. You never start `learn`, with or without
+  that flag, so produce the output by running the code yourself (with the
+  interpreter, not the runtime), never by guessing it. Prefer small programs
+  that finish in well under 10 seconds (the timeout stops a run at
+  `timeout_secs`, default 10); the code that runs is the frozen copy, never the
+  learner's repository.
 
 ## Judgment lint cannot check
 

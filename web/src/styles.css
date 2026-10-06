@@ -49,6 +49,15 @@ button, input { font: inherit; }
 .run-output-title { color: var(--accent); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
 .run-output-note { color: var(--muted); font-size: .72rem; }
 .run-output-text { border-radius: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.run-controls { display: flex; align-items: center; gap: .75rem; padding: .6rem 1rem; border-top: 1px solid var(--line); }
+.run-hint { margin: 0; padding: .6rem 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .8rem; }
+.run-notice { margin: 0; padding: .5rem 1rem; color: var(--muted); font-size: .8rem; }
+.run-notice-error { color: var(--danger); background: var(--danger-soft); }
+.run-stream { position: relative; }
+.run-stream-label { position: absolute; top: .35rem; right: .75rem; color: var(--muted); font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; }
+.run-stream-stderr { border-left: 3px solid var(--danger); background: var(--danger-soft); }
+.run-stream-stderr .run-output-text { background: transparent; color: var(--danger); }
+.run-stream-stderr .run-stream-label { color: var(--danger); }
 
 .markdown { line-height: 1.68; }
 .markdown > :first-child { margin-top: 0; }

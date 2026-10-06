@@ -51,6 +51,8 @@ const initialState: StateResponse = {
       "1": { attempts: [], completed: false, revealed: false },
     },
   },
+  run: { enabled: false, token: null },
+  runs: {},
 };
 
 afterEach(() => vi.unstubAllGlobals());

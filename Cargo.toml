@@ -1,6 +1,6 @@
 [package]
 name = "agent-teacher"
-version = "1.18.0"
+version = "1.19.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Compile and serve local, agent-authored interactive lessons"
@@ -39,6 +39,7 @@ path = "src/bin/learnverify.rs"
 [dependencies]
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
+getrandom = { version = "0.2", features = ["std"] }
 mime_guess = "2"
 mermaid-svg = "=0.7.0"
 pulldown-cmark = { version = "0.13", default-features = false }

@@ -77,9 +77,12 @@ effect of a feature.
 - **Security is proportional to a trusted local prototype.** One user, their
   agent, and their own repository. The baseline is loopback-only binding,
   version gating plus structural decoding, root-relative source paths, Git
-  invoked with direct arguments, no execution of authored code, and raw HTML
-  disabled in Markdown. Launch tokens, CSRF protection, hostile-artifact limits,
-  and symlink hardening are not v1 goals. Revisit this before `learn` holds
+  invoked with direct arguments, no execution of authored code unless the
+  learner opts in with `learn serve --allow-run` (see
+  [Running code](#running-code)), and raw HTML disabled in Markdown. The one
+  launch token is the run token; CSRF protection beyond it, hostile-artifact
+  limits, sandboxing of what a run executes, and symlink hardening are not v1
+  goals. Revisit this before `learn` holds
   credentials, talks to an agent or LLM, accepts third-party artifacts, listens
   beyond loopback, or serves several users. `learnverify` holds an API key and
   sends lesson content to TypeSafe, which is why it is a separate optional
@@ -306,7 +309,7 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.18.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.19.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.4.0` | [`SchemaVersion`](../src/source/model.rs) |
 | Artifact schema | `1.8.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
@@ -412,7 +415,8 @@ flowchart LR
 ```
 
 [`AppState`](../src/runtime/server.rs) contains an immutable
-`Arc<RuntimeLesson>` and one shared `Arc<Mutex<Session>>`. Every tab talks to the
+`Arc<RuntimeLesson>`, one shared `Arc<Mutex<Session>>`, and the bound port (for
+the run route's `Host` check). Every tab talks to the
 same in-memory session. Refresh keeps server-owned progress; stopping `learn`
 loses it. There is no push channel, so a second tab observes another tab's
 changes only after its next request or refresh.
@@ -422,9 +426,10 @@ The v1 routes are registered in
 
 | Method | Path | Effect |
 | --- | --- | --- |
-| `GET` | `/api/v1/state` | Returns public lesson data and current progress. The lesson includes its root-relative `lesson_path`, the `artifact_path` given to `learn serve`, and a `reference` (frozen provenance) on every non-quiz node. |
+| `GET` | `/api/v1/state` | Returns public lesson data and current progress. The lesson includes its root-relative `lesson_path`, the `artifact_path` given to `learn serve`, and a `reference` (frozen provenance) on every non-quiz node. It also carries `run` (`{enabled, token}`) and `runs` (the last `RunResult` of each run block that has run, by node ID). |
 | `POST` | `/api/v1/questions/{node_id}/submit` | Records `{ "choice_id": n }`, grades it, and returns authoritative progress plus the focused question. |
 | `POST` | `/api/v1/questions/{node_id}/reveal` | Records an explicit reveal and returns the same mutation shape. |
+| `POST` | `/api/v1/runs/{node_id}` | Runs a `run_code` block once and returns `{ "run": RunResult }`. Needs `--allow-run`, the `X-Learn-Token` header, and a loopback `Host`; see [Running code](#running-code). |
 
 Quiz state semantics are intentionally factual:
 
@@ -437,6 +442,65 @@ Quiz state semantics are intentionally factual:
 Reveal does not increase completed-question progress. The browser disables a
 resolved question after either completion or reveal, although a direct API
 client can still submit again.
+
+### Running code
+
+`learn serve --allow-run` lets the learner run `run_code` blocks. Without the
+flag the session has no run token, every run request is `run_disabled`, and
+`run` in the state is `{enabled: false, token: null}`. The startup record
+states the choice as `run_enabled`; it never contains the token.
+
+Ownership follows the stateful-interaction rules. The artifact freezes what a
+run needs. [`project_runtime_lesson`](../src/runtime/model.rs) keeps it
+server-side in `RuntimeLesson.runs` (a [`RunSpec`](../src/runtime/runner.rs)
+per run block: argv, scratch file name, code, timeout) and never in the public
+projection. For an `of` block the code is read from the referenced code node of
+the loaded artifact. [`Session`](../src/runtime/session.rs) owns the run token,
+the set of blocks with a run under way, and the last
+[`RunResult`](../src/runtime/runner.rs) per block. `begin_run` admits a run and
+returns its spec; `finish_run` records the result. The handler never holds the
+session lock while code runs.
+
+[`runner.rs`](../src/runtime/runner.rs) executes one run and knows nothing
+about sessions, HTTP, or languages. It creates a fresh private directory under
+the system temporary directory, writes the code to the frozen file name,
+replaces every `{file}` in the frozen argv with that path, and spawns the
+program directly with the directory as the working directory, stdin closed,
+and the inherited environment. On Unix the program leads its own process group
+and a timeout (and the end of every run, to stop stragglers) sends `SIGKILL` to
+the whole group, so a child it started dies too; elsewhere only the child is
+killed. Each stream is read on its own thread, keeping at most 64 KiB and
+discarding the rest so the program never blocks on a full pipe. Readers get a
+short grace period after the program is gone, in case something outside the
+group holds the pipes. The directory is removed when the run ends. The run is
+blocking, so the handler executes it on a Tokio blocking thread inside a
+spawned task: the run is always recorded and the block released even if the
+client disconnects.
+
+The route is guarded because the one real risk is a web page in the learner's
+browser posting to the loopback port:
+
+| Check | Error | Status |
+| --- | --- | --- |
+| `Host` is `127.0.0.1:<port>` or `localhost:<port>` for this server's port, which defeats DNS rebinding | `invalid_host` | 403 |
+| Running is enabled | `run_disabled` | 403 |
+| `X-Learn-Token` equals the launch token (128 random bits as hex, generated per launch, compared in constant time) | `invalid_token` | 403 |
+| The node exists | `unknown_node` | 404 |
+| The node is a `run_code` block | `not_runnable` | 404 |
+| The block has no run under way | `run_in_progress` | 409 |
+
+The token is in `GET /api/v1/state`, which a page on another origin cannot read.
+Sending the custom header makes a cross-origin POST require a CORS preflight,
+which the server never answers. Page and API are the same origin, so the
+browser needs no extra setup. A `RunResult` has `stdout`, `stderr`,
+`exit_code` (`null` when killed or not started), `timed_out`, `truncated`,
+`duration_ms`, and `error` (omitted unless the program could not start, such as
+an interpreter that is not installed). A non-zero exit or a timeout is a normal
+200 result. Results are session state: they survive a refresh, are lost when
+`learn` stops, and never touch quiz progress.
+
+This is a local-prototype safeguard, not a sandbox. A run has the learner's
+permissions and environment, and the artifact is still trusted input.
 
 Domain errors such as unknown question/choice IDs use typed JSON errors.
 Malformed JSON or path-extractor failures currently use Axum's default rejection
@@ -456,7 +520,8 @@ State ownership is split as follows:
 | Attempts and correctness | Unsubmitted radio selection |
 | Explicit reveal state | Expanded `<details>` hints |
 | Completion and progress | Per-block collapsed/expanded state |
-| | Focus, scroll, and loading UI |
+| Whether running is enabled, the run token | Focus, scroll, and loading UI |
+| The last result of each run block | Which blocks have a run in flight |
 | When answer/explanation become visible | Transient request errors |
 
 [`LessonNodeView`](../web/src/components/LessonNodeView.tsx) is the renderer
@@ -520,7 +585,12 @@ compact label and falls back to `Code` when no specific language is known:
   caption, its own code through `CodeBlock` (or "Runs `<id>`" as a
   [`ReferenceLink`](../web/src/components/ReferenceLink.tsx) for an `of` block,
   which shows no code of its own), and the expected output as literal text
-  labelled as frozen when the lesson was built. Nothing runs yet.
+  labelled as frozen when the lesson was built. When the state says running is
+  enabled it adds a Run button (with a busy state), and after a run an output
+  panel with stdout, stderr (set apart), the exit code, the duration, and
+  timed-out, truncated, and could-not-start notices; otherwise it shows a hint
+  to start `learn serve --allow-run`. The result and the token come from the
+  server through `App`; only the busy flag is React state.
 
 The TypeScript API mirror is centralized in
 [`web/src/types.ts`](../web/src/types.ts), and network/error normalization lives
@@ -673,7 +743,9 @@ Tests are layered so failures identify the responsible boundary:
   [`src/repository/tests.rs`](../src/repository/tests.rs).
 - Artifact and compiler unit tests live in their modules.
 - Runtime projection, quiz state, endpoint, and asset tests live under
-  [`src/runtime/`](../src/runtime).
+  [`src/runtime/`](../src/runtime). The runner's tests (argv substitution,
+  scratch cleanup, the output cap, timeouts and process groups) use `sh`, so
+  they need no Python or Node.
 - React interaction tests live in
   [`web/src/test/App.test.tsx`](../web/src/test/App.test.tsx); reference
   formatting, the ask popover, and selection mapping in
@@ -681,13 +753,15 @@ Tests are layered so failures identify the responsible boundary:
   block links in [`web/src/test/Links.test.tsx`](../web/src/test/Links.test.tsx);
   go to definition in
   [`web/src/test/Definitions.test.tsx`](../web/src/test/Definitions.test.tsx);
-  run blocks in [`web/src/test/RunCode.test.tsx`](../web/src/test/RunCode.test.tsx).
+  run blocks, including running them through `App`, in
+  [`web/src/test/RunCode.test.tsx`](../web/src/test/RunCode.test.tsx).
   Per-language definition tests live in
   [`src/compiler/definitions.rs`](../src/compiler/definitions.rs).
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
   schema fixtures, repository builds, selected diffs, moved refs, live HTTP quiz
-  state, private-data projection, production assets, checker CLI output, and the
-  checker isolation invariant.
+  state, private-data projection, running code over HTTP with `sh` (disabled,
+  token, `Host`, timeout, truncation, concurrency), production assets, checker
+  CLI output, and the checker isolation invariant.
 - Checker planning, client validation, cache, config, and grading tests live
   under [`src/learnverify/`](../src/learnverify);
   [`tests/verify_contract.rs`](../tests/verify_contract.rs) runs the binary
@@ -823,8 +897,10 @@ block's source ID, whole block) so the browser previews and jumps to it like
 any block link. The public projection carries `content` or `of`, `language`,
 `caption`, `first_line`, `filename`, `timeout_secs`, and `expected_output`,
 and a `reference` that is the node's own provenance, or for an `of` block the
-referenced code block's. `argv` and `file_name` stay out of it until a run needs
-them. Every `source.run_code.*` check is source-level
+referenced code block's. `argv` and `file_name` stay out of it; the runtime
+keeps them (and the code to run) server-side for the run route, described under
+[Running code](#running-code). Artifact `1.8.0` is unchanged by running: a
+runtime reads the same fields. Every `source.run_code.*` check is source-level
 ([`validate.rs`](../src/source/validate.rs)): a code block's language is a pure
 function of its source, so `of` and the runner table need no resolution.
 
@@ -842,7 +918,8 @@ binaries must not.
 - No persistence, export, accounts, multi-user isolation, or scoring.
 - No free response, grading model, chat, or agent interaction.
 - No authentication, TLS, CSRF layer, or hostile-artifact hardening in the
-  trusted single-user local v1 model.
+  trusted single-user local v1 model. The exception is the opt-in run route,
+  which needs the per-launch token and a loopback `Host`; it is not a sandbox.
 - Filesystem path containment is lexical; hostile symlink protection is not a
   v1 goal.
 - `.learn` artifacts are readable, disposable build outputs rather than secret

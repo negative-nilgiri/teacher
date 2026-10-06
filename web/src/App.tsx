@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { loadState, revealAnswer, submitChoice } from "./api";
+import { loadState, revealAnswer, runCode, submitChoice } from "./api";
 import { LessonNodeView } from "./components/LessonNodeView";
 import { LinkContext } from "./links";
 import { DefinitionLayer } from "./components/DefinitionLayer";
@@ -19,6 +19,7 @@ export function App() {
   const [state, setState] = useState<StateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyNode, setBusyNode] = useState<NodeId | null>(null);
+  const [runningNodes, setRunningNodes] = useState<ReadonlySet<NodeId>>(new Set());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -59,6 +60,27 @@ export function App() {
     }
   }
 
+  async function run(nodeId: NodeId, token: string) {
+    setRunningNodes((current) => new Set(current).add(nodeId));
+    setError(null);
+    try {
+      const { run: result } = await runCode(nodeId, token);
+      setState((current) =>
+        current
+          ? { ...current, runs: { ...current.runs, [String(nodeId)]: result } }
+          : current,
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The request failed.");
+    } finally {
+      setRunningNodes((current) => {
+        const next = new Set(current);
+        next.delete(nodeId);
+        return next;
+      });
+    }
+  }
+
   if (error && !state) {
     return (
       <main className="shell status-page">
@@ -76,7 +98,7 @@ export function App() {
     );
   }
 
-  const { lesson, progress } = state;
+  const { lesson, progress, run: runStatus, runs } = state;
   const completion =
     progress.total_questions === 0
       ? 0
@@ -121,6 +143,12 @@ export function App() {
               mutate(node.node_id, () => submitChoice(node.node_id, choiceId))
             }
             questionState={progress.questions[String(node.node_id)]}
+            run={{
+              busy: runningNodes.has(node.node_id),
+              enabled: runStatus.enabled,
+              onRun: () => (runStatus.token ? run(node.node_id, runStatus.token) : undefined),
+              result: runs[String(node.node_id)],
+            }}
           />
         ))}
       </main>

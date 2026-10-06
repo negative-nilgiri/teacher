@@ -50,6 +50,15 @@ usage, and warnings. Pass `--text` or `-t` for human-readable output; for
 example, `learnc -t --help`. `learn serve` binds to a random loopback port and
 opens a browser only when `--open` is supplied.
 
+A lesson's `run_code` blocks run only when the learner starts
+`learn serve --allow-run`. Without the flag they show their code and frozen
+expected output, and nothing in a lesson can execute. With it, the page gets a
+Run button on each run block, which executes the code frozen in the artifact
+in a fresh scratch directory with the learner's own environment and shows the
+output in place. This is a local-prototype safeguard, not a sandbox: a run has
+the learner's permissions, so enable it only for lessons you trust. The
+startup record reports `run_enabled`.
+
 `learnc lint` first runs the same validity checks as `learnc check`, then reports
 separate authoring-policy findings. Its findings never change `check` or `build`
 results. Pass `--config path/to/lint.toml` for a partial config file, or set

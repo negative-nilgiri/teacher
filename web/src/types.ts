@@ -192,9 +192,37 @@ export interface LessonProgress {
   questions: Record<string, QuestionState>;
 }
 
+/** Whether this launch lets the learner run code (`learn serve --allow-run`). */
+export interface RunStatus {
+  enabled: boolean;
+  /** Sent with every run request; `null` unless running is enabled. */
+  token: string | null;
+}
+
+/** The outcome of one run. A failing or killed program is a normal result. */
+export interface RunResult {
+  stdout: string;
+  stderr: string;
+  /** `null` when the program was killed or never started. */
+  exit_code: number | null;
+  timed_out: boolean;
+  /** Whether either stream was cut at the server's output cap. */
+  truncated: boolean;
+  duration_ms: number;
+  /** Why the program could not run, such as an interpreter that is missing. */
+  error?: string;
+}
+
+export interface RunResponse {
+  run: RunResult;
+}
+
 export interface StateResponse {
   lesson: PublicLesson;
   progress: LessonProgress;
+  run: RunStatus;
+  /** The last result of each run block that has run, by node ID. */
+  runs: Record<string, RunResult>;
 }
 
 export interface QuestionMutationResponse {

@@ -1022,6 +1022,12 @@ fn run_blocks_compile_serve_and_stay_display_only() {
     assert!(!public.contains("argv") && !public.contains("file_name"));
     // `of` and a link in the caption both reach the browser's link table.
     assert_eq!(state["lesson"]["links"]["shown"]["target"], 0);
+    // Without --allow-run nothing runs and no token exists.
+    assert_eq!(
+        state["run"],
+        serde_json::json!({"enabled": false, "token": null})
+    );
+    assert_eq!(state["runs"], serde_json::json!({}));
     server.stop();
 
     // Older schemas keep rejecting the new block.
@@ -1036,6 +1042,265 @@ fn run_blocks_compile_serve_and_stay_display_only() {
     assert!(!output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["diagnostics"][0]["code"], "source.deserialize");
+}
+
+/// Start `learn serve`, wait for its startup record, and return its address.
+fn serve_address(server: &mut ChildGuard) -> (String, serde_json::Value) {
+    let startup = server.startup();
+    assert_eq!(
+        startup["status"], "serving",
+        "learn failed to start: {startup}"
+    );
+    let address = startup["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("http://")
+        .unwrap()
+        .trim_end_matches('/')
+        .to_owned();
+    (address, startup)
+}
+
+fn run_request(address: &str, node: u32, headers: &[(&str, &str)]) -> Http {
+    http(
+        address,
+        "POST",
+        &format!("/api/v1/runs/{node}"),
+        headers,
+        "",
+    )
+}
+
+fn process_exists(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .stderr(Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[cfg(unix)]
+#[test]
+fn run_blocks_run_only_with_allow_run_a_token_and_a_loopback_host() {
+    let root = TempDir::new("run-code-serve");
+    // Scripts report to files the test owns, so it can see what did and did
+    // not start.
+    let marker = |name: &str| root.path().join(name);
+    let lesson = root.path().join("lesson.json");
+    let source = serde_json::json!({
+        "schema_version": "2.4.0",
+        "title": "Run it",
+        "blocks": [
+            {
+                "type": "code", "id": "shown", "language": "shell",
+                "source": {"kind": "inline", "content": "echo from-shown\necho oops >&2\n"}
+            },
+            {"type": "run_code", "id": "run-shown", "of": "shown"},
+            {
+                "type": "run_code", "id": "fails", "language": "shell",
+                "source": {"kind": "inline", "content": "echo before\nexit 3\n"}
+            },
+            {
+                "type": "run_code", "id": "hangs", "language": "shell", "timeout_secs": 1,
+                "source": {"kind": "inline", "content": "sleep 30 &\necho $!\nsleep 30\n"}
+            },
+            {
+                "type": "run_code", "id": "noisy", "language": "shell",
+                "source": {"kind": "inline",
+                    "content": "head -c 100000 /dev/zero | tr '\\0' x\n"}
+            },
+            {
+                "type": "run_code", "id": "slow", "language": "shell", "timeout_secs": 10,
+                "source": {"kind": "inline", "content": format!(
+                    "touch {}\nsleep 2\necho slow-done\n", shell_quote(&marker("slow-started")))}
+            },
+            {
+                "type": "run_code", "id": "probe", "language": "shell",
+                "source": {"kind": "inline", "content": format!(
+                    "touch {}\n", shell_quote(&marker("probe-ran")))}
+            }
+        ]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+    output_success(
+        Command::new(learnc())
+            .arg("build")
+            .arg("--root")
+            .arg(root.path())
+            .arg(&lesson),
+    );
+    let artifact_path = root.path().join("lesson.learn");
+
+    // Off by default: no token, no run, and nothing is spawned.
+    let mut off = ChildGuard::spawn(&artifact_path);
+    let (address, startup) = serve_address(&mut off);
+    assert_eq!(startup["run_enabled"], false);
+    let state = http(&address, "GET", "/api/v1/state", &[], "").json();
+    assert_eq!(
+        state["run"],
+        serde_json::json!({"enabled": false, "token": null})
+    );
+    let refused = run_request(&address, 6, &[("X-Learn-Token", "anything")]);
+    assert_eq!(refused.status, 403);
+    assert_eq!(refused.json()["code"], "run_disabled");
+    assert!(!marker("probe-ran").exists());
+    off.stop();
+
+    let mut server = ChildGuard::spawn_with(&artifact_path, &["--allow-run"]);
+    let (address, startup) = serve_address(&mut server);
+    assert_eq!(startup["run_enabled"], true);
+    assert!(!startup.to_string().contains("token"));
+
+    let state = http(&address, "GET", "/api/v1/state", &[], "").json();
+    assert_eq!(state["run"]["enabled"], true);
+    let token = state["run"]["token"].as_str().unwrap().to_owned();
+    assert_eq!(token.len(), 32);
+    assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    assert_eq!(state["runs"], serde_json::json!({}));
+    let public = state.to_string();
+    assert!(!public.contains("argv") && !public.contains("file_name"));
+    let ok = [("X-Learn-Token", token.as_str())];
+
+    // A missing or wrong token, and a page that reached us by another name.
+    for headers in [&[][..], &[("X-Learn-Token", "0000")][..]] {
+        let rejected = run_request(&address, 6, headers);
+        assert_eq!(rejected.status, 403);
+        assert_eq!(rejected.json()["code"], "invalid_token");
+    }
+    for host in ["evil.example", "evil.example:80", "127.0.0.1:1"] {
+        let rejected = run_request(
+            &address,
+            6,
+            &[("X-Learn-Token", token.as_str()), ("Host", host)],
+        );
+        assert_eq!(rejected.status, 403, "{host}");
+        assert_eq!(rejected.json()["code"], "invalid_host");
+    }
+    // The preflight a cross-origin page needs is never granted.
+    let preflight = http(
+        &address,
+        "OPTIONS",
+        "/api/v1/runs/6",
+        &[
+            ("Origin", "http://evil.example"),
+            ("Access-Control-Request-Method", "POST"),
+            ("Access-Control-Request-Headers", "x-learn-token"),
+        ],
+        "",
+    );
+    assert!(
+        !preflight
+            .headers
+            .to_lowercase()
+            .contains("access-control-allow")
+    );
+    assert!(!marker("probe-ran").exists(), "a rejected request ran code");
+
+    // Only run blocks run.
+    let missing = run_request(&address, 99, &ok);
+    assert_eq!(
+        (missing.status, missing.json()["code"].clone()),
+        (404, "unknown_node".into())
+    );
+    let code_block = run_request(&address, 0, &ok);
+    assert_eq!(
+        (code_block.status, code_block.json()["code"].clone()),
+        (404, "not_runnable".into())
+    );
+
+    // A run of code the lesson shows (`of`) returns both streams.
+    let response = run_request(&address, 1, &ok);
+    assert_eq!(response.status, 200);
+    let run = response.json()["run"].clone();
+    assert_eq!(run["stdout"], "from-shown\n");
+    assert_eq!(run["stderr"], "oops\n");
+    assert_eq!(run["exit_code"], 0);
+    assert_eq!(run["timed_out"], false);
+    assert_eq!(run["truncated"], false);
+    assert!(run["duration_ms"].is_u64());
+    assert!(run.get("error").is_none());
+
+    // A failing program is a result, not an HTTP error.
+    let failed = run_request(&address, 2, &ok);
+    assert_eq!(failed.status, 200);
+    let failed = failed.json()["run"].clone();
+    assert_eq!(
+        (failed["stdout"].clone(), failed["exit_code"].clone()),
+        ("before\n".into(), 3.into())
+    );
+
+    // Timeout: the program and the child it started are both gone.
+    let started = std::time::Instant::now();
+    let hung = run_request(&address, 3, &ok);
+    assert_eq!(hung.status, 200);
+    let hung = hung.json()["run"].clone();
+    assert_eq!(hung["timed_out"], true);
+    assert_eq!(hung["exit_code"], serde_json::Value::Null);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    let child = hung["stdout"].as_str().unwrap().trim().to_owned();
+    assert!(!child.is_empty());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while process_exists(&child) && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(
+        !process_exists(&child),
+        "the child of a timed-out run survived"
+    );
+
+    // Output past 64 KiB is cut and says so.
+    let noisy = run_request(&address, 4, &ok).json()["run"].clone();
+    assert_eq!(noisy["stdout"].as_str().unwrap().len(), 64 * 1024);
+    assert_eq!(noisy["truncated"], true);
+
+    // One run per block at a time.
+    let slow = {
+        let (address, token) = (address.clone(), token.clone());
+        std::thread::spawn(move || run_request(&address, 5, &[("X-Learn-Token", &token)]))
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !marker("slow-started").exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        marker("slow-started").exists(),
+        "the slow run never started"
+    );
+    let busy = run_request(&address, 5, &ok);
+    assert_eq!(
+        (busy.status, busy.json()["code"].clone()),
+        (409, "run_in_progress".into())
+    );
+    let slow = slow.join().unwrap();
+    assert_eq!(slow.status, 200);
+    assert_eq!(slow.json()["run"]["stdout"], "slow-done\n");
+
+    // The last result of each block is session state: a fresh load sees it,
+    // and quiz progress is untouched.
+    let refreshed = http(&address, "GET", "/api/v1/state", &[], "").json();
+    assert_eq!(refreshed["runs"]["1"], run);
+    assert_eq!(refreshed["runs"]["2"]["exit_code"], 3);
+    assert_eq!(refreshed["runs"]["3"]["timed_out"], true);
+    assert_eq!(refreshed["runs"]["5"]["stdout"], "slow-done\n");
+    assert!(refreshed["runs"].get("6").is_none());
+    assert_eq!(refreshed["progress"]["completed_questions"], 0);
+    assert_eq!(refreshed["progress"]["questions"], serde_json::json!({}));
+    let server_pid = server.pid();
+    server.stop();
+
+    // Nothing the server ran leaves its scratch directory behind.
+    let leftovers = fs::read_dir(std::env::temp_dir())
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("learn-run-{server_pid}-"))
+        })
+        .count();
+    assert_eq!(leftovers, 0);
 }
 
 fn source_with_version(path: &Path, source: &serde_json::Value, version: &str) {
@@ -1277,8 +1542,13 @@ struct ChildGuard(Option<Child>);
 
 impl ChildGuard {
     fn spawn(artifact: &Path) -> Self {
+        Self::spawn_with(artifact, &[])
+    }
+
+    fn spawn_with(artifact: &Path, options: &[&str]) -> Self {
         let child = Command::new(learn())
             .arg("serve")
+            .args(options)
             .arg(artifact)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1296,6 +1566,10 @@ impl ChildGuard {
             .expect("read server startup line");
         serde_json::from_str(&line)
             .unwrap_or_else(|error| panic!("invalid server startup output {line:?}: {error}"))
+    }
+
+    fn pid(&self) -> u32 {
+        self.0.as_ref().expect("server is running").id()
     }
 
     fn stop(&mut self) {
@@ -1323,10 +1597,50 @@ fn request_bytes(address: &str, path: &str) -> Vec<u8> {
 }
 
 fn request(address: &str, method: &str, path: &str, body: &str) -> Vec<u8> {
+    let response = http(
+        address,
+        method,
+        path,
+        &[("Content-Type", "application/json")],
+        body,
+    );
+    assert!(
+        response.headers.starts_with("HTTP/1.1 200"),
+        "unexpected response: {}",
+        response.headers
+    );
+    response.body
+}
+
+struct Http {
+    status: u16,
+    headers: String,
+    body: Vec<u8>,
+}
+
+impl Http {
+    fn json(&self) -> serde_json::Value {
+        serde_json::from_slice(&self.body)
+            .unwrap_or_else(|error| panic!("not JSON ({error}): {:?}", self.headers))
+    }
+}
+
+/// One request with any status. `Host` is the server's address unless given.
+fn http(address: &str, method: &str, path: &str, headers: &[(&str, &str)], body: &str) -> Http {
     let mut stream = TcpStream::connect(address).expect("connect to local lesson server");
+    let mut head = format!("{method} {path} HTTP/1.1\r\n");
+    if !headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("host"))
+    {
+        head.push_str(&format!("Host: {address}\r\n"));
+    }
+    for (name, value) in headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
     write!(
         stream,
-        "{method} {path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{head}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
     .unwrap();
@@ -1337,12 +1651,17 @@ fn request(address: &str, method: &str, path: &str, body: &str) -> Vec<u8> {
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .expect("HTTP response has headers");
-    let headers = String::from_utf8_lossy(&response[..split]);
-    assert!(
-        headers.starts_with("HTTP/1.1 200"),
-        "unexpected response: {headers}"
-    );
-    response[split + 4..].to_vec()
+    let headers = String::from_utf8_lossy(&response[..split]).into_owned();
+    let status = headers
+        .split_whitespace()
+        .nth(1)
+        .and_then(|status| status.parse().ok())
+        .expect("HTTP status line");
+    Http {
+        status,
+        headers,
+        body: response[split + 4..].to_vec(),
+    }
 }
 
 fn referenced_assets(index: &str) -> Vec<&str> {

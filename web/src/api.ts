@@ -2,6 +2,7 @@ import type {
   ChoiceId,
   MutationResponse,
   NodeId,
+  RunResponse,
   StateResponse,
 } from "./types";
 
@@ -56,5 +57,13 @@ export function revealAnswer(nodeId: NodeId): Promise<MutationResponse> {
   return request<MutationResponse>(`/api/v1/questions/${nodeId}/reveal`, {
     method: "POST",
     headers: { "content-type": "application/json" },
+  });
+}
+
+/** Runs a run block once. The token comes from the state response. */
+export function runCode(nodeId: NodeId, token: string): Promise<RunResponse> {
+  return request<RunResponse>(`/api/v1/runs/${nodeId}`, {
+    method: "POST",
+    headers: { "x-learn-token": token },
   });
 }
