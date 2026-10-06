@@ -153,7 +153,7 @@ study sessions; it becomes a `verify.unavailable` finding instead.
 | [`src/bin/learnc.rs`](../src/bin/learnc.rs) | Compiler CLI, JSON/text reporting, `check`, `lint`, `build`, and `schema`. |
 | [`src/cli.rs`](../src/cli.rs) | Shared Clap-driven output-mode detection and structured JSON help/version descriptions. |
 | [`src/source/`](../src/source) | Authored model, `SourceId`/`NodeId`, JSON Schema, and source-only validation. |
-| [`src/language.rs`](../src/language.rs) | Canonical code-language normalization, path inference, aliases, and plain-text fallback. |
+| [`src/language.rs`](../src/language.rs) | Canonical code-language normalization, path inference, aliases, plain-text fallback, scratch-file extensions, and the `run_code` runner table. |
 | [`src/diagnostics.rs`](../src/diagnostics.rs) | Stable diagnostic codes, JSON Pointers, related locations, and suggestions. |
 | [`src/repository/`](../src/repository) | Validated repository paths, Git execution, content resolution, diff parsing, rendered Markdown diffs, and consistency guards. |
 | [`src/compiler/mod.rs`](../src/compiler/mod.rs) | Adapts source types to repository requests and lowers resolved blocks into an artifact. |
@@ -230,7 +230,7 @@ The concrete orchestration starts in
    invoke Git. For learner references, `file` content records its Git blob ID
    (computed in Rust, so still without Git) and, only when the lesson already
    uses that repository through Git sources, the repository's `HEAD`.
-4. Markdown, code, diff, and quiz blocks are lowered in authored block order.
+4. Markdown, code, diff, quiz, and run blocks are lowered in authored block order.
    Code languages are normalized or inferred from source paths during lowering;
    choices inside each quiz are scrambled before dense choice IDs are assigned.
    The order is a keyed hash of the question's source ID, prompt, and choices,
@@ -291,8 +291,8 @@ flowchart LR
 
 - [`LessonSource`](../src/source/model.rs) contains only
   `schema_version`, `title`, and ordered `blocks`.
-- [`Block`](../src/source/model.rs) has exactly four v1 variants:
-  `markdown`, `code`, `diff`, and `multiple_choice`.
+- [`Block`](../src/source/model.rs) has five variants: `markdown`, `code`,
+  `diff`, `multiple_choice`, and (source schema 2.4.0) `run_code`.
 - [`SourceId`](../src/source/ids.rs) remains in the artifact for diagnostics;
   runtime state and routes use [`NodeId`](../src/source/ids.rs).
 - Choices are not nodes. The compiler removes `correct` markers, generates
@@ -306,9 +306,9 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.17.0` | [`Cargo.toml`](../Cargo.toml) |
-| Authored schema | `2.3.0` | [`SchemaVersion`](../src/source/model.rs) |
-| Artifact schema | `1.7.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
+| Cargo package | `1.18.0` | [`Cargo.toml`](../Cargo.toml) |
+| Authored schema | `2.4.0` | [`SchemaVersion`](../src/source/model.rs) |
+| Artifact schema | `1.8.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
 ## Repository and diff resolution
 
@@ -516,6 +516,11 @@ compact label and falls back to `Code` when no specific language is known:
   lines, a highlight group, or old/new diff lines.
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
+- [`RunCodeBlock`](../web/src/components/RunCodeBlock.tsx) shows a run block's
+  caption, its own code through `CodeBlock` (or "Runs `<id>`" as a
+  [`ReferenceLink`](../web/src/components/ReferenceLink.tsx) for an `of` block,
+  which shows no code of its own), and the expected output as literal text
+  labelled as frozen when the lesson was built. Nothing runs yet.
 
 The TypeScript API mirror is centralized in
 [`web/src/types.ts`](../web/src/types.ts), and network/error normalization lives
@@ -675,7 +680,8 @@ Tests are layered so failures identify the responsible boundary:
   [`web/src/test/Reference.test.tsx`](../web/src/test/Reference.test.tsx);
   block links in [`web/src/test/Links.test.tsx`](../web/src/test/Links.test.tsx);
   go to definition in
-  [`web/src/test/Definitions.test.tsx`](../web/src/test/Definitions.test.tsx).
+  [`web/src/test/Definitions.test.tsx`](../web/src/test/Definitions.test.tsx);
+  run blocks in [`web/src/test/RunCode.test.tsx`](../web/src/test/RunCode.test.tsx).
   Per-language definition tests live in
   [`src/compiler/definitions.rs`](../src/compiler/definitions.rs).
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
@@ -736,8 +742,15 @@ asset in isolation:
 6. Extend the discriminated union in
    [`web/src/types.ts`](../web/src/types.ts), add a component, and update
    [`LessonNodeView`](../web/src/components/LessonNodeView.tsx).
-7. Add source, compiler/artifact, runtime, and React tests.
-8. Rebuild `web/dist`; do not commit the generated output.
+7. Handle the new block wherever the codebase matches on block kind: the
+   Markdown fields in [`links.rs`](../src/compiler/links.rs), the match in
+   [`lint/rules.rs`](../src/lint/rules.rs) and its preview measure in
+   [`rules/references.rs`](../src/lint/rules/references.rs), and
+   [`context_entry`](../src/learnverify/checks.rs). Rust's exhaustiveness check
+   finds most of them, but a `_ =>` or `unreachable!` arm hides the rest, so
+   search for them rather than trusting the compiler.
+8. Add source, compiler/artifact, runtime, and React tests.
+9. Rebuild `web/dist`; do not commit the generated output.
 
 ### Add a stateful interaction
 
@@ -762,8 +775,10 @@ an artifact change requires explicit runtime compatibility handling. Never infer
 compatibility from the Cargo package version.
 
 The compiler decodes source schemas `1.0.0` through `1.3.0` and `2.0.0`
-through `2.3.0`. Schema `2.3.0` keeps the `2.2.0` shape and gives `#block-id`
-link destinations their meaning: [`links.rs`](../src/compiler/links.rs) finds
+through `2.4.0`. Schema `2.4.0` adds the `run_code` block; `2.2.0` and `2.3.0`
+decode through a block union without it, so their emitted schemas are
+unchanged and reject the new block. Schema `2.3.0` keeps the `2.2.0` shape and
+gives `#block-id` link destinations their meaning: [`links.rs`](../src/compiler/links.rs) finds
 them with `pulldown-cmark` in every Markdown-bearing field after file
 resolution, validates them against the compiled blocks, and freezes a
 lesson-wide table in artifact `1.6.0`.
@@ -792,7 +807,26 @@ provenance; older artifacts omit them and give shorter references. Artifact
 artifacts have none. Artifact `1.7.0` adds `presentation.definitions`: every
 definition the lesson shows, found by
 [`definitions.rs`](../src/compiler/definitions.rs) with a keyword table per
-language (not a parser), as name → sites with kind, block, and lines.
+language (not a parser), as name → sites with kind, block, and lines. Artifact
+`1.8.0` adds the `run_code` node and is otherwise additive: older artifacts
+load unchanged, and a runtime from before `1.8.0` rejects it through the
+version gate. The compiler resolves everything a run needs so the runtime has
+no language logic: `language`, the final `argv` (the authored one, or the
+table entry in [`language.rs`](../src/language.rs)), the scratch `file_name`
+(`main` plus the language's extension), `timeout_secs` (default 10), and the
+literal `expected_output`. The code is `code: {kind: "own", content,
+first_line?, provenance}`, frozen like a code block's, or `{kind: "of", node}`
+with the dense ID of the code block it runs, whose frozen content is the code
+to run; artifact validation requires that node to be a code node of the same
+language. An `of` is also entered in `presentation.links` (destination = the
+block's source ID, whole block) so the browser previews and jumps to it like
+any block link. The public projection carries `content` or `of`, `language`,
+`caption`, `first_line`, `filename`, `timeout_secs`, and `expected_output`,
+and a `reference` that is the node's own provenance, or for an `of` block the
+referenced code block's. `argv` and `file_name` stay out of it until a run needs
+them. Every `source.run_code.*` check is source-level
+([`validate.rs`](../src/source/validate.rs)): a code block's language is a pure
+function of its source, so `of` and the runner table need no resolution.
 
 ### Change package contents
 

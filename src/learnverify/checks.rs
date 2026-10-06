@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::artifact::LinkedLines;
 use crate::artifact::{
-    CompiledCodeHighlight, CompiledNode, CompiledNodeContent, ResourceProvenance,
+    CompiledCodeHighlight, CompiledNode, CompiledNodeContent, ResourceProvenance, RunCodeSource,
 };
 use crate::compiler::links::{
     LinkOccurrence, MarkdownField, find_links, markdown_fields, target_of,
@@ -365,7 +365,7 @@ fn unit_context(
     (entries, unit, remaining)
 }
 
-/// A Markdown, code, or diff block as quiz context, with its content capped
+/// A Markdown, code, diff, or run block as quiz context, with its content capped
 /// at `budget` characters. Returns the entry and the characters it used.
 fn context_entry(node: &CompiledNode, budget: usize) -> (Value, usize) {
     let id = node.source_id.as_str();
@@ -401,6 +401,42 @@ fn context_entry(node: &CompiledNode, budget: usize) -> (Value, usize) {
         CompiledNodeContent::Diff { diff, caption, .. } => {
             let (content, used) = truncate(&unified_diff(diff), budget);
             let mut entry = json!({ "id": id, "kind": "diff", "content": content });
+            if let Some(caption) = caption {
+                entry["caption"] = json!(caption);
+            }
+            (entry, used)
+        }
+        CompiledNodeContent::RunCode {
+            code,
+            language,
+            caption,
+            expected_output,
+            ..
+        } => {
+            let mut entry = json!({
+                "id": id,
+                "kind": "run_code",
+                "language": language.as_str(),
+            });
+            let mut used = 0;
+            // A run block of `of` shows no code of its own; the code block it
+            // runs is context in its own right.
+            if let RunCodeSource::Own {
+                content,
+                first_line,
+                provenance,
+            } = code
+            {
+                let (content, spent) = truncate(content, budget);
+                entry["content"] = json!(content);
+                add_source(&mut entry, provenance, *first_line);
+                used += spent;
+            }
+            if let Some(output) = expected_output {
+                let (output, spent) = truncate(output, budget.saturating_sub(used));
+                entry["expected_output"] = json!(output);
+                used += spent;
+            }
             if let Some(caption) = caption {
                 entry["caption"] = json!(caption);
             }
@@ -1065,6 +1101,51 @@ mod tests {
                 "group_1_highlight_unexplained"
             ]
         );
+    }
+
+    #[test]
+    fn run_blocks_are_quiz_context_and_link_targets_without_panicking() {
+        let root = Root::new();
+        let lesson = root.load(json!({"schema_version":"2.4.0","title":"Run","blocks":[
+            {"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"print(1 + 1)\n"}},
+            {"type":"run_code","id":"run-shown","of":"shown","caption":"Runs [it](#shown).",
+             "expected_output":{"kind":"inline","content":"2\n"}},
+            {"type":"run_code","id":"run-own","language":"python","source":{"kind":"inline","content":"print(3)\n"}},
+            markdown("uses", "Compare with the [run](#run-own)."),
+            quiz("what-prints")
+        ]}));
+        let jobs = plan(&lesson, 6000);
+        let quiz_job = jobs
+            .iter()
+            .find(|job| job.block_index == 4)
+            .expect("a quiz job");
+        assert_eq!(
+            excerpt_ids(quiz_job),
+            ["shown", "run-shown", "run-own", "uses", "what-prints"]
+        );
+        let excerpt = &quiz_job.state["lesson"]["excerpt"];
+        // A run block of `of` carries only its output; the code is its target's.
+        assert_eq!(excerpt[1]["kind"], "run_code");
+        assert_eq!(excerpt[1]["language"], "python");
+        assert_eq!(excerpt[1]["expected_output"], "2\n");
+        assert!(excerpt[1].get("content").is_none());
+        assert_eq!(excerpt[2]["content"], "print(3)\n");
+        assert!(excerpt[2].get("expected_output").is_none());
+
+        // The caption link and the link to a run block get requests too.
+        let linking = jobs
+            .iter()
+            .filter(|job| !job.links.is_empty())
+            .map(|job| job.block_index)
+            .collect::<Vec<_>>();
+        assert_eq!(linking, [1, 3]);
+        let to_run = jobs.iter().find(|job| job.block_index == 3).unwrap();
+        assert_eq!(excerpt_ids(to_run), ["uses", "run-own"]);
+
+        // The context budget caps the output as well as the code.
+        let (entry, used) = context_entry(&lesson.artifact.presentation.nodes[1], 1);
+        assert_eq!(entry["expected_output"], format!("2{TRUNCATED}"));
+        assert_eq!(used, 1);
     }
 
     #[test]

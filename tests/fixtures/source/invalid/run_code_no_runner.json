@@ -1,0 +1,12 @@
+{
+  "schema_version": "2.4.0",
+  "title": "Run without a runner",
+  "blocks": [
+    {
+      "type": "run_code",
+      "id": "ruby",
+      "language": "ruby",
+      "source": { "kind": "inline", "content": "puts 6 * 7\n" }
+    }
+  ]
+}

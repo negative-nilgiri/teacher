@@ -111,11 +111,30 @@ export interface MultipleChoiceNode extends LessonNodeBase {
   hints: string[];
 }
 
+/**
+ * Code the learner can run. It carries its own `content`, or `of`, the node
+ * of the code block it runs, whose code the block does not repeat.
+ */
+export interface RunCodeNode extends LessonNodeBase {
+  type: "run_code";
+  content?: string;
+  of?: NodeId;
+  language: string;
+  caption?: string;
+  filename?: string;
+  /** Source-file line of the first displayed line; absent for inline code. */
+  first_line?: number;
+  timeout_secs: number;
+  /** Output frozen when the lesson was built. */
+  expected_output?: string;
+}
+
 export type LessonNode =
   | MarkdownNode
   | CodeNode
   | DiffNode
-  | MultipleChoiceNode;
+  | MultipleChoiceNode
+  | RunCodeNode;
 
 /** Where a block link points: a node and, optionally, displayed lines. */
 export interface BlockLink {

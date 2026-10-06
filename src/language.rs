@@ -37,6 +37,9 @@ pub enum Language {
     Text,
 }
 
+/// The part of a `run_code` command that stands for the scratch file.
+pub const RUN_FILE_PLACEHOLDER: &str = "{file}";
+
 impl Language {
     pub const ALL: [Self; 19] = [
         Self::Rust,
@@ -110,6 +113,44 @@ impl Language {
         }
     }
 
+    /// Extension of the scratch file that holds code in this language when a
+    /// `run_code` block runs it.
+    pub const fn file_extension(self) -> &'static str {
+        match self {
+            Self::Rust => "rs",
+            Self::Python => "py",
+            Self::JavaScript => "js",
+            Self::TypeScript => "ts",
+            Self::C => "c",
+            Self::Cpp => "cpp",
+            Self::Go => "go",
+            Self::Java => "java",
+            Self::Shell => "sh",
+            Self::Json => "json",
+            Self::Yaml => "yaml",
+            Self::Toml => "toml",
+            Self::Html => "html",
+            Self::Xml => "xml",
+            Self::Css => "css",
+            Self::Sql => "sql",
+            Self::Markdown => "md",
+            Self::Mermaid => "mmd",
+            Self::Text => "txt",
+        }
+    }
+
+    /// The command a `run_code` block uses for this language when it gives no
+    /// `argv`: a template whose [`RUN_FILE_PLACEHOLDER`] becomes the scratch
+    /// file. Only languages with an interpreter everyone has are listed.
+    pub const fn default_runner(self) -> Option<&'static [&'static str]> {
+        match self {
+            Self::Python => Some(&["python3", RUN_FILE_PLACEHOLDER]),
+            Self::JavaScript => Some(&["node", RUN_FILE_PLACEHOLDER]),
+            Self::Shell => Some(&["sh", RUN_FILE_PLACEHOLDER]),
+            _ => None,
+        }
+    }
+
     /// Infer a language from a displayed root-relative path.
     pub fn from_path(path: &str) -> Self {
         let file_name = Path::new(path)
@@ -163,6 +204,32 @@ mod tests {
                 language
             );
         }
+    }
+
+    #[test]
+    fn scratch_files_use_the_language_extension_and_the_runner_table_is_small() {
+        for language in Language::ALL {
+            // A scratch file name must infer back to its language.
+            let name = format!("main.{}", language.file_extension());
+            assert_eq!(Language::from_path(&name), language, "{language:?}");
+        }
+        assert_eq!(
+            Language::Python.default_runner(),
+            Some(&["python3", "{file}"][..])
+        );
+        assert_eq!(
+            Language::JavaScript.default_runner(),
+            Some(&["node", "{file}"][..])
+        );
+        assert_eq!(
+            Language::Shell.default_runner(),
+            Some(&["sh", "{file}"][..])
+        );
+        let runnable = Language::ALL
+            .into_iter()
+            .filter(|language| language.default_runner().is_some())
+            .count();
+        assert_eq!(runnable, 3);
     }
 
     #[test]

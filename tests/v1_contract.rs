@@ -54,7 +54,7 @@ impl Drop for TempDir {
 
 #[test]
 fn emitted_schema_and_valid_fixtures_match_the_decoder() {
-    let output = output_success(Command::new(learnc()).args(["schema", "--version", "2.3.0"]));
+    let output = output_success(Command::new(learnc()).args(["schema", "--version", "2.4.0"]));
     let emitted: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(emitted, agent_teacher::source::source_json_schema());
     let default_output = output_success(Command::new(learnc()).arg("schema"));
@@ -117,6 +117,15 @@ fn emitted_schema_and_valid_fixtures_match_the_decoder() {
             .is_some()
     );
 
+    // Source schema 2.4.0 adds the run_code block; 2.3.0 keeps rejecting it.
+    assert!(schema_block_has_property(&emitted, "run_code", "of"));
+    assert!(schema_block_has_property(&emitted, "run_code", "argv"));
+    let v2_3 = output_success(Command::new(learnc()).args(["schema", "--version", "2.3.0"]));
+    let v2_3: serde_json::Value = serde_json::from_slice(&v2_3.stdout).unwrap();
+    assert_ne!(v2_3, emitted);
+    assert!(find_schema_block(&v2_3, "run_code").is_none());
+    assert!(find_schema_block(&v2_3, "multiple_choice").is_some());
+
     let valid = manifest_dir().join("tests/fixtures/source/valid");
     for entry in fs::read_dir(valid).unwrap() {
         let path = entry.unwrap().path();
@@ -169,7 +178,7 @@ fn compiler_freezes_file_backed_question_prompts() {
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(root.path().join("lesson.learn")).unwrap()).unwrap();
     assert_eq!(artifact.provenance.source_schema_version.as_str(), "2.1.0");
-    assert_eq!(artifact.artifact_version.as_str(), "1.7.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.8.0");
     assert_eq!(
         artifact.provenance.compiler_version,
         env!("CARGO_PKG_VERSION")
@@ -263,6 +272,7 @@ fn invalid_fixtures_return_stable_agent_diagnostics() {
         ("nested_unknown_field.json", "source.deserialize"),
         ("unknown_field.json", "source.deserialize"),
         ("future_version.json", "source.deserialize"),
+        ("run_code_no_runner.json", "source.run_code.no_runner"),
     ];
 
     for (name, code) in expected {
@@ -903,6 +913,138 @@ fn artifact_public_projection_and_live_api_keep_quiz_answers_private() {
 }
 
 #[test]
+fn run_blocks_compile_serve_and_stay_display_only() {
+    let root = TempDir::new("run-code");
+    fs::write(
+        root.path().join("greet.py"),
+        "name = \"Ada\"\nprint(f\"hi {name}\")\n",
+    )
+    .unwrap();
+    fs::write(root.path().join("greet.out"), "hi Ada\n").unwrap();
+    let lesson = root.path().join("lesson.json");
+    let source = serde_json::json!({
+        "schema_version": "2.4.0",
+        "title": "Run it",
+        "blocks": [
+            {
+                "type": "code",
+                "id": "shown",
+                "source": {"kind": "file", "path": "greet.py", "lines": {"start": 2, "end": 2}}
+            },
+            {
+                "type": "run_code",
+                "id": "run-shown",
+                "of": "shown",
+                "caption": "Runs the [shown line](#shown).",
+                "expected_output": {"kind": "inline", "content": "hi Ada\n"}
+            },
+            {
+                "type": "run_code",
+                "id": "run-own",
+                "language": "python",
+                "source": {"kind": "file", "path": "greet.py"},
+                "timeout_secs": 5,
+                "expected_output": {"kind": "file", "path": "greet.out"}
+            },
+            {
+                "type": "run_code",
+                "id": "run-ruby",
+                "language": "ruby",
+                "source": {"kind": "inline", "content": "puts 1 + 1"},
+                "argv": ["ruby", "{file}"]
+            }
+        ]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+    output_success(
+        Command::new(learnc())
+            .arg("build")
+            .arg("--root")
+            .arg(root.path())
+            .arg(&lesson),
+    );
+
+    let artifact_path = root.path().join("lesson.learn");
+    let artifact: CompiledLesson =
+        serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
+    assert_eq!(artifact.artifact_version.as_str(), "1.8.0");
+    // The compiler resolves the command and scratch file; nothing else does.
+    let frozen: serde_json::Value =
+        serde_json::from_slice(&fs::read(&artifact_path).unwrap()).unwrap();
+    let nodes = frozen["presentation"]["nodes"].as_array().unwrap();
+    assert_eq!(
+        nodes[1]["code"],
+        serde_json::json!({"kind": "of", "node": 0})
+    );
+    assert_eq!(nodes[1]["argv"], serde_json::json!(["python3", "{file}"]));
+    assert_eq!(nodes[1]["file_name"], "main.py");
+    assert_eq!(nodes[1]["timeout_secs"], 10);
+    assert_eq!(nodes[2]["code"]["kind"], "own");
+    assert_eq!(nodes[2]["expected_output"], "hi Ada\n");
+    assert_eq!(nodes[3]["argv"], serde_json::json!(["ruby", "{file}"]));
+    // Languages the compiler does not know run from a plain-text scratch file.
+    assert_eq!(nodes[3]["file_name"], "main.txt");
+
+    let mut server = ChildGuard::spawn(&artifact_path);
+    let startup = server.startup();
+    assert_eq!(
+        startup["status"], "serving",
+        "learn failed to start: {startup}"
+    );
+    let address = startup["url"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("http://")
+        .unwrap()
+        .trim_end_matches('/')
+        .to_owned();
+    let state = request_json(&address, "GET", "/api/v1/state", None);
+    let nodes = state["lesson"]["nodes"].as_array().unwrap();
+    let of = &nodes[1];
+    assert_eq!(of["type"], "run_code");
+    assert_eq!(of["of"], 0);
+    assert!(of.get("content").is_none());
+    assert_eq!(of["language"], "python");
+    assert_eq!(of["timeout_secs"], 10);
+    assert_eq!(of["expected_output"], "hi Ada\n");
+    // An `of` block refers to the file the code it runs came from.
+    assert_eq!(of["reference"], nodes[0]["reference"]);
+    assert_eq!(of["reference"]["kind"], "file");
+    let own = &nodes[2];
+    assert_eq!(own["content"], "name = \"Ada\"\nprint(f\"hi {name}\")\n");
+    assert_eq!(own["filename"], "greet.py");
+    assert_eq!(own["first_line"], 1);
+    assert_eq!(own["timeout_secs"], 5);
+    assert_eq!(own["expected_output"], "hi Ada\n");
+    assert_eq!(nodes[3]["language"], "text");
+    assert_eq!(nodes[3]["reference"]["kind"], "inline");
+    let public = serde_json::to_string(&state).unwrap();
+    assert!(!public.contains("argv") && !public.contains("file_name"));
+    // `of` and a link in the caption both reach the browser's link table.
+    assert_eq!(state["lesson"]["links"]["shown"]["target"], 0);
+    server.stop();
+
+    // Older schemas keep rejecting the new block.
+    source_with_version(&lesson, &source, "2.3.0");
+    let output = Command::new(learnc())
+        .arg("check")
+        .arg("--root")
+        .arg(root.path())
+        .arg(&lesson)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["diagnostics"][0]["code"], "source.deserialize");
+}
+
+fn source_with_version(path: &Path, source: &serde_json::Value, version: &str) {
+    let mut source = source.clone();
+    source["schema_version"] = version.into();
+    fs::write(path, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+}
+
+#[test]
 fn production_frontend_bundle_is_present_and_self_contained() {
     let dist = manifest_dir().join("web/dist");
     let index = fs::read_to_string(dist.join("index.html")).expect("prebuilt index.html");
@@ -1475,7 +1617,7 @@ fn artifacts_record_blob_ids_heads_and_the_lesson_path_for_references() {
     assert!(!marker.exists(), "a plain-file lesson invoked Git");
     let artifact: CompiledLesson =
         serde_json::from_slice(&fs::read(repo.join("lessons/plain.learn")).unwrap()).unwrap();
-    assert_eq!(artifact.artifact_version.as_str(), "1.7.0");
+    assert_eq!(artifact.artifact_version.as_str(), "1.8.0");
     assert_eq!(
         artifact.provenance.lesson_path.as_deref(),
         Some("lessons/plain.json")

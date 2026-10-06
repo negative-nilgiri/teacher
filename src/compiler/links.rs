@@ -13,7 +13,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::artifact::{BlockLink, CompiledNode, CompiledNodeContent, LinkedLines};
 use crate::diagnostics::Diagnostic;
-use crate::source::{Block, LessonSource, MarkdownSource};
+use crate::source::{Block, LessonSource, MarkdownSource, RunCodeBlock};
 
 /// One `#…` link inside a Markdown text.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,6 +147,11 @@ pub(crate) fn markdown_fields(source: &LessonSource, nodes: &[CompiledNode]) -> 
                     push(format!("{base}/caption"), caption, None);
                 }
             }
+            (Block::RunCode(block), _) => {
+                if let Some(caption) = &block.caption {
+                    push(format!("{base}/caption"), caption, None);
+                }
+            }
             (Block::MultipleChoice(block), CompiledNodeContent::MultipleChoice { prompt, .. }) => {
                 let file = match &block.prompt {
                     MarkdownSource::File { path } => Some(PathBuf::from(path.as_str())),
@@ -228,6 +233,21 @@ pub(crate) fn resolve(
         .iter()
         .map(|node| (node.source_id.as_str(), node))
         .collect::<BTreeMap<_, _>>();
+    // A run block's `of` is a link to the code block it runs, so the browser
+    // can preview and jump to it like any other block link.
+    for block in &source.blocks {
+        if let Block::RunCode(RunCodeBlock { of: Some(of), .. }) = block
+            && let Some(target) = by_id.get(of.as_str())
+        {
+            table.insert(
+                of.as_str().to_owned(),
+                BlockLink {
+                    target: target.node_id,
+                    lines: None,
+                },
+            );
+        }
+    }
     for field in markdown_fields(source, nodes) {
         for link in find_links(&field.text) {
             let (id, lines) = parse_destination(&link.destination);

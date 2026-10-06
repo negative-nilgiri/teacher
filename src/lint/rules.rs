@@ -118,6 +118,8 @@ pub(super) fn collect(
                 rules.missing_hints(index, block);
                 rules.unexplained_distractors(index, block);
             }
+            // Run blocks have no lint rules of their own yet.
+            (Block::RunCode(_), CompiledNodeContent::RunCode { .. }) => {}
             _ => unreachable!("compiled nodes retain the source block order and kind"),
         }
     }
@@ -1589,6 +1591,40 @@ mod tests {
         let forward = codes_of(&found, "lint.reference.forward");
         assert_eq!(forward.len(), 1);
         assert_eq!(forward[0].block_id.as_deref(), Some("ahead"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn run_blocks_have_no_rules_yet_but_their_captions_and_links_to_them_are_handled() {
+        let root = temp_root();
+        let output = (1..=20).map(|n| format!("{n}\n")).collect::<String>();
+        let lesson = json!({"schema_version":"2.4.0","title":"Run","blocks":[
+            {"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"for n in range(20): print(n + 1)\n"}},
+            {"type":"run_code","id":"run-shown","of":"shown","caption":"Runs [the loop](#shown).",
+             "expected_output":{"kind":"inline","content":output}},
+            {"type":"run_code","id":"run-own","language":"python","source":{"kind":"inline","content":"print(2)\n"}},
+            md("far", "Filler one."), md("farther", "Filler two."),
+            md("uses", "The [run](#run-shown) prints twenty lines.")
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        // Only the link in the caption is checked, by the block-link rules.
+        let on_runs = found
+            .iter()
+            .filter(|finding| {
+                finding
+                    .block_id
+                    .as_deref()
+                    .is_some_and(|id| id.starts_with("run-"))
+            })
+            .map(|finding| (finding.code.as_str(), finding.pointer.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(on_runs, [("lint.reference.adjacent", "/blocks/1/caption")]);
+        // The link to the run block resolves and is not measured or flagged.
+        assert!(
+            found
+                .iter()
+                .all(|finding| finding.block_id.as_deref() != Some("uses"))
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

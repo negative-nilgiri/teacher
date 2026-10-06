@@ -70,6 +70,17 @@ Answer the user's question in the session; a reference never needs a rebuild.
   A hunk that mostly adds code is new code: keep the diff for the lines that
   change, and show the additions as a ranged code block.
 - **Multiple choice** checks understanding at the point where it matters.
+- **Run code** (`run_code`, source schema 2.4.0) is for code whose behavior the
+  learner should see happen: a short self-contained program, with the output it
+  prints. Give it its own `source`, or `of` naming the code block that already
+  shows the code, so the code appears once and the run block shows only "Runs
+  `<id>`". Python, JavaScript, and shell run without more; any other language
+  needs `argv` (for example `["ruby", "{file}"]`). Always give an
+  `expected_output`: running needs the learner to start `learn serve` with
+  `--allow-run`, and without it (and in versions that cannot run code yet) the
+  block shows its code and that frozen output. Produce the output by running
+  the code yourself, never by guessing it. Prefer small programs that finish in well under 10 seconds; the
+  code that runs is the frozen copy, never the learner's repository.
 
 ## Judgment lint cannot check
 

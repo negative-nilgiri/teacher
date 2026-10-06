@@ -165,6 +165,12 @@ no file-source alternative.
 | Question relying on unshown code | For each `multiple_choice` block, scan the prompt, hints, the correct choice, and the block explanation with the same spans and name filters as the previous rule, and report code-shaped names (as in the far-away rule: a call, a name with `_`, `.`, `:`, `-`, or `>`, or one with an uppercase letter) shown in no code or diff block. Single all-lowercase words are skipped because they are often tools, keys, keywords, or values; in a prompt or hint they stay `lint.markdown.unshown_code_reference`. Distractors and their explanations are still skipped. A question must be answerable from code the learner can see, so this is stricter than the prose rule. One finding per name per question, at its first place in that order. Code `lint.question.unshown_answer_code`. | `warning` | Show the code the answer relies on before the question (or link the block that shows it); if the name is a concept rather than code, drop the code formatting. |
 | Diagram uses `subgraph` or direct `style` | In valid Mermaid flowcharts and class diagrams, report every statement whose first word is `subgraph` or `style`. A statement starts at a line start or after an unquoted `;`; quoted text, bracketed labels and class bodies, and `%%` comments are skipped. Code `lint.mermaid.style_or_subgraph`. | `warning` | If they express semantic distinctions, consider reusable `classDef` and `class` assignments; keep `subgraph` when actual grouping is intended. |
 
+`run_code` blocks (source schema `2.4.0`) have no rules of their own yet. Lint
+accepts them: the block-link rules check the links in their captions like any
+other Markdown, a link to a run block resolves but its preview is not
+measured, and own-source run code does not yet count as shown code for the
+rules above.
+
 `mermaid-svg` 0.7.0 accepted the project's documented Mermaid diagrams and
 both illustrative flowcharts, and rejected an invalid direction and unclosed
 node label. It nevertheless accepted an unclosed flowchart `subgraph` and an

@@ -15,6 +15,7 @@ use crate::artifact::{
     BuildProvenance, CURRENT_ARTIFACT_VERSION, ChoiceExplanation, ChoiceId, CompiledCodeHighlight,
     CompiledLesson, CompiledLineRange, CompiledNode, CompiledNodeContent, FrozenDiffTarget,
     LessonPresentation, PresentedChoice, PrivateLesson, QuizAnswer, ResourceProvenance,
+    RunCodeSource,
 };
 use crate::diagnostics::Diagnostic;
 use crate::language::Language;
@@ -24,11 +25,14 @@ use crate::repository::{
 };
 use crate::source::{
     self, Block, CodeHighlight, CodeSource, DiffSource, GitDiffTarget, LessonSource, LineRange,
-    MarkdownSource,
+    MarkdownSource, OutputSource, RunCodeBlock,
 };
 
 pub(crate) mod definitions;
 pub(crate) mod links;
+
+/// Seconds a run may take when a run block gives no `timeout_secs`.
+const DEFAULT_RUN_TIMEOUT_SECS: u32 = 10;
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -126,6 +130,16 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
     // Block links are resolved against the compiled nodes, from the source
     // fields that the lowering loop below consumes.
     let link_source = schema_version.has_block_links().then(|| source.clone());
+    // Run blocks that run another block's code need that block's language,
+    // which is known from its source even before the block is lowered.
+    let code_languages = source
+        .blocks
+        .iter()
+        .map(|block| match block {
+            Block::Code(block) => Some(block.resolved_language()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     let mut diagnostics = Vec::new();
     let mut nodes = Vec::with_capacity(source.blocks.len());
     let mut answers = Vec::new();
@@ -153,6 +167,13 @@ pub fn compile(input: &str, options: &CompileOptions) -> Result<CompiledLesson, 
             Block::Diff(block) => {
                 resolve_diff(block.source, block.caption, repository.as_ref(), &pointer)
             }
+            Block::RunCode(block) => resolve_run_code(
+                block,
+                &symbols,
+                &code_languages,
+                repository.as_ref(),
+                &block_pointer,
+            ),
             Block::MultipleChoice(block) => {
                 let prompt_pointer = format!("/blocks/{index}/prompt");
                 let prompt = match resolve_markdown_source(
@@ -384,6 +405,10 @@ fn record_heads(
         let provenance = match &mut node.content {
             CompiledNodeContent::Markdown { provenance, .. }
             | CompiledNodeContent::Code { provenance, .. } => provenance,
+            CompiledNodeContent::RunCode {
+                code: RunCodeSource::Own { provenance, .. },
+                ..
+            } => provenance.as_mut(),
             _ => continue,
         };
         if let ResourceProvenance::File { path, head, .. } = provenance
@@ -533,6 +558,103 @@ fn resolve_code(
                 first_line: Some(source_start),
                 provenance: resource_provenance(resource.provenance),
             })
+        }
+    }
+}
+
+/// Resolve a run block: its code (or the block it runs), and everything the
+/// runtime needs to run it, so that it has no language logic of its own.
+fn resolve_run_code(
+    block: RunCodeBlock,
+    symbols: &source::SymbolTable,
+    code_languages: &[Option<Language>],
+    repository: Option<&Repository>,
+    block_pointer: &str,
+) -> Result<CompiledNodeContent, Diagnostic> {
+    let pointer = format!("{block_pointer}/source");
+    let (code, language) = match (block.source, block.of) {
+        (Some(source), None) => {
+            let resolved = resolve_code(
+                source,
+                block.language.as_deref(),
+                None,
+                Vec::new(),
+                repository,
+                &pointer,
+                block_pointer,
+            )?;
+            let CompiledNodeContent::Code {
+                content,
+                language,
+                first_line,
+                provenance,
+                ..
+            } = resolved
+            else {
+                unreachable!("resolving code produces a code node")
+            };
+            (
+                RunCodeSource::Own {
+                    content,
+                    first_line,
+                    provenance: Box::new(provenance),
+                },
+                language,
+            )
+        }
+        (None, Some(of)) => {
+            let target = symbols
+                .node_id(&of)
+                .expect("source validation requires `of` to name a block");
+            let language = code_languages[target.get() as usize]
+                .expect("source validation requires `of` to name a code block");
+            (RunCodeSource::Of { node: target }, language)
+        }
+        _ => unreachable!("source validation requires exactly one of `source` and `of`"),
+    };
+    let argv = block.argv.unwrap_or_else(|| {
+        language
+            .default_runner()
+            .expect("source validation requires a runner")
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect()
+    });
+    let expected_output = block
+        .expected_output
+        .map(|output| {
+            resolve_output(
+                output,
+                repository,
+                &format!("{block_pointer}/expected_output"),
+            )
+        })
+        .transpose()?;
+    Ok(CompiledNodeContent::RunCode {
+        code,
+        language,
+        caption: block.caption,
+        argv,
+        file_name: format!("main.{}", language.file_extension()),
+        timeout_secs: block.timeout_secs.unwrap_or(DEFAULT_RUN_TIMEOUT_SECS),
+        expected_output,
+    })
+}
+
+fn resolve_output(
+    source: OutputSource,
+    repository: Option<&Repository>,
+    pointer: &str,
+) -> Result<String, Diagnostic> {
+    match source {
+        OutputSource::Inline { content } => Ok(content),
+        OutputSource::File { path } => {
+            let repository = require_repository(repository, pointer)?;
+            let path = repository_path(&path, pointer)?;
+            repository
+                .read_file(&path, None)
+                .map(|resource| resource.content)
+                .map_err(|error| repository_diagnostic(pointer, error))
         }
     }
 }
@@ -768,6 +890,17 @@ fn repository_paths(source: &LessonSource) -> Result<RepositoryPaths, Vec<Diagno
                 }
                 MarkdownSource::Inline { .. } => vec![],
             },
+            Block::RunCode(block) => {
+                let mut values = match &block.source {
+                    Some(CodeSource::File { path, .. }) => vec![(path, false, source_pointer)],
+                    Some(CodeSource::GitBlob { path, .. }) => vec![(path, true, source_pointer)],
+                    Some(CodeSource::Inline { .. }) | None => vec![],
+                };
+                if let Some(OutputSource::File { path }) = &block.expected_output {
+                    values.push((path, false, format!("/blocks/{index}/expected_output/path")));
+                }
+                values
+            }
         };
         for (value, is_git, pointer) in values {
             match repository_path(value, &pointer) {
@@ -1547,6 +1680,237 @@ mod tests {
         }
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn run_node(artifact: &CompiledLesson, index: usize) -> &CompiledNodeContent {
+        let content = &artifact.presentation.nodes[index].content;
+        assert!(
+            matches!(content, CompiledNodeContent::RunCode { .. }),
+            "expected a run node"
+        );
+        content
+    }
+
+    #[test]
+    fn freezes_run_blocks_with_own_inline_source_or_the_code_they_run() {
+        let lesson = r#"{
+            "schema_version":"2.4.0",
+            "title":"Run",
+            "blocks":[
+                {"type":"run_code","id":"early","of":"shown","expected_output":{"kind":"inline","content":"2\n"}},
+                {"type":"code","id":"shown","language":"py","source":{"kind":"inline","content":"print(1 + 1)\n"}},
+                {"type":"run_code","id":"own","language":"JS","caption":"Runs [it](#shown).",
+                 "source":{"kind":"inline","content":"console.log(2)"}},
+                {"type":"run_code","id":"shell","language":"bash","source":{"kind":"inline","content":"echo hi"}},
+                {"type":"run_code","id":"custom","language":"rust","timeout_secs":30,
+                 "argv":["rustc","--edition","2024","{file}"],
+                 "source":{"kind":"inline","content":"fn main() {}"}}
+            ]
+        }"#;
+        let artifact = compile(lesson, &CompileOptions::new("/path/that/need/not/exist")).unwrap();
+        let strings = |values: &[&str]| values.iter().map(|value| (*value).to_owned()).collect();
+
+        // A block may run code shown later; it freezes the node and language.
+        assert_eq!(
+            run_node(&artifact, 0),
+            &CompiledNodeContent::RunCode {
+                code: RunCodeSource::Of {
+                    node: crate::source::NodeId::new(1)
+                },
+                language: Language::Python,
+                caption: None,
+                argv: strings(&["python3", "{file}"]),
+                file_name: "main.py".into(),
+                timeout_secs: 10,
+                expected_output: Some("2\n".into()),
+            }
+        );
+        let CompiledNodeContent::RunCode {
+            code,
+            language,
+            caption,
+            argv,
+            file_name,
+            expected_output,
+            ..
+        } = run_node(&artifact, 2)
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            code,
+            &RunCodeSource::Own {
+                content: "console.log(2)".into(),
+                first_line: None,
+                provenance: Box::new(inline_provenance(b"console.log(2)")),
+            }
+        );
+        assert_eq!(*language, Language::JavaScript);
+        assert_eq!(caption.as_deref(), Some("Runs [it](#shown)."));
+        assert_eq!(argv, &strings(&["node", "{file}"]));
+        assert_eq!(file_name, "main.js");
+        assert_eq!(*expected_output, None);
+
+        let CompiledNodeContent::RunCode {
+            argv, file_name, ..
+        } = run_node(&artifact, 3)
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            (argv, file_name.as_str()),
+            (&strings(&["sh", "{file}"]), "main.sh")
+        );
+        // An authored argv replaces the table and sets the timeout; the scratch
+        // file still takes the language's extension.
+        let CompiledNodeContent::RunCode {
+            argv,
+            file_name,
+            timeout_secs,
+            ..
+        } = run_node(&artifact, 4)
+        else {
+            unreachable!()
+        };
+        assert_eq!(argv, &strings(&["rustc", "--edition", "2024", "{file}"]));
+        assert_eq!((file_name.as_str(), *timeout_secs), ("main.rs", 30));
+
+        // `of` joins the link table, which lets the browser preview and jump.
+        assert_eq!(
+            artifact.presentation.links["shown"].target,
+            crate::source::NodeId::new(1)
+        );
+    }
+
+    #[test]
+    fn run_blocks_without_a_runner_or_a_source_do_not_compile() {
+        let lesson = |block: &str| {
+            format!(r#"{{"schema_version":"2.4.0","title":"Run","blocks":[{block}]}}"#)
+        };
+        let diagnostics = compile(
+            &lesson(
+                r#"{"type":"run_code","id":"r","language":"rust","source":{"kind":"inline","content":"fn main() {}"}}"#,
+            ),
+            &CompileOptions::new("."),
+        )
+        .unwrap_err();
+        assert_eq!(diagnostics[0].code, "source.run_code.no_runner");
+        let diagnostics = compile(
+            &lesson(r#"{"type":"run_code","id":"r","of":"nowhere"}"#),
+            &CompileOptions::new("."),
+        )
+        .unwrap_err();
+        assert_eq!(diagnostics[0].code, "source.run_code.unknown_block");
+    }
+
+    #[test]
+    fn freezes_file_and_git_blob_run_sources_and_expected_output_files() {
+        let unique = format!(
+            "agent-teacher-run-test-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        );
+        let directory = std::env::temp_dir().join(unique);
+        fs::create_dir(&directory).unwrap();
+        git(&directory, &["init", "-q"]);
+        git(
+            &directory,
+            &["config", "user.email", "tests@example.invalid"],
+        );
+        git(&directory, &["config", "user.name", "Tests"]);
+        git(&directory, &["config", "commit.gpgsign", "false"]);
+        fs::write(
+            directory.join("count.py"),
+            "a = 1\nprint(a)\nprint(a + 1)\n",
+        )
+        .unwrap();
+        fs::write(directory.join("count.out"), "1\n2\n").unwrap();
+        git(&directory, &["add", "count.py"]);
+        git(&directory, &["commit", "-qm", "base"]);
+        // The worktree differs from HEAD, so the two sources are distinguishable.
+        fs::write(directory.join("count.py"), "print('worktree')\n").unwrap();
+
+        let lesson = r#"{
+            "schema_version":"2.4.0",
+            "title":"Run files",
+            "blocks":[
+                {"type":"run_code","id":"worktree","source":{"kind":"file","path":"count.py"},
+                 "expected_output":{"kind":"file","path":"count.out"}},
+                {"type":"run_code","id":"blob","source":{"kind":"git_blob","revision":"HEAD","path":"count.py","lines":{"start":2,"end":3}}}
+            ]
+        }"#;
+        let artifact = compile(lesson, &CompileOptions::new(&directory)).unwrap();
+
+        let CompiledNodeContent::RunCode {
+            code,
+            language,
+            expected_output,
+            ..
+        } = run_node(&artifact, 0)
+        else {
+            unreachable!()
+        };
+        let RunCodeSource::Own {
+            content,
+            first_line,
+            provenance,
+        } = code
+        else {
+            panic!("expected the block's own code")
+        };
+        assert_eq!(content, "print('worktree')\n");
+        assert_eq!(*first_line, Some(1));
+        // The language is inferred from the path, like a code block's, and the
+        // build records the repository's `HEAD` because Git sources use it.
+        assert_eq!(*language, Language::Python);
+        assert!(matches!(
+            &**provenance,
+            ResourceProvenance::File { path, head: Some(head), .. } if path == "count.py" && head.len() == 40
+        ));
+        assert_eq!(expected_output.as_deref(), Some("1\n2\n"));
+
+        let CompiledNodeContent::RunCode { code, .. } = run_node(&artifact, 1) else {
+            unreachable!()
+        };
+        let RunCodeSource::Own {
+            content,
+            first_line,
+            provenance,
+        } = code
+        else {
+            panic!("expected the block's own code")
+        };
+        assert_eq!(content, "print(a)\nprint(a + 1)\n");
+        assert_eq!(*first_line, Some(2));
+        assert!(
+            matches!(&**provenance, ResourceProvenance::GitBlob { path, .. } if path == "count.py")
+        );
+
+        // A missing expected-output file fails the build.
+        fs::remove_file(directory.join("count.out")).unwrap();
+        let diagnostics = compile(lesson, &CompileOptions::new(&directory)).unwrap_err();
+        assert_eq!(diagnostics[0].pointer, "/blocks/0/expected_output");
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn links_to_run_blocks_resolve_but_cannot_take_line_ranges() {
+        let lesson = |link: &str| {
+            format!(
+                r##"{{"schema_version":"2.4.0","title":"Run","blocks":[
+                    {{"type":"run_code","id":"demo","language":"python","source":{{"kind":"inline","content":"print(1)\n"}}}},
+                    {{"type":"markdown","id":"text","source":{{"kind":"inline","content":"See [the run]({link})."}}}}
+                ]}}"##
+            )
+        };
+        let artifact = compile(&lesson("#demo"), &CompileOptions::new(".")).unwrap();
+        assert_eq!(
+            artifact.presentation.links["demo"].target,
+            crate::source::NodeId::new(0)
+        );
+        let diagnostics = compile(&lesson("#demo:1-1"), &CompileOptions::new(".")).unwrap_err();
+        assert_eq!(diagnostics[0].code, "source.reference.lines_on_non_code");
     }
 
     fn git(directory: &Path, args: &[&str]) {

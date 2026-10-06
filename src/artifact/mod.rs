@@ -5,12 +5,12 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::language::Language;
+use crate::language::{Language, RUN_FILE_PLACEHOLDER};
 use crate::repository::{RenderedSegment, ResolvedDiff};
 use crate::source::{HighlightColor, NodeId, SchemaVersion};
 
 /// Artifact format emitted by this version of `learnc`.
-pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_7_0;
+pub const CURRENT_ARTIFACT_VERSION: ArtifactVersion = ArtifactVersion::V1_8_0;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ArtifactVersion {
@@ -36,11 +36,14 @@ pub enum ArtifactVersion {
     /// Adds the table of definitions shown by the lesson.
     #[serde(rename = "1.7.0")]
     V1_7_0,
+    /// Adds `run_code` nodes.
+    #[serde(rename = "1.8.0")]
+    V1_8_0,
 }
 
 impl ArtifactVersion {
     /// Every artifact version the runtime can load.
-    pub const SUPPORTED: [Self; 8] = [
+    pub const SUPPORTED: [Self; 9] = [
         Self::V1_0_0,
         Self::V1_1_0,
         Self::V1_2_0,
@@ -49,6 +52,7 @@ impl ArtifactVersion {
         Self::V1_5_0,
         Self::V1_6_0,
         Self::V1_7_0,
+        Self::V1_8_0,
     ];
 
     pub fn parse(value: &str) -> Option<Self> {
@@ -67,6 +71,7 @@ impl ArtifactVersion {
             Self::V1_5_0 => "1.5.0",
             Self::V1_6_0 => "1.6.0",
             Self::V1_7_0 => "1.7.0",
+            Self::V1_8_0 => "1.8.0",
         }
     }
 }
@@ -187,6 +192,41 @@ pub enum CompiledNodeContent {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         hints: Vec<String>,
     },
+    /// Code the learner can run. The compiler resolves everything the runtime
+    /// needs to run it, so the runtime has no language logic.
+    RunCode {
+        code: RunCodeSource,
+        language: Language,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
+        /// The command to spawn: the authored `argv` or the language's default
+        /// runner. Every `{file}` becomes the scratch file's path.
+        argv: Vec<String>,
+        /// Name of the scratch file the code is written to, with the
+        /// language's extension.
+        file_name: String,
+        /// Seconds a run may take, 1 to 60.
+        timeout_secs: u32,
+        /// Literal text the code produced when the lesson was built.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_output: Option<String>,
+    },
+}
+
+/// Where the code of a run block comes from.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunCodeSource {
+    /// Code of its own, frozen like a code block's.
+    Own {
+        content: String,
+        /// Source-file line of the first line, for file and Git-blob sources.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first_line: Option<u32>,
+        provenance: Box<ResourceProvenance>,
+    },
+    /// The code shown by a code block, which the runtime reads from that node.
+    Of { node: NodeId },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -496,6 +536,56 @@ pub fn validate_artifact(artifact: &CompiledLesson) -> Result<(), ArtifactValida
                             "diff node {} has an empty rendered Markdown segment",
                             node.node_id
                         )));
+                    }
+                }
+            }
+        }
+        if let CompiledNodeContent::RunCode {
+            code,
+            language,
+            argv,
+            file_name,
+            timeout_secs,
+            ..
+        } = &node.content
+        {
+            let invalid = |message: &str| {
+                ArtifactValidationError::new(format!("run node {} {message}", node.node_id))
+            };
+            if *language == Language::Mermaid {
+                return Err(invalid("cannot run a Mermaid diagram"));
+            }
+            if argv.is_empty()
+                || argv.iter().any(|argument| argument.trim().is_empty())
+                || !argv
+                    .iter()
+                    .any(|argument| argument.contains(RUN_FILE_PLACEHOLDER))
+            {
+                return Err(invalid("has an invalid command"));
+            }
+            if file_name.is_empty() || file_name.contains(['/', '\\']) {
+                return Err(invalid("has an invalid scratch file name"));
+            }
+            if !(1..=60).contains(timeout_secs) {
+                return Err(invalid("has a timeout outside 1 to 60 seconds"));
+            }
+            match code {
+                RunCodeSource::Own { first_line, .. } if *first_line == Some(0) => {
+                    return Err(invalid("has first_line 0; source lines are one-based"));
+                }
+                RunCodeSource::Own { .. } => {}
+                RunCodeSource::Of { node: target } => {
+                    match artifact.presentation.nodes.get(target.get() as usize) {
+                        Some(CompiledNode {
+                            content:
+                                CompiledNodeContent::Code {
+                                    language: shown, ..
+                                },
+                            ..
+                        }) if shown == language => {}
+                        _ => {
+                            return Err(invalid("must run a code node of the same language"));
+                        }
                     }
                 }
             }
@@ -846,6 +936,159 @@ mod tests {
         let decoded: CompiledLesson =
             serde_json::from_str(&serde_json::to_string(&legacy).unwrap()).unwrap();
         validate_artifact(&decoded).unwrap();
+    }
+
+    fn run_artifact(code: RunCodeSource) -> CompiledLesson {
+        let mut artifact = quiz_artifact();
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "shown".into(),
+            content: CompiledNodeContent::Code {
+                content: "print(1)\n".into(),
+                language: Language::Python,
+                caption: None,
+                highlights: Vec::new(),
+                first_line: None,
+                provenance: ResourceProvenance::Inline {
+                    sha256: "0".repeat(64),
+                },
+            },
+        });
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(2),
+            source_id: "run".into(),
+            content: CompiledNodeContent::RunCode {
+                code,
+                language: Language::Python,
+                caption: None,
+                argv: vec!["python3".into(), "{file}".into()],
+                file_name: "main.py".into(),
+                timeout_secs: 10,
+                expected_output: Some("1\n".into()),
+            },
+        });
+        artifact
+    }
+
+    fn mutate_run(artifact: &mut CompiledLesson, change: impl FnOnce(&mut CompiledNodeContent)) {
+        change(&mut artifact.presentation.nodes[2].content);
+    }
+
+    #[test]
+    fn run_nodes_round_trip_and_older_artifacts_still_load() {
+        let own = RunCodeSource::Own {
+            content: "print(1)\n".into(),
+            first_line: Some(3),
+            provenance: Box::new(ResourceProvenance::Inline {
+                sha256: "0".repeat(64),
+            }),
+        };
+        for code in [
+            own,
+            RunCodeSource::Of {
+                node: NodeId::new(1),
+            },
+        ] {
+            let artifact = run_artifact(code);
+            validate_artifact(&artifact).unwrap();
+            let json = serde_json::to_string_pretty(&artifact).unwrap();
+            let decoded: CompiledLesson = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded, artifact);
+        }
+        let value = serde_json::to_value(run_artifact(RunCodeSource::Of {
+            node: NodeId::new(1),
+        }))
+        .unwrap();
+        assert_eq!(value["artifact_version"], "1.8.0");
+        let node = &value["presentation"]["nodes"][2];
+        assert_eq!(node["type"], "run_code");
+        assert_eq!(node["code"], serde_json::json!({"kind": "of", "node": 1}));
+        assert_eq!(node["argv"], serde_json::json!(["python3", "{file}"]));
+        assert_eq!(node["file_name"], "main.py");
+
+        // Every earlier artifact version is still loadable by the runtime.
+        for version in ArtifactVersion::SUPPORTED {
+            let mut artifact = quiz_artifact();
+            artifact.artifact_version = version;
+            let decoded: CompiledLesson =
+                serde_json::from_str(&serde_json::to_string(&artifact).unwrap()).unwrap();
+            validate_artifact(&decoded).unwrap();
+        }
+    }
+
+    #[test]
+    fn validation_rejects_run_nodes_the_runtime_could_not_run() {
+        let of = || RunCodeSource::Of {
+            node: NodeId::new(1),
+        };
+        type Change = fn(&mut CompiledNodeContent);
+        let changes: [(&str, Change); 9] = [
+            ("empty command", |node| {
+                if let CompiledNodeContent::RunCode { argv, .. } = node {
+                    argv.clear();
+                }
+            }),
+            ("blank argument", |node| {
+                if let CompiledNodeContent::RunCode { argv, .. } = node {
+                    argv.push(" ".into());
+                }
+            }),
+            ("no scratch file in the command", |node| {
+                if let CompiledNodeContent::RunCode { argv, .. } = node {
+                    *argv = vec!["python3".into()];
+                }
+            }),
+            ("scratch file outside the directory", |node| {
+                if let CompiledNodeContent::RunCode { file_name, .. } = node {
+                    *file_name = "../main.py".into();
+                }
+            }),
+            ("empty scratch file name", |node| {
+                if let CompiledNodeContent::RunCode { file_name, .. } = node {
+                    file_name.clear();
+                }
+            }),
+            ("zero timeout", |node| {
+                if let CompiledNodeContent::RunCode { timeout_secs, .. } = node {
+                    *timeout_secs = 0;
+                }
+            }),
+            ("long timeout", |node| {
+                if let CompiledNodeContent::RunCode { timeout_secs, .. } = node {
+                    *timeout_secs = 61;
+                }
+            }),
+            ("diagram", |node| {
+                if let CompiledNodeContent::RunCode { language, .. } = node {
+                    *language = Language::Mermaid;
+                }
+            }),
+            ("other language than the code it runs", |node| {
+                if let CompiledNodeContent::RunCode { language, .. } = node {
+                    *language = Language::Shell;
+                }
+            }),
+        ];
+        for (label, change) in changes {
+            let mut artifact = run_artifact(of());
+            mutate_run(&mut artifact, change);
+            assert!(validate_artifact(&artifact).is_err(), "{label}");
+        }
+        // `of` must name a code node, and not a missing one or a question.
+        for node in [0, 2, 3] {
+            let artifact = run_artifact(RunCodeSource::Of {
+                node: NodeId::new(node),
+            });
+            assert!(validate_artifact(&artifact).is_err(), "of node {node}");
+        }
+        let artifact = run_artifact(RunCodeSource::Own {
+            content: "print(1)".into(),
+            first_line: Some(0),
+            provenance: Box::new(ResourceProvenance::Inline {
+                sha256: "0".repeat(64),
+            }),
+        });
+        assert!(validate_artifact(&artifact).is_err(), "first_line 0");
     }
 
     #[test]

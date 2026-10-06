@@ -7,6 +7,7 @@ import { CollapsibleLessonBlock } from "./CollapsibleLessonBlock";
 import { DiffBlock } from "./DiffBlock";
 import { Markdown } from "./Markdown";
 import { MultipleChoiceBlock } from "./MultipleChoiceBlock";
+import { RunCodeBlock } from "./RunCodeBlock";
 
 interface LessonNodeViewProps {
   node: LessonNode;
@@ -51,6 +52,10 @@ export function LessonNodeView(props: LessonNodeViewProps) {
           state={props.questionState}
         />
       );
+      break;
+    case "run_code":
+      kind = "Run code";
+      content = <RunCodeBlock node={node} />;
       break;
   }
 

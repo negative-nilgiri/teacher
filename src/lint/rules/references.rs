@@ -66,6 +66,8 @@ fn preview_lines(node: &CompiledNode, lines: Option<(u32, u32)>) -> usize {
             .sum(),
         (CompiledNodeContent::Markdown { content, .. }, _) => content.lines().count(),
         (CompiledNodeContent::MultipleChoice { prompt, .. }, _) => prompt.lines().count(),
+        // Run blocks have no lint rules yet, so a preview of one goes unmeasured.
+        (CompiledNodeContent::RunCode { .. }, _) => 0,
     }
 }
 

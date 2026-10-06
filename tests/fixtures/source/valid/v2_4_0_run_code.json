@@ -1,0 +1,35 @@
+{
+  "schema_version": "2.4.0",
+  "title": "Run code",
+  "blocks": [
+    {
+      "type": "run_code",
+      "id": "sum",
+      "language": "python",
+      "caption": "Adding two numbers.",
+      "source": { "kind": "inline", "content": "print(1 + 1)\n" },
+      "timeout_secs": 5,
+      "expected_output": { "kind": "inline", "content": "2\n" }
+    },
+    {
+      "type": "code",
+      "id": "greeting",
+      "language": "javascript",
+      "source": { "kind": "inline", "content": "console.log(\"hello\");\n" }
+    },
+    {
+      "type": "run_code",
+      "id": "run-greeting",
+      "of": "greeting",
+      "expected_output": { "kind": "inline", "content": "hello\n" }
+    },
+    {
+      "type": "run_code",
+      "id": "ruby",
+      "language": "ruby",
+      "argv": ["ruby", "{file}"],
+      "source": { "kind": "inline", "content": "puts 6 * 7\n" },
+      "expected_output": { "kind": "inline", "content": "42\n" }
+    }
+  ]
+}

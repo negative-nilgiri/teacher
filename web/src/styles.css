@@ -41,6 +41,14 @@ button, input { font: inherit; }
 .lesson-block-content > .code-block,
 .lesson-block-content > .diff-block,
 .lesson-block-content > .question { border: 0; border-radius: 0; }
+.run-block > .code-block { border: 0; border-radius: 0; }
+.run-target { margin: 0; padding: .75rem 1rem; font-size: .9rem; }
+.run-output { border-top: 1px solid var(--line); }
+.run-output:first-child { border-top: 0; }
+.run-output-header { justify-content: space-between; gap: 1rem; }
+.run-output-title { color: var(--accent); font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; }
+.run-output-note { color: var(--muted); font-size: .72rem; }
+.run-output-text { border-radius: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .markdown { line-height: 1.68; }
 .markdown > :first-child { margin-top: 0; }

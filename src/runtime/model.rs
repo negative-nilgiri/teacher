@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use crate::artifact::CURRENT_ARTIFACT_VERSION;
 use crate::artifact::{
-    ArtifactVersion, ChoiceExplanation, ChoiceId, CompiledLesson, CompiledNodeContent,
-    validate_artifact,
+    ArtifactVersion, ChoiceExplanation, ChoiceId, CompiledLesson, CompiledNode,
+    CompiledNodeContent, RunCodeSource, validate_artifact,
 };
 use crate::repository::{DiffLine, ResolvedDiff};
 use crate::source::NodeId;
@@ -224,11 +224,43 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                         hints: hints.clone(),
                     }
                 }
+                CompiledNodeContent::RunCode {
+                    code,
+                    language,
+                    caption,
+                    timeout_secs,
+                    expected_output,
+                    ..
+                } => {
+                    let (content, first_line, filename, of) = match code {
+                        RunCodeSource::Own {
+                            content,
+                            first_line,
+                            provenance,
+                        } => (
+                            Some(content.clone()),
+                            *first_line,
+                            provenance_basename(provenance),
+                            None,
+                        ),
+                        RunCodeSource::Of { node } => (None, None, None, Some(*node)),
+                    };
+                    PublicLessonNodeContent::RunCode {
+                        content,
+                        of,
+                        language: *language,
+                        caption: caption.clone(),
+                        first_line,
+                        filename,
+                        timeout_secs: *timeout_secs,
+                        expected_output: expected_output.clone(),
+                    }
+                }
             };
             PublicLessonNode {
                 node_id: node.node_id,
                 source_id: node.source_id.clone(),
-                reference: node_reference(&node.content),
+                reference: node_reference(&artifact.presentation.nodes, &node.content),
                 content,
             }
         })
@@ -249,11 +281,25 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
 
 /// Where a block's content came from, for references the learner copies to an
 /// agent. Quizzes have no source resource; their references name the block.
-fn node_reference(content: &CompiledNodeContent) -> Option<crate::artifact::ResourceProvenance> {
+/// A run block of `of` has none of its own and refers to the code it runs.
+fn node_reference(
+    nodes: &[CompiledNode],
+    content: &CompiledNodeContent,
+) -> Option<crate::artifact::ResourceProvenance> {
     match content {
         CompiledNodeContent::Markdown { provenance, .. }
         | CompiledNodeContent::Code { provenance, .. }
         | CompiledNodeContent::Diff { provenance, .. } => Some(provenance.clone()),
+        CompiledNodeContent::RunCode {
+            code: RunCodeSource::Own { provenance, .. },
+            ..
+        } => Some((**provenance).clone()),
+        CompiledNodeContent::RunCode {
+            code: RunCodeSource::Of { node },
+            ..
+        } => nodes
+            .get(node.get() as usize)
+            .and_then(|target| node_reference(nodes, &target.content)),
         CompiledNodeContent::MultipleChoice { .. } => None,
     }
 }
@@ -355,6 +401,26 @@ pub enum PublicLessonNodeContent {
         prompt: String,
         choices: Vec<crate::artifact::PresentedChoice>,
         hints: Vec<String>,
+    },
+    /// Code to run, which is either the block's own `content` or the code
+    /// block `of` that it runs. The command and scratch file stay in the
+    /// artifact until a run needs them.
+    RunCode {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        of: Option<NodeId>,
+        language: crate::language::Language,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        caption: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        first_line: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        filename: Option<String>,
+        timeout_secs: u32,
+        /// Output frozen when the lesson was built.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        expected_output: Option<String>,
     },
 }
 
@@ -563,6 +629,86 @@ pub(crate) mod tests {
             1
         );
         assert_eq!(projection["nodes"][1]["highlights"][0]["color"], "blue");
+    }
+
+    #[test]
+    fn public_projection_of_run_blocks_shows_code_or_the_block_it_runs() {
+        use crate::artifact::{ResourceProvenance, RunCodeSource};
+        use crate::language::Language;
+
+        let mut artifact = quiz_artifact();
+        let file = ResourceProvenance::File {
+            path: "tools/count.py".into(),
+            sha256: "1".repeat(64),
+            blob_id: Some("2".repeat(40)),
+            head: None,
+        };
+        artifact.presentation.nodes.push(CompiledNode {
+            node_id: NodeId::new(1),
+            source_id: "shown".into(),
+            content: CompiledNodeContent::Code {
+                content: "print(1)\n".into(),
+                language: Language::Python,
+                caption: None,
+                highlights: Vec::new(),
+                first_line: Some(7),
+                provenance: file.clone(),
+            },
+        });
+        let run = |node_id: u32, source_id: &str, code: RunCodeSource| CompiledNode {
+            node_id: NodeId::new(node_id),
+            source_id: source_id.into(),
+            content: CompiledNodeContent::RunCode {
+                code,
+                language: Language::Python,
+                caption: Some("Run it.".into()),
+                argv: vec!["python3".into(), "{file}".into()],
+                file_name: "main.py".into(),
+                timeout_secs: 10,
+                expected_output: Some("1\n".into()),
+            },
+        };
+        artifact.presentation.nodes.push(run(
+            2,
+            "run-shown",
+            RunCodeSource::Of {
+                node: NodeId::new(1),
+            },
+        ));
+        artifact.presentation.nodes.push(run(
+            3,
+            "run-own",
+            RunCodeSource::Own {
+                content: "print(2)\n".into(),
+                first_line: Some(1),
+                provenance: Box::new(file.clone()),
+            },
+        ));
+        crate::artifact::validate_artifact(&artifact).unwrap();
+
+        let projection = serde_json::to_value(project_artifact(&artifact)).unwrap();
+        let of = &projection["nodes"][2];
+        assert_eq!(of["type"], "run_code");
+        assert_eq!(of["of"], 1);
+        assert!(of.get("content").is_none());
+        assert_eq!(of["language"], "python");
+        assert_eq!(of["caption"], "Run it.");
+        assert_eq!(of["timeout_secs"], 10);
+        assert_eq!(of["expected_output"], "1\n");
+        // It refers to the file the code it runs came from.
+        assert_eq!(of["reference"]["path"], "tools/count.py");
+
+        let own = &projection["nodes"][3];
+        assert_eq!(own["content"], "print(2)\n");
+        assert!(own.get("of").is_none());
+        assert_eq!(own["first_line"], 1);
+        assert_eq!(own["filename"], "count.py");
+        assert_eq!(own["reference"]["blob_id"], "2".repeat(40));
+
+        // Nothing about how to run the code reaches the browser.
+        let text = projection.to_string();
+        assert!(!text.contains("argv") && !text.contains("file_name"));
+        assert!(!text.contains("python3"));
     }
 
     #[test]

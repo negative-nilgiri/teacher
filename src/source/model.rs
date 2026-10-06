@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::SourceId;
+use crate::language::Language;
 
 /// Source schema decoder selected by the authored document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -33,11 +34,15 @@ pub enum SchemaVersion {
     #[serde(rename = "2.3.0")]
     #[schemars(rename = "2.3.0")]
     V2_3_0,
+    /// Adds the `run_code` block.
+    #[serde(rename = "2.4.0")]
+    #[schemars(rename = "2.4.0")]
+    V2_4_0,
 }
 
 impl SchemaVersion {
-    pub const CURRENT: Self = Self::V2_3_0;
-    pub const SUPPORTED: [Self; 8] = [
+    pub const CURRENT: Self = Self::V2_4_0;
+    pub const SUPPORTED: [Self; 9] = [
         Self::V1_0_0,
         Self::V1_1_0,
         Self::V1_2_0,
@@ -46,6 +51,7 @@ impl SchemaVersion {
         Self::V2_1_0,
         Self::V2_2_0,
         Self::V2_3_0,
+        Self::V2_4_0,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -58,13 +64,14 @@ impl SchemaVersion {
             Self::V2_1_0 => "2.1.0",
             Self::V2_2_0 => "2.2.0",
             Self::V2_3_0 => "2.3.0",
+            Self::V2_4_0 => "2.4.0",
         }
     }
 
     /// Whether `#block-id` link destinations are block links, validated by
     /// the compiler. Older lessons keep them as ordinary links.
     pub const fn has_block_links(self) -> bool {
-        matches!(self, Self::V2_3_0)
+        matches!(self, Self::V2_3_0 | Self::V2_4_0)
     }
 }
 
@@ -456,6 +463,35 @@ impl From<BlockV2_1_0> for Block {
     }
 }
 
+/// Exact decoder/schema model for source schema 2.4.0: the 2.3.0 blocks plus
+/// `run_code`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(title = "LessonSource")]
+pub(crate) struct LessonSourceV2_4_0 {
+    schema_version: SchemaVersionV2_4_0,
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    title: String,
+    blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+enum SchemaVersionV2_4_0 {
+    #[serde(rename = "2.4.0")]
+    #[schemars(rename = "2.4.0")]
+    V2_4_0,
+}
+
+impl From<LessonSourceV2_4_0> for LessonSource {
+    fn from(source: LessonSourceV2_4_0) -> Self {
+        Self {
+            schema_version: SchemaVersion::V2_4_0,
+            title: source.title,
+            blocks: source.blocks,
+        }
+    }
+}
+
 /// Exact decoder/schema model for source schema 2.3.0: the 2.2.0 shape, with
 /// `#block-id` link destinations resolved as block links.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -465,7 +501,7 @@ pub(crate) struct LessonSourceV2_3_0 {
     schema_version: SchemaVersionV2_3_0,
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     title: String,
-    blocks: Vec<Block>,
+    blocks: Vec<BlockBeforeV2_4_0>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -480,7 +516,7 @@ impl From<LessonSourceV2_3_0> for LessonSource {
         Self {
             schema_version: SchemaVersion::V2_3_0,
             title: source.title,
-            blocks: source.blocks,
+            blocks: source.blocks.into_iter().map(Block::from).collect(),
         }
     }
 }
@@ -493,7 +529,7 @@ pub(crate) struct LessonSourceV2_2_0 {
     schema_version: SchemaVersionV2_2_0,
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     title: String,
-    blocks: Vec<Block>,
+    blocks: Vec<BlockBeforeV2_4_0>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -508,7 +544,30 @@ impl From<LessonSourceV2_2_0> for LessonSource {
         Self {
             schema_version: SchemaVersion::V2_2_0,
             title: source.title,
-            blocks: source.blocks,
+            blocks: source.blocks.into_iter().map(Block::from).collect(),
+        }
+    }
+}
+
+// Not a doc comment: schemas before 2.4.0 keep their exact emitted shape.
+// Schemas 2.2.0 and 2.3.0 share this union, which lacks `run_code`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[schemars(rename = "Block")]
+enum BlockBeforeV2_4_0 {
+    Markdown(MarkdownBlock),
+    Code(CodeBlock),
+    Diff(DiffBlock),
+    MultipleChoice(MultipleChoiceBlock),
+}
+
+impl From<BlockBeforeV2_4_0> for Block {
+    fn from(block: BlockBeforeV2_4_0) -> Self {
+        match block {
+            BlockBeforeV2_4_0::Markdown(block) => Self::Markdown(block),
+            BlockBeforeV2_4_0::Code(block) => Self::Code(block),
+            BlockBeforeV2_4_0::Diff(block) => Self::Diff(block),
+            BlockBeforeV2_4_0::MultipleChoice(block) => Self::MultipleChoice(block),
         }
     }
 }
@@ -572,6 +631,7 @@ pub enum Block {
     Code(CodeBlock),
     Diff(DiffBlock),
     MultipleChoice(MultipleChoiceBlock),
+    RunCode(RunCodeBlock),
 }
 
 impl Block {
@@ -581,6 +641,7 @@ impl Block {
             Self::Code(block) => &block.id,
             Self::Diff(block) => &block.id,
             Self::MultipleChoice(block) => &block.id,
+            Self::RunCode(block) => &block.id,
         }
     }
 }
@@ -608,6 +669,27 @@ pub struct CodeBlock {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub highlights: Vec<CodeHighlight>,
     pub source: CodeSource,
+}
+
+impl CodeBlock {
+    /// The language the block shows: the authored one, else inferred from the
+    /// source path, else plain text.
+    pub fn resolved_language(&self) -> Language {
+        self.source.language(self.language.as_deref())
+    }
+}
+
+impl CodeSource {
+    /// The language code from this source is shown or run as.
+    pub fn language(&self, authored: Option<&str>) -> Language {
+        match (authored, self) {
+            (Some(authored), _) => Language::from_authored(authored),
+            (None, Self::Inline { .. }) => Language::default(),
+            (None, Self::File { path, .. } | Self::GitBlob { path, .. }) => {
+                Language::from_path(path.as_str())
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -650,6 +732,43 @@ pub struct DiffBlock {
     #[schemars(length(min = 1), regex(pattern = r"\S"))]
     pub caption: Option<String>,
     pub source: DiffSource,
+}
+
+/// Code the learner can run during the lesson, with its output shown in place.
+/// Exactly one of `source` and `of` gives the code.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunCodeBlock {
+    pub id: SourceId,
+    /// Code of its own, from the same sources as a code block. Forbidden with `of`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<CodeSource>,
+    /// ID of the code block whose shown code this block runs. Forbids `source`
+    /// and `language`: the language comes from that block.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub of: Option<SourceId>,
+    /// Optional language name or common alias, resolved like a code block's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub language: Option<String>,
+    /// Optional Markdown for non-obvious, block-specific explanation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1), regex(pattern = r"\S"))]
+    pub caption: Option<String>,
+    /// Command to run instead of the language's default runner: a nonempty
+    /// list of nonblank strings in which `{file}` stands for the scratch file.
+    /// Required for languages without a default runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1), inner(length(min = 1), regex(pattern = r"\S")))]
+    pub argv: Option<Vec<String>>,
+    /// Seconds a run may take, 1 to 60. Omission means 10.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 1, max = 60))]
+    pub timeout_secs: Option<u32>,
+    /// Literal text shown as the output the code produced when the lesson was
+    /// written, before and without a run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_output: Option<OutputSource>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -768,6 +887,19 @@ pub struct Choice {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MarkdownSource {
+    Inline {
+        #[schemars(length(min = 1), regex(pattern = r"\S"))]
+        content: String,
+    },
+    File {
+        path: RepoPath,
+    },
+}
+
+/// Literal text, shown verbatim rather than rendered as Markdown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OutputSource {
     Inline {
         #[schemars(length(min = 1), regex(pattern = r"\S"))]
         content: String,

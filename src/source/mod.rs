@@ -12,7 +12,7 @@ pub use ids::{NodeId, SourceId, SourceIdError, SymbolTable};
 pub use model::{
     Block, Choice, CodeBlock, CodeHighlight, CodeSource, DiffBlock, DiffSource, GitDiffFile,
     GitDiffTarget, GitRevision, HighlightColor, LessonSource, LineRange, MarkdownBlock,
-    MarkdownSource, MultipleChoiceBlock, RepoPath, SchemaVersion,
+    MarkdownSource, MultipleChoiceBlock, OutputSource, RepoPath, RunCodeBlock, SchemaVersion,
 };
 pub use schema::{source_json_schema, source_json_schema_for};
 pub use validate::{ValidatedLesson, parse_and_validate, validate};

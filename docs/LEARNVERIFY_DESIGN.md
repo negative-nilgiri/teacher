@@ -184,7 +184,11 @@ code block, so `state` is an excerpt of the lesson in authored order, with
   not left without context. Blocks are kept nearest-first up to
   `max_context_chars`; the block that crosses the limit is truncated with a
   marker and older ones are dropped. The compiled artifact already holds the
-  resolved text, so no repository access is needed.
+  resolved text, so no repository access is needed. A `run_code` block joins
+  the unit as an entry of kind `run_code` with its language, its own code (an
+  `of` block has none: the code block it runs is context in its own right),
+  and its expected output, all within the same budget. Run blocks have no
+  checks of their own.
 - Choices come from the authored source in authored order, because the
   compiled artifact shuffles them without recording the original order; only
   the resolved prompt text comes from the artifact.

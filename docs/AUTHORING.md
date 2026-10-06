@@ -8,7 +8,7 @@ for a learner to understand one change at a time.
 Use the compiler as the source of truth:
 
 ```console
-learnc schema --version 2.3.0
+learnc schema --version 2.4.0
 learnc check lesson.json
 learnc lint lesson.json
 learnc build lesson.json
@@ -35,6 +35,7 @@ flowchart LR
     L --> C["code<br/>language? · caption? · highlights + annotations? · inline | file | git_blob"]:::content
     L --> D["diff<br/>caption? · inline | file | git"]:::repository
     L --> Q["multiple_choice<br/>prompt: inline | file<br/>choices · hints · explanation"]:::quiz
+    L --> R["run_code<br/>language? · caption? · inline | file | git_blob, or of<br/>argv? · timeout_secs? · expected_output?"]:::content
 
     subgraph Legend
       LE["Document envelope"]:::envelope
@@ -51,7 +52,7 @@ flowchart LR
 
 ```json
 {
-  "schema_version": "2.3.0",
+  "schema_version": "2.4.0",
   "title": "Why queue removal changed",
   "blocks": []
 }
@@ -69,8 +70,9 @@ source object so it can be inline or file-backed. This is a breaking source
 shape. Source schema `2.1.0` adds optional Markdown annotations to code
 highlight groups, and `2.2.0` adds optional per-choice explanations for
 distractors. Source schema `2.3.0` has the same shape and turns `#block-id`
-links into block links (see [Linking blocks](#linking-blocks)). Use `2.3.0`
-for new lessons.
+links into block links (see [Linking blocks](#linking-blocks)). Source schema
+`2.4.0` adds the `run_code` block (see [Running code](#running-code)); older
+schemas reject it. Use `2.4.0` for new lessons.
 It describes the closed object shapes at every nesting level, required fields,
 JSON value types, tagged-union alternatives, the minimum two quiz choices, and
 the minimum value of one-based line numbers. Unknown fields are rejected both at
@@ -88,6 +90,8 @@ therefore enforced only by `learnc check` and `learnc build`. These include:
 - inclusive range ordering (`end >= start`) and ranges fitting resolved content;
 - highlighted ranges remaining inside the displayed file fragment, with no
   overlap between different colors;
+- a run block giving exactly one of `source` and `of`, `of` naming a code
+  block, a runnable language, and an `argv` that contains `{file}`;
 - unique and non-empty Git file selections and range/change intersection;
 - path ownership, file existence and UTF-8 decoding;
 - Git revision resolution, owning-repository boundaries, ignored-file rules,
@@ -143,8 +147,8 @@ threshold. Unknown config keys are errors. Config files are not discovered
 automatically.
 
 The complete, repository-independent
-[`inline-lesson.json`](../examples/inline-lesson.json) demonstrates all four
-block types and can be checked directly:
+[`inline-lesson.json`](../examples/inline-lesson.json) demonstrates the
+Markdown, code, diff, and multiple-choice blocks and can be checked directly:
 
 ```console
 learnc check examples/inline-lesson.json
@@ -478,6 +482,99 @@ Hints are public. The correct generated choice ID and explanation are stored in
 the artifact's server-owned answer table. An incorrect attempt does not reveal
 them; a correct attempt or explicit reveal does.
 
+## Running code
+
+A `run_code` block (source schema `2.4.0`) is code the learner can run during
+the lesson, with the output shown in place. This version of `learn` does not
+run anything yet: a run block shows its code (or a pointer to the block it
+runs) and its `expected_output`, the output frozen when the lesson was built.
+A later version will run the frozen code only when the learner starts
+`learn serve` with `--allow-run`, so author every run block to be useful
+without a run, which means giving it an `expected_output`.
+
+```json
+{
+  "type": "run_code",
+  "id": "demo",
+  "language": "python",
+  "caption": "Optional Markdown.",
+  "source": { "kind": "inline", "content": "print(1 + 1)\n" },
+  "timeout_secs": 10,
+  "expected_output": { "kind": "inline", "content": "2\n" }
+}
+```
+
+**The code.** Give exactly one of:
+
+- `source`: the code's own source, with the same `inline`, `file`, and
+  `git_blob` shapes (and `lines` rules) as a code block. The block shows it
+  with syntax highlighting. Highlights are not supported.
+- `of`: the ID of a code block, to run the code that block shows. The run block
+  then shows no code of its own, only "Runs `<block-id>`" as a link that
+  previews and jumps to that block. `of` forbids `source` and `language`; the
+  code and language come from the referenced block (a later block is fine).
+  Use it to explain code first and run it afterwards without showing it twice.
+
+**The language** is resolved like a code block's: the explicit `language`,
+else the extension of a file or Git-blob path, else plain text. `mermaid` is
+not runnable.
+
+**The command.** Without `argv`, the language must be in this table, and
+`learnc check` fails with `source.run_code.no_runner` otherwise:
+
+| Language | Command |
+| --- | --- |
+| `python` | `python3 {file}` |
+| `javascript` | `node {file}` |
+| `shell` | `sh {file}` |
+
+`argv` replaces the table for any language: a nonempty list of nonblank
+strings in which `{file}` (at least once, possibly inside an argument such as
+`--input={file}`) stands for the scratch file the code is written to. The
+command is spawned directly, with no shell unless `argv` is itself a shell. The
+compiler freezes the final command and the scratch file name (`main` plus the
+language's extension, such as `main.py`; `main.txt` for an unrecognized
+language) in the artifact, so `learn` has no language logic of its own.
+
+```json
+{
+  "type": "run_code",
+  "id": "ruby-demo",
+  "language": "ruby",
+  "argv": ["ruby", "{file}"],
+  "source": { "kind": "inline", "content": "puts 6 * 7\n" },
+  "expected_output": { "kind": "inline", "content": "42\n" }
+}
+```
+
+**Limits and output.** `timeout_secs` is an integer from 1 to 60 and defaults
+to 10. `expected_output` is an `inline` or `file` source of literal text, shown
+verbatim (it is not Markdown) under a label saying it was frozen when the
+lesson was built. A file is read at build time like any other source. The
+optional `caption` is Markdown, like a code block's.
+
+A run block is an ordinary block in every other way: it folds, can be asked
+about, and can be the target of a whole-block link (`#demo`, but not a line
+range, because it is not a code block). A caption's links are checked like any
+other Markdown. Lint has no rules of its own for run blocks yet.
+
+| Diagnostic | Meaning |
+| --- | --- |
+| `source.run_code.source_and_of` | Both `source` and `of` are present. |
+| `source.run_code.no_source` | Neither `source` nor `of` is present. |
+| `source.run_code.of_with_language` | `language` was given with `of`. |
+| `source.run_code.unknown_block` | `of` names no block. |
+| `source.run_code.of_not_code` | `of` names a block that is not a code block. |
+| `source.run_code.not_runnable` | The language is `mermaid`. |
+| `source.run_code.no_runner` | No `argv`, and the language is not in the table. |
+| `source.run_code.invalid_argv` | `argv` is empty, has a blank entry, or has no `{file}`. |
+| `source.run_code.invalid_timeout` | `timeout_secs` is outside 1 to 60. |
+
+Not part of this feature: editing code in the browser, input on stdin,
+streamed output, saved runs, running the real project or its dependencies, and
+`learnverify` checks of run blocks. The code that runs is always the frozen
+copy in the artifact, never the worktree.
+
 ## Filesystem root, repositories, and freezing
 
 Every authored path is relative to one filesystem root. The root defaults to
@@ -538,8 +635,8 @@ hover or focus, trimmed to the linked lines, and clicking jumps to the block
 
 `learnc check` rejects a link to an unknown block
 (`source.reference.unknown_block`), a malformed or out-of-range line range
-(`source.reference.invalid_lines`), and a range on a Markdown or question
-block (`source.reference.lines_on_non_code`). Lint then reports previews
+(`source.reference.invalid_lines`), and a range on a Markdown, question,
+or run block (`source.reference.lines_on_non_code`). Lint then reports previews
 longer than 15 lines, links to the next or previous block, links to a later
 block, excerpts repeated far apart, and names formatted as code that no nearby
 block shows; `learnverify` asks whether each link's target shows what its text

@@ -3,6 +3,7 @@ use super::{
     model::{
         LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
         LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0, LessonSourceV2_3_0,
+        LessonSourceV2_4_0,
     },
 };
 
@@ -22,6 +23,7 @@ pub fn source_json_schema_for(version: SchemaVersion) -> serde_json::Value {
         SchemaVersion::V2_1_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_1_0)),
         SchemaVersion::V2_2_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_2_0)),
         SchemaVersion::V2_3_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_3_0)),
+        SchemaVersion::V2_4_0 => serde_json::to_value(schemars::schema_for!(LessonSourceV2_4_0)),
     }
     .expect("generated lesson source schema must serialize")
 }
@@ -48,9 +50,16 @@ mod tests {
     }
 
     #[test]
-    fn schema_names_all_four_block_types_and_current_version() {
+    fn schema_names_all_five_block_types_and_current_version() {
         let schema = source_json_schema().to_string();
-        for expected in ["markdown", "code", "diff", "multiple_choice", "2.2.0"] {
+        for expected in [
+            "markdown",
+            "code",
+            "diff",
+            "multiple_choice",
+            "run_code",
+            "2.4.0",
+        ] {
             assert!(schema.contains(expected), "schema omitted {expected}");
         }
     }
@@ -64,6 +73,7 @@ mod tests {
         let v2_0 = source_json_schema_for(SchemaVersion::V2_0_0);
         let v2_1 = source_json_schema_for(SchemaVersion::V2_1_0);
         let v2_2 = source_json_schema_for(SchemaVersion::V2_2_0);
+        let v2_3 = source_json_schema_for(SchemaVersion::V2_3_0);
         let v1_0_code = variant(&v1_0, "BlockV1_0_0", "code");
         let v1_1_code = variant(&v1_1, "BlockV1_1_0", "code");
         let v1_2_code = variant(&v1_2, "BlockV1_2_0", "code");
@@ -140,6 +150,32 @@ mod tests {
             v2_2["properties"]["schema_version"]["$ref"],
             "#/$defs/SchemaVersionV2_2_0"
         );
+        // Only the current schema has the run_code block.
+        for older in [&v2_2, &v2_3] {
+            let kinds = definition(older, "Block")["oneOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|block| block["properties"]["type"]["const"].clone())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                kinds,
+                ["markdown", "code", "diff", "multiple_choice"],
+                "the 2.2.0 and 2.3.0 block unions stay as they were"
+            );
+        }
+        let current = source_json_schema_for(SchemaVersion::V2_4_0);
+        assert!(
+            definition(&current, "Block")["oneOf"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|block| block["properties"]["type"]["const"] == "run_code")
+        );
+        assert_eq!(
+            current["properties"]["schema_version"]["$ref"],
+            "#/$defs/SchemaVersionV2_4_0"
+        );
     }
 
     #[test]
@@ -149,6 +185,7 @@ mod tests {
             "Block",
             "MarkdownSource",
             "CodeSource",
+            "OutputSource",
             "DiffSource",
             "GitDiffTarget",
         ] {
@@ -199,6 +236,17 @@ mod tests {
                 .iter()
                 .any(|field| field == "language")
         );
+
+        let run = variant(&schema, "Block", "run_code");
+        assert_eq!(run["properties"]["argv"]["minItems"], 1);
+        assert_eq!(run["properties"]["argv"]["items"]["minLength"], 1);
+        assert_eq!(run["properties"]["argv"]["items"]["pattern"], r"\S");
+        assert_eq!(run["properties"]["timeout_secs"]["minimum"], 1);
+        assert_eq!(run["properties"]["timeout_secs"]["maximum"], 60);
+        assert_eq!(run["required"], serde_json::json!(["type", "id"]));
+        for field in ["highlights", "first_line"] {
+            assert!(run["properties"].get(field).is_none(), "{field}");
+        }
 
         let question = variant(&schema, "Block", "multiple_choice");
         assert_eq!(question["properties"]["choices"]["minItems"], 2);

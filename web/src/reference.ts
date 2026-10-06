@@ -12,6 +12,7 @@ const KIND_LABELS: Record<LessonNode["type"], string> = {
   code: "code",
   diff: "diff",
   multiple_choice: "question",
+  run_code: "runnable code",
 };
 
 function span(start: number, end: number): string {
@@ -20,8 +21,14 @@ function span(start: number, end: number): string {
 
 function shown(node: LessonNode): string | null {
   const reference = node.reference;
-  if (node.type === "code" && reference && reference.kind !== "inline" && reference.kind !== "git_diff") {
-    if (node.first_line === undefined) return reference.path;
+  if (
+    (node.type === "code" || node.type === "run_code") &&
+    reference &&
+    reference.kind !== "inline" &&
+    reference.kind !== "git_diff"
+  ) {
+    // A run block of `of` has no code of its own, so it names only the file.
+    if (node.first_line === undefined || node.content === undefined) return reference.path;
     const count = node.content.split("\n").length - (node.content.endsWith("\n") ? 1 : 0);
     return `${reference.path}, ${span(node.first_line, node.first_line + Math.max(count, 1) - 1)}`;
   }

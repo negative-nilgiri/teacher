@@ -5,6 +5,7 @@ import type { LessonNode } from "../types";
 import { CodeBlock } from "./CodeBlock";
 import { DiffBlock } from "./DiffBlock";
 import { Markdown } from "./Markdown";
+import { RunCodeBlock } from "./RunCodeBlock";
 
 interface ReferenceLinkProps {
   /** The destination without `#`, such as `queue-def:12-18`. */
@@ -125,6 +126,9 @@ export function TargetPreview({
       break;
     case "multiple_choice":
       preview = <Markdown>{node.prompt}</Markdown>;
+      break;
+    case "run_code":
+      preview = <RunCodeBlock node={node} />;
       break;
   }
   return <LinkContext.Provider value={{ ...context, inPreview: true }}>{preview}</LinkContext.Provider>;

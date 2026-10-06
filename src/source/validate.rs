@@ -4,12 +4,15 @@ use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
 
+use crate::language::{Language, RUN_FILE_PLACEHOLDER};
+
 use super::{
     Block, CodeHighlight, CodeSource, DiffSource, GitDiffTarget, GitRevision, LessonSource,
-    LineRange, MarkdownSource, RepoPath, SourceId, SymbolTable,
+    LineRange, MarkdownSource, OutputSource, RepoPath, RunCodeBlock, SourceId, SymbolTable,
     model::{
         LessonSourceV1_0_0, LessonSourceV1_1_0, LessonSourceV1_2_0, LessonSourceV1_3_0,
         LessonSourceV2_0_0, LessonSourceV2_1_0, LessonSourceV2_2_0, LessonSourceV2_3_0,
+        LessonSourceV2_4_0,
     },
 };
 
@@ -63,6 +66,7 @@ pub fn parse_and_validate(input: &str) -> Result<ValidatedLesson, Vec<Diagnostic
         Some("2.1.0") => deserialize_source::<LessonSourceV2_1_0>(input).map(Into::into),
         Some("2.2.0") => deserialize_source::<LessonSourceV2_2_0>(input).map(Into::into),
         Some("2.3.0") => deserialize_source::<LessonSourceV2_3_0>(input).map(Into::into),
+        Some("2.4.0") => deserialize_source::<LessonSourceV2_4_0>(input).map(Into::into),
         _ => deserialize_source::<LessonSource>(input),
     }?;
     validate(source)
@@ -129,6 +133,12 @@ pub fn validate(source: LessonSource) -> Result<ValidatedLesson, Vec<Diagnostic>
         ));
     }
 
+    let blocks_by_id = source
+        .blocks
+        .iter()
+        .rev()
+        .map(|block| (block.id(), block))
+        .collect::<HashMap<_, _>>();
     let mut first_ids: HashMap<&SourceId, usize> = HashMap::new();
     for (index, block) in source.blocks.iter().enumerate() {
         let base = format!("/blocks/{index}");
@@ -204,6 +214,9 @@ pub fn validate(source: LessonSource) -> Result<ValidatedLesson, Vec<Diagnostic>
             }
             Block::MultipleChoice(block) => {
                 validate_multiple_choice(block, &base, &mut diagnostics)
+            }
+            Block::RunCode(block) => {
+                validate_run_code(block, &base, &blocks_by_id, &mut diagnostics)
             }
         }
     }
@@ -420,6 +433,198 @@ fn validate_diff(source: &DiffSource, base: &str, diagnostics: &mut DiagnosticBa
                 }
             }
         }
+    }
+}
+
+fn validate_run_code(
+    block: &RunCodeBlock,
+    base: &str,
+    blocks_by_id: &HashMap<&SourceId, &Block>,
+    diagnostics: &mut DiagnosticBag,
+) {
+    if let Some(language) = &block.language {
+        nonempty(
+            language,
+            &format!("{base}/language"),
+            "code language",
+            diagnostics,
+        );
+    }
+    if let Some(caption) = &block.caption {
+        nonempty(caption, &format!("{base}/caption"), "caption", diagnostics);
+    }
+
+    // The language the block runs, when its code is unambiguous, and the
+    // place to report it.
+    let (language, language_pointer) = match (&block.source, &block.of) {
+        (Some(_), Some(_)) => {
+            diagnostics.push(
+                Diagnostic::error(
+                    "source.run_code.source_and_of",
+                    format!("{base}/of"),
+                    "a run block takes its own `source` or the code of another block with `of`, not both",
+                )
+                .with_suggestion(
+                    "Remove `source` to run the code another block shows, or remove `of` to run this block's own code.",
+                ),
+            );
+            (None, base.to_owned())
+        }
+        (None, None) => {
+            diagnostics.push(
+                Diagnostic::error(
+                    "source.run_code.no_source",
+                    base,
+                    "a run block needs its own `source` or the ID of a code block in `of`",
+                )
+                .with_suggestion(
+                    "Add `source` (inline, file, or git_blob) or `of` naming a code block.",
+                ),
+            );
+            (None, base.to_owned())
+        }
+        (Some(source), None) => {
+            validate_code(source, &[], base, diagnostics);
+            let pointer = if block.language.is_some() {
+                format!("{base}/language")
+            } else {
+                format!("{base}/source")
+            };
+            (Some(source.language(block.language.as_deref())), pointer)
+        }
+        (None, Some(of)) => {
+            let pointer = format!("{base}/of");
+            if block.language.is_some() {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "source.run_code.of_with_language",
+                        format!("{base}/language"),
+                        "a run block with `of` runs the language of the code block it names",
+                    )
+                    .with_suggestion("Remove `language`."),
+                );
+            }
+            let language = match blocks_by_id.get(of) {
+                None => {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            "source.run_code.unknown_block",
+                            &pointer,
+                            format!("`of` names no block with ID `{of}`"),
+                        )
+                        .with_suggestion("Use the `id` of an existing code block."),
+                    );
+                    None
+                }
+                Some(Block::Code(code)) => Some(code.resolved_language()),
+                Some(_) => {
+                    diagnostics.push(
+                        Diagnostic::error(
+                            "source.run_code.of_not_code",
+                            &pointer,
+                            format!("`of` names block `{of}`, which is not a code block"),
+                        )
+                        .with_suggestion(
+                            "Point `of` at a code block, or give this block its own `source`.",
+                        ),
+                    );
+                    None
+                }
+            };
+            (language, pointer)
+        }
+    };
+    if let Some(language) = language {
+        if language == Language::Mermaid {
+            diagnostics.push(
+                Diagnostic::error(
+                    "source.run_code.not_runnable",
+                    &language_pointer,
+                    "mermaid diagrams cannot be run",
+                )
+                .with_suggestion("Use a code block for the diagram."),
+            );
+        } else if block.argv.is_none() && language.default_runner().is_none() {
+            diagnostics.push(
+                Diagnostic::error(
+                    "source.run_code.no_runner",
+                    &language_pointer,
+                    format!(
+                        "there is no default runner for language `{language}`; only python, javascript, and shell have one"
+                    ),
+                )
+                .with_suggestion(format!(
+                    "Add `argv`, such as [\"ruby\", \"{RUN_FILE_PLACEHOLDER}\"], where {RUN_FILE_PLACEHOLDER} stands for the code's scratch file."
+                )),
+            );
+        }
+    }
+
+    if let Some(argv) = &block.argv {
+        let pointer = format!("{base}/argv");
+        if argv.is_empty() {
+            diagnostics.push(
+                Diagnostic::error(
+                    "source.run_code.invalid_argv",
+                    &pointer,
+                    "`argv` must not be empty",
+                )
+                .with_suggestion(format!(
+                    "List the program and its arguments, with {RUN_FILE_PLACEHOLDER} for the scratch file."
+                )),
+            );
+        }
+        for (index, argument) in argv.iter().enumerate() {
+            if argument.trim().is_empty() {
+                diagnostics.push(Diagnostic::error(
+                    "source.run_code.invalid_argv",
+                    format!("{pointer}/{index}"),
+                    "`argv` entries must not be empty or whitespace",
+                ));
+            }
+        }
+        if !argv.is_empty()
+            && !argv
+                .iter()
+                .any(|argument| argument.contains(RUN_FILE_PLACEHOLDER))
+        {
+            diagnostics.push(
+                Diagnostic::error(
+                    "source.run_code.invalid_argv",
+                    &pointer,
+                    format!("`argv` must contain {RUN_FILE_PLACEHOLDER}, the scratch file to run"),
+                )
+                .with_suggestion(format!(
+                    "Pass the file to the program, e.g. [\"python3\", \"{RUN_FILE_PLACEHOLDER}\"]."
+                )),
+            );
+        }
+    }
+
+    if let Some(timeout) = block.timeout_secs
+        && !(1..=60).contains(&timeout)
+    {
+        diagnostics.push(
+            Diagnostic::error(
+                "source.run_code.invalid_timeout",
+                format!("{base}/timeout_secs"),
+                format!("`timeout_secs` must be between 1 and 60, found {timeout}"),
+            )
+            .with_suggestion("Omit it for the default of 10 seconds."),
+        );
+    }
+
+    match &block.expected_output {
+        Some(OutputSource::Inline { content }) => nonempty(
+            content,
+            &format!("{base}/expected_output/content"),
+            "expected output",
+            diagnostics,
+        ),
+        Some(OutputSource::File { path }) => {
+            repo_path(path, &format!("{base}/expected_output/path"), diagnostics)
+        }
+        None => {}
     }
 }
 
@@ -1082,6 +1287,237 @@ mod tests {
         let diagnostics = parse_and_validate(&json).expect_err("trailing value is invalid");
         assert_eq!(diagnostics[0].code, "source.json.trailing_data");
         assert_eq!(diagnostics[0].pointer, "");
+    }
+
+    fn run_lesson(version: &str, blocks: &str) -> String {
+        format!(r#"{{"schema_version":"{version}","title":"Run","blocks":[{blocks}]}}"#)
+    }
+
+    const SHOWN_CODE: &str = r#"{"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"print(1)"}}"#;
+
+    fn run_codes(blocks: &str) -> Vec<(String, String)> {
+        parse_and_validate(&run_lesson("2.4.0", blocks))
+            .expect_err("run block is invalid")
+            .into_iter()
+            .map(|diagnostic| (diagnostic.code, diagnostic.pointer))
+            .collect()
+    }
+
+    #[test]
+    fn run_blocks_begin_in_source_2_4_and_older_schemas_reject_them() {
+        let block = r#"{"type":"run_code","id":"run","language":"python","source":{"kind":"inline","content":"print(1)"}}"#;
+        for version in ["2.0.0", "2.2.0", "2.3.0"] {
+            let diagnostics = parse_and_validate(&run_lesson(version, block))
+                .expect_err("older schemas are closed shapes");
+            assert_eq!(diagnostics[0].code, "source.deserialize", "{version}");
+            assert_eq!(diagnostics[0].pointer, "/blocks/0/type", "{version}");
+            assert!(
+                diagnostics[0]
+                    .message
+                    .contains("unknown variant `run_code`"),
+                "{version}: {}",
+                diagnostics[0].message
+            );
+        }
+        let lesson = parse_and_validate(&run_lesson("2.4.0", block)).expect("2.4.0 accepts it");
+        assert!(matches!(lesson.source().blocks[0], Block::RunCode(_)));
+        assert_eq!(
+            lesson.source().schema_version,
+            super::super::SchemaVersion::CURRENT
+        );
+    }
+
+    #[test]
+    fn run_blocks_accept_every_documented_shape() {
+        let blocks = [
+            SHOWN_CODE,
+            r#"{"type":"run_code","id":"of","of":"shown","caption":"Runs it.","timeout_secs":60,
+                "expected_output":{"kind":"inline","content":"1\n"}}"#,
+            r#"{"type":"run_code","id":"inline","language":"js","timeout_secs":1,
+                "source":{"kind":"inline","content":"console.log(1)"}}"#,
+            r#"{"type":"run_code","id":"inferred","source":{"kind":"file","path":"tool.sh","lines":{"start":1,"end":3}},
+                "expected_output":{"kind":"file","path":"tool.out"}}"#,
+            r#"{"type":"run_code","id":"blob","source":{"kind":"git_blob","revision":"HEAD","path":"tool.py"}}"#,
+            r#"{"type":"run_code","id":"argv","language":"rust","argv":["rustc","--out-dir=.","{file}"],
+                "source":{"kind":"inline","content":"fn main() {}"}}"#,
+            r#"{"type":"run_code","id":"argv-over-default","language":"python","argv":["python3","-u","{file}"],
+                "source":{"kind":"inline","content":"print(1)"}}"#,
+        ]
+        .join(",");
+        parse_and_validate(&run_lesson("2.4.0", &blocks)).expect("valid run blocks");
+    }
+
+    #[test]
+    fn run_blocks_need_exactly_one_of_source_and_of() {
+        assert_eq!(
+            run_codes(&format!(
+                r#"{SHOWN_CODE},{{"type":"run_code","id":"r","of":"shown",
+                    "source":{{"kind":"inline","content":"print(2)"}}}}"#
+            )),
+            [(
+                "source.run_code.source_and_of".into(),
+                "/blocks/1/of".into()
+            )]
+        );
+        assert_eq!(
+            run_codes(r#"{"type":"run_code","id":"r"}"#),
+            [("source.run_code.no_source".into(), "/blocks/0".into())]
+        );
+    }
+
+    #[test]
+    fn of_must_name_a_runnable_code_block_and_forbids_language() {
+        let run = |extra: &str| format!(r#"{{"type":"run_code","id":"r",{extra}}}"#);
+        assert_eq!(
+            run_codes(&run(r#""of":"nowhere""#)),
+            [(
+                "source.run_code.unknown_block".into(),
+                "/blocks/0/of".into()
+            )]
+        );
+        let markdown =
+            r#"{"type":"markdown","id":"text","source":{"kind":"inline","content":"Hi"}}"#;
+        assert_eq!(
+            run_codes(&format!("{markdown},{}", run(r#""of":"text""#))),
+            [("source.run_code.of_not_code".into(), "/blocks/1/of".into())]
+        );
+        assert_eq!(
+            run_codes(&format!(
+                "{SHOWN_CODE},{}",
+                run(r#""of":"shown","language":"python""#)
+            )),
+            [(
+                "source.run_code.of_with_language".into(),
+                "/blocks/1/language".into()
+            )]
+        );
+        // The language comes from the referenced block, so its problems are
+        // reported on `of`: a diagram is not runnable and Rust has no runner.
+        let diagram = r#"{"type":"code","id":"diagram","language":"mermaid","source":{"kind":"inline","content":"flowchart LR\n A --> B"}}"#;
+        assert_eq!(
+            run_codes(&format!("{diagram},{}", run(r#""of":"diagram""#))),
+            [("source.run_code.not_runnable".into(), "/blocks/1/of".into())]
+        );
+        let rust = r#"{"type":"code","id":"rust","source":{"kind":"file","path":"src/lib.rs"}}"#;
+        assert_eq!(
+            run_codes(&format!("{rust},{}", run(r#""of":"rust""#))),
+            [("source.run_code.no_runner".into(), "/blocks/1/of".into())]
+        );
+    }
+
+    #[test]
+    fn languages_without_a_default_runner_need_argv() {
+        let run = |extra: &str| {
+            format!(
+                r#"{{"type":"run_code","id":"r",{extra},"source":{{"kind":"inline","content":"x"}}}}"#
+            )
+        };
+        assert_eq!(
+            run_codes(&run(r#""language":"ruby""#)),
+            [(
+                "source.run_code.no_runner".into(),
+                "/blocks/0/language".into()
+            )]
+        );
+        assert_eq!(
+            run_codes(&run(r#""language":"mermaid","argv":["mmdc","{file}"]"#)),
+            [(
+                "source.run_code.not_runnable".into(),
+                "/blocks/0/language".into()
+            )]
+        );
+        // Inline code without a language is plain text, which has no runner.
+        let unspecified =
+            r#"{"type":"run_code","id":"r","source":{"kind":"inline","content":"x"}}"#;
+        assert_eq!(
+            run_codes(unspecified),
+            [(
+                "source.run_code.no_runner".into(),
+                "/blocks/0/source".into()
+            )]
+        );
+    }
+
+    #[test]
+    fn argv_must_be_a_nonblank_command_with_the_scratch_file() {
+        let run = |argv: &str| {
+            format!(
+                r#"{{"type":"run_code","id":"r","language":"python","argv":{argv},
+                    "source":{{"kind":"inline","content":"x"}}}}"#
+            )
+        };
+        for (argv, pointer) in [
+            ("[]", "/blocks/0/argv"),
+            (r#"["python3"]"#, "/blocks/0/argv"),
+            (r#"["python3","  ","{file}"]"#, "/blocks/0/argv/1"),
+        ] {
+            assert_eq!(
+                run_codes(&run(argv)),
+                [("source.run_code.invalid_argv".into(), pointer.into())],
+                "{argv}"
+            );
+        }
+    }
+
+    #[test]
+    fn timeouts_are_whole_seconds_from_one_to_sixty() {
+        let run = |timeout: &str| {
+            format!(
+                r#"{{"type":"run_code","id":"r","language":"python","timeout_secs":{timeout},
+                    "source":{{"kind":"inline","content":"x"}}}}"#
+            )
+        };
+        for timeout in ["0", "61", "4294967295"] {
+            assert_eq!(
+                run_codes(&run(timeout)),
+                [(
+                    "source.run_code.invalid_timeout".into(),
+                    "/blocks/0/timeout_secs".into()
+                )],
+                "{timeout}"
+            );
+        }
+        for timeout in ["-1", "1.5", "\"10\""] {
+            let diagnostics = parse_and_validate(&run_lesson("2.4.0", &run(timeout)))
+                .expect_err("not an unsigned integer");
+            assert_eq!(diagnostics[0].code, "source.deserialize", "{timeout}");
+        }
+    }
+
+    #[test]
+    fn run_block_sources_captions_and_outputs_are_checked_like_code_blocks() {
+        let invalid = r#"{"type":"run_code","id":"r","language":" ","caption":"\n",
+            "source":{"kind":"file","path":"../outside.py","lines":{"start":4,"end":2}},
+            "expected_output":{"kind":"file","path":"/abs.out"}},
+            {"type":"run_code","id":"s","language":"python","source":{"kind":"inline","content":" "},
+             "expected_output":{"kind":"inline","content":"  "}}"#;
+        let codes = run_codes(invalid);
+        for expected in [
+            ("source.content.empty", "/blocks/0/language"),
+            ("source.content.empty", "/blocks/0/caption"),
+            ("source.path.invalid", "/blocks/0/source/path"),
+            ("source.lines.reversed", "/blocks/0/source/lines"),
+            ("source.path.invalid", "/blocks/0/expected_output/path"),
+            ("source.content.empty", "/blocks/1/source/content"),
+            ("source.content.empty", "/blocks/1/expected_output/content"),
+        ] {
+            assert!(
+                codes.contains(&(expected.0.to_owned(), expected.1.to_owned())),
+                "missing {expected:?} in {codes:?}"
+            );
+        }
+        // Highlights are not part of a run block.
+        let diagnostics = parse_and_validate(&run_lesson(
+            "2.4.0",
+            r#"{"type":"run_code","id":"r","highlights":[{"lines":[{"start":1,"end":1}]}],
+                "source":{"kind":"file","path":"a.py"}}"#,
+        ))
+        .expect_err("highlights are unsupported");
+        assert!(
+            diagnostics[0]
+                .message
+                .contains("unknown field `highlights`")
+        );
     }
 
     #[test]
