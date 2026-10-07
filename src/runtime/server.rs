@@ -1,23 +1,27 @@
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::stream;
 use rust_embed::RustEmbed;
 use serde::Serialize;
+use tokio::fs::File;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::net::TcpListener;
 
 use crate::source::NodeId;
 
+use super::media::{self, ByteRange, MediaFile};
 use super::model::{
-    ArtifactLoadError, QuestionMutationResponse, RunResponse, RuntimeLesson, StateResponse,
-    SubmitRequest, load_artifact, project_runtime_lesson,
+    ArtifactLoadError, PublicLessonNodeContent, QuestionMutationResponse, RunResponse,
+    RuntimeLesson, StateResponse, SubmitRequest, load_artifact, project_runtime_lesson,
 };
 use super::runner::{self, RunResult};
 use super::session::{Session, SessionError};
@@ -26,6 +30,9 @@ use super::session::{Session, SessionError};
 /// cross-origin browser request need a CORS preflight, which this server never
 /// answers.
 const RUN_TOKEN_HEADER: &str = "x-learn-token";
+
+/// How much of a media file is read at a time while it is sent.
+const FILE_CHUNK: u64 = 64 * 1024;
 
 #[derive(Clone)]
 struct AppState {
@@ -52,11 +59,30 @@ pub struct BoundServer {
     listener: TcpListener,
     app: Router,
     address: SocketAddr,
+    missing_media: Vec<MissingMedia>,
+}
+
+/// A media file a lesson refers to that was not in the sidecar directory when
+/// the server started.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MissingMedia {
+    /// The source ID of the block.
+    pub block: String,
+    pub file: String,
+    /// The absolute sidecar directory that was searched.
+    pub sidecar_dir: PathBuf,
 }
 
 impl BoundServer {
     pub fn address(&self) -> SocketAddr {
         self.address
+    }
+
+    /// The media files that were absent at startup, for the launcher to warn
+    /// about. A missing file is normal: the block shows its fallback text, and
+    /// the file may still be produced while the server runs.
+    pub fn missing_media(&self) -> &[MissingMedia] {
+        &self.missing_media
     }
 
     pub fn url(&self) -> String {
@@ -76,6 +102,9 @@ impl BoundServer {
 /// Load one artifact, create one shared in-memory session, and reserve a random
 /// IPv4 loopback port. The returned server does not listen beyond loopback.
 ///
+/// The sidecar directory for media files is derived from `artifact_path` once,
+/// here, as an absolute path.
+///
 /// With `allow_run`, the learner can run the lesson's `run_code` blocks, which
 /// need the random token the state response then carries. Without it no run is
 /// possible.
@@ -83,10 +112,14 @@ pub async fn bind(
     artifact_path: impl AsRef<Path>,
     allow_run: bool,
 ) -> Result<BoundServer, RuntimeError> {
-    let display_path = artifact_path.as_ref().to_string_lossy().into_owned();
+    let artifact_path = artifact_path.as_ref();
+    let display_path = artifact_path.to_string_lossy().into_owned();
     let artifact = load_artifact(artifact_path).map_err(RuntimeError::Artifact)?;
     let mut lesson = project_runtime_lesson(&artifact);
     lesson.public.artifact_path = Some(display_path);
+    let sidecar_dir = media::sidecar_dir(artifact_path);
+    let missing_media = missing_media(&lesson, &sidecar_dir);
+    lesson.sidecar_dir = Some(sidecar_dir);
     let run_token = allow_run.then(new_run_token).transpose()?;
     let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .await
@@ -97,7 +130,28 @@ pub async fn bind(
         listener,
         app,
         address,
+        missing_media,
     })
+}
+
+fn missing_media(lesson: &RuntimeLesson, sidecar_dir: &Path) -> Vec<MissingMedia> {
+    lesson
+        .public
+        .nodes
+        .iter()
+        .filter_map(|node| match &node.content {
+            PublicLessonNodeContent::ExternalArtifact { file, .. }
+                if media::find(sidecar_dir, file).is_none() =>
+            {
+                Some(MissingMedia {
+                    block: node.source_id.clone(),
+                    file: file.clone(),
+                    sidecar_dir: sidecar_dir.to_owned(),
+                })
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 /// 128 random bits as lowercase hex.
@@ -113,6 +167,7 @@ fn router(state: AppState) -> Router {
         .route("/api/v1/questions/{node_id}/submit", post(submit))
         .route("/api/v1/questions/{node_id}/reveal", post(reveal))
         .route("/api/v1/runs/{node_id}", post(run_block))
+        .route("/api/v1/artifacts/{node_id}/file", get(artifact_file))
         .fallback(serve_asset)
         .with_state(state)
 }
@@ -120,7 +175,7 @@ fn router(state: AppState) -> Router {
 async fn get_state(State(state): State<AppState>) -> Result<Json<StateResponse>, ApiError> {
     let session = state.session.lock().map_err(|_| ApiError::internal())?;
     Ok(Json(StateResponse {
-        lesson: state.lesson.public.clone(),
+        lesson: state.lesson.public_now(),
         progress: session.progress(),
         run: session.run_status(),
         runs: session.run_results(),
@@ -189,6 +244,119 @@ async fn run_block(
     .await
     .map_err(|_| ApiError::internal())?;
     Ok(Json(RunResponse { run }))
+}
+
+/// The media file of an `external_artifact` block, whole or one byte range of
+/// it. Only the file name frozen in the artifact is ever looked up.
+async fn artifact_file(
+    State(state): State<AppState>,
+    AxumPath(node_id): AxumPath<u32>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let node_id = NodeId::new(node_id);
+    let file = external_file(&state.lesson, node_id)?;
+    let missing = || {
+        ApiError::not_found(
+            "file_missing",
+            format!("The file {file} of node {node_id} is not in the sidecar directory"),
+        )
+    };
+    let MediaFile { path, len, .. } = state
+        .lesson
+        .sidecar_dir
+        .as_deref()
+        .and_then(|dir| media::find(dir, file))
+        .ok_or_else(missing)?;
+
+    let range = headers
+        .get(header::RANGE)
+        .and_then(|value| value.to_str().ok());
+    let (status, start, end) = match media::parse_range(range, len) {
+        ByteRange::Whole => (StatusCode::OK, 0, len.saturating_sub(1)),
+        ByteRange::Slice { start, end } => (StatusCode::PARTIAL_CONTENT, start, end),
+        ByteRange::Unsatisfiable => {
+            let mut response = ApiError {
+                status: StatusCode::RANGE_NOT_SATISFIABLE,
+                code: "range_not_satisfiable",
+                message: format!("The file has {len} bytes"),
+            }
+            .into_response();
+            response
+                .headers_mut()
+                .insert(header::CONTENT_RANGE, content_range(format!("*/{len}")));
+            return Ok(response);
+        }
+    };
+    let length = if len == 0 { 0 } else { end - start + 1 };
+    let body = open_slice(&path, start, length)
+        .await
+        .map_err(|_| missing())?;
+
+    let mut response = Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, media::content_type(file))
+        .header(header::CONTENT_LENGTH, length)
+        .header(header::ACCEPT_RANGES, "bytes")
+        // The file may be replaced while `learn` runs; always ask again.
+        .header(header::CACHE_CONTROL, "no-cache")
+        // A file opened directly, such as an SVG, must not run script with the
+        // authority of the lesson page.
+        .header(header::CONTENT_SECURITY_POLICY, "sandbox")
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff");
+    if status == StatusCode::PARTIAL_CONTENT {
+        response = response.header(
+            header::CONTENT_RANGE,
+            content_range(format!("{start}-{end}/{len}")),
+        );
+    }
+    Ok(response.body(body).expect("file response is valid"))
+}
+
+/// The file name of an `external_artifact` block.
+fn external_file(lesson: &RuntimeLesson, node_id: NodeId) -> Result<&str, ApiError> {
+    let node = lesson
+        .public
+        .nodes
+        .iter()
+        .find(|node| node.node_id == node_id);
+    match node.map(|node| &node.content) {
+        Some(PublicLessonNodeContent::ExternalArtifact { file, .. }) => Ok(file),
+        Some(_) => Err(ApiError::not_found(
+            "not_external_artifact",
+            format!("Node {node_id} is not an external_artifact block"),
+        )),
+        None => Err(ApiError::not_found(
+            "unknown_node",
+            format!("Node {node_id} does not exist"),
+        )),
+    }
+}
+
+fn content_range(range: String) -> header::HeaderValue {
+    header::HeaderValue::from_str(&format!("bytes {range}")).expect("a content range is ASCII")
+}
+
+/// Stream `length` bytes of the file from `start`, so a large video is never
+/// held in memory.
+async fn open_slice(path: &Path, start: u64, length: u64) -> std::io::Result<Body> {
+    let mut file = File::open(path).await?;
+    file.seek(std::io::SeekFrom::Start(start)).await?;
+    let chunks = stream::unfold((file, length), |(mut file, remaining)| async move {
+        if remaining == 0 {
+            return None;
+        }
+        let mut chunk = vec![0; remaining.min(FILE_CHUNK) as usize];
+        match file.read(&mut chunk).await {
+            // The file shrank after it was measured; the body ends short.
+            Ok(0) => None,
+            Ok(read) => {
+                chunk.truncate(read);
+                Some((Ok(Bytes::from(chunk)), (file, remaining - read as u64)))
+            }
+            Err(error) => Some((Err(error), (file, 0))),
+        }
+    });
+    Ok(Body::from_stream(chunks))
 }
 
 /// A page that reached this server through another name, such as a rebound DNS
@@ -416,7 +584,7 @@ mod tests {
     use crate::artifact::ChoiceId;
     use crate::runtime::model::{
         project_runtime_lesson,
-        tests::{quiz_artifact, run_artifact},
+        tests::{media_artifact, quiz_artifact, run_artifact},
     };
 
     fn state() -> AppState {
@@ -645,6 +813,235 @@ mod tests {
             (error.status, error.code),
             (StatusCode::CONFLICT, "run_in_progress")
         );
+    }
+
+    /// A directory that is removed again when it goes out of scope.
+    struct Sidecar(PathBuf);
+
+    impl Sidecar {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "agent-teacher-server-{label}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn state(&self) -> AppState {
+            let mut lesson = project_runtime_lesson(&media_artifact());
+            lesson.sidecar_dir = Some(self.0.clone());
+            AppState::new(lesson, None, PORT)
+        }
+    }
+
+    impl Drop for Sidecar {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn get_file(
+        state: &AppState,
+        node: u32,
+        range: Option<&str>,
+    ) -> Result<Response, ApiError> {
+        let mut headers = HeaderMap::new();
+        if let Some(range) = range {
+            headers.insert(header::RANGE, range.parse().unwrap());
+        }
+        artifact_file(State(state.clone()), AxumPath(node), headers).await
+    }
+
+    async fn body_bytes(response: Response) -> Vec<u8> {
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec()
+    }
+
+    fn header_of(response: &Response, name: header::HeaderName) -> &str {
+        response.headers()[name].to_str().unwrap()
+    }
+
+    #[tokio::test]
+    async fn the_file_of_a_media_block_is_served_whole_with_its_headers() {
+        let sidecar = Sidecar::new("whole");
+        let state = sidecar.state();
+        std::fs::write(sidecar.0.join("demo.mp4"), b"0123456789").unwrap();
+
+        let response = get_file(&state, 1, None).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(header_of(&response, header::CONTENT_TYPE), "video/mp4");
+        assert_eq!(header_of(&response, header::CONTENT_LENGTH), "10");
+        assert_eq!(header_of(&response, header::ACCEPT_RANGES), "bytes");
+        assert_eq!(header_of(&response, header::CACHE_CONTROL), "no-cache");
+        assert!(response.headers().get(header::CONTENT_RANGE).is_none());
+        assert_eq!(body_bytes(response).await, b"0123456789");
+
+        // A header that is not one valid range, and several ranges, give it all.
+        for range in ["bytes=2-1", "bytes=0-1,4-5", "pages=1-2"] {
+            let response = get_file(&state, 1, Some(range)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{range}");
+            assert_eq!(body_bytes(response).await, b"0123456789");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_byte_range_gets_that_slice_and_its_content_range() {
+        let sidecar = Sidecar::new("range");
+        let state = sidecar.state();
+        std::fs::write(sidecar.0.join("demo.mp4"), b"0123456789").unwrap();
+
+        for (range, slice, content_range) in [
+            ("bytes=2-4", "234", "bytes 2-4/10"),
+            ("bytes=7-", "789", "bytes 7-9/10"),
+            ("bytes=-3", "789", "bytes 7-9/10"),
+            ("bytes=8-99", "89", "bytes 8-9/10"),
+            ("bytes=0-0", "0", "bytes 0-0/10"),
+        ] {
+            let response = get_file(&state, 1, Some(range)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT, "{range}");
+            assert_eq!(header_of(&response, header::CONTENT_RANGE), content_range);
+            assert_eq!(
+                header_of(&response, header::CONTENT_LENGTH),
+                slice.len().to_string()
+            );
+            assert_eq!(header_of(&response, header::ACCEPT_RANGES), "bytes");
+            assert_eq!(body_bytes(response).await, slice.as_bytes(), "{range}");
+        }
+
+        for range in ["bytes=10-", "bytes=10-20", "bytes=-0"] {
+            let response = get_file(&state, 1, Some(range)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+            assert_eq!(header_of(&response, header::CONTENT_RANGE), "bytes */10");
+            let body: serde_json::Value =
+                serde_json::from_slice(&body_bytes(response).await).unwrap();
+            assert_eq!(body["code"], "range_not_satisfiable");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_file_larger_than_one_chunk_is_streamed_intact() {
+        let sidecar = Sidecar::new("large");
+        let state = sidecar.state();
+        let bytes: Vec<u8> = (0..(FILE_CHUNK * 2 + 123))
+            .map(|n| (n % 251) as u8)
+            .collect();
+        std::fs::write(sidecar.0.join("diagram.png"), &bytes).unwrap();
+
+        let response = get_file(&state, 2, None).await.unwrap();
+        assert_eq!(header_of(&response, header::CONTENT_TYPE), "image/png");
+        assert_eq!(body_bytes(response).await, bytes);
+        let response = get_file(&state, 2, Some("bytes=65000-131100"))
+            .await
+            .unwrap();
+        assert_eq!(body_bytes(response).await, bytes[65000..=131100]);
+    }
+
+    #[tokio::test]
+    async fn an_empty_file_is_served_empty_and_has_no_satisfiable_range() {
+        let sidecar = Sidecar::new("empty");
+        let state = sidecar.state();
+        std::fs::write(sidecar.0.join("diagram.png"), b"").unwrap();
+
+        let response = get_file(&state, 2, None).await.unwrap();
+        assert_eq!(header_of(&response, header::CONTENT_LENGTH), "0");
+        assert!(body_bytes(response).await.is_empty());
+        let response = get_file(&state, 2, Some("bytes=0-")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(header_of(&response, header::CONTENT_RANGE), "bytes */0");
+    }
+
+    #[tokio::test]
+    async fn file_requests_for_other_nodes_and_absent_files_have_typed_errors() {
+        let sidecar = Sidecar::new("errors");
+        let state = sidecar.state();
+        for (node, code) in [
+            (0, "not_external_artifact"),
+            (99, "unknown_node"),
+            (1, "file_missing"),
+            (2, "file_missing"),
+        ] {
+            let error = get_file(&state, node, None).await.unwrap_err();
+            assert_eq!((error.status, error.code), (StatusCode::NOT_FOUND, code));
+        }
+
+        // Without a sidecar directory at all.
+        let no_sidecar = AppState::new(project_runtime_lesson(&media_artifact()), None, PORT);
+        let error = get_file(&no_sidecar, 1, None).await.unwrap_err();
+        assert_eq!(error.code, "file_missing");
+
+        // A directory with the file's name is not a file, even next to a range.
+        std::fs::create_dir(sidecar.0.join("demo.mp4")).unwrap();
+        let error = get_file(&state, 1, Some("bytes=0-1")).await.unwrap_err();
+        assert_eq!(error.code, "file_missing");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_to_a_file_outside_the_directory_is_not_served() {
+        let sidecar = Sidecar::new("link");
+        let state = sidecar.state();
+        let outside = sidecar.0.join("outside.png");
+        std::fs::write(&outside, b"outside").unwrap();
+        let inner = sidecar.0.join("inner.assets");
+        std::fs::create_dir(&inner).unwrap();
+        std::os::unix::fs::symlink(&outside, inner.join("diagram.png")).unwrap();
+        let mut lesson = project_runtime_lesson(&media_artifact());
+        lesson.sidecar_dir = Some(inner);
+        let state = AppState {
+            lesson: Arc::new(lesson),
+            ..state
+        };
+
+        let error = get_file(&state, 2, None).await.unwrap_err();
+        assert_eq!(error.code, "file_missing");
+    }
+
+    #[tokio::test]
+    async fn state_says_per_request_which_files_are_available() {
+        let sidecar = Sidecar::new("state");
+        let state = sidecar.state();
+        let media = |response: StateResponse| {
+            let value = serde_json::to_value(response).unwrap();
+            (
+                value["lesson"]["nodes"][1].clone(),
+                value["lesson"]["nodes"][2].clone(),
+            )
+        };
+
+        let Json(before) = get_state(State(state.clone())).await.unwrap();
+        let (video, image) = media(before);
+        assert_eq!(
+            (&video["available"], &image["available"]),
+            (&false.into(), &false.into())
+        );
+        assert!(video.get("version").is_none());
+
+        std::fs::write(sidecar.0.join("diagram.png"), b"png").unwrap();
+        let Json(after) = get_state(State(state.clone())).await.unwrap();
+        let (video, image) = media(after);
+        assert_eq!(video["available"], false);
+        assert_eq!(image["available"], true);
+        assert!(image["version"].as_str().unwrap().starts_with("3-"));
+    }
+
+    #[tokio::test]
+    async fn the_startup_check_lists_only_files_that_are_absent() {
+        let sidecar = Sidecar::new("startup");
+        std::fs::write(sidecar.0.join("demo.mp4"), b"video").unwrap();
+        let lesson = project_runtime_lesson(&media_artifact());
+        assert_eq!(
+            missing_media(&lesson, &sidecar.0),
+            [MissingMedia {
+                block: "media-2".into(),
+                file: "diagram.png".into(),
+                sidecar_dir: sidecar.0.clone(),
+            }]
+        );
+        assert_eq!(missing_media(&lesson, &sidecar.0.join("none")).len(), 2);
     }
 
     async fn body_text(response: Response) -> String {

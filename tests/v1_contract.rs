@@ -1334,7 +1334,7 @@ fn run_blocks_run_only_with_allow_run_a_token_and_a_loopback_host() {
 }
 
 #[test]
-fn external_artifact_blocks_compile_without_inputs_and_serve_only_their_fallback() {
+fn external_artifact_blocks_compile_without_inputs_and_serve_their_fallback_without_a_sidecar() {
     let root = TempDir::new("external-artifact");
     let lesson = root.path().join("lesson.json");
     let source = serde_json::json!({
@@ -1411,9 +1411,9 @@ fn external_artifact_blocks_compile_without_inputs_and_serve_only_their_fallback
     // Like a quiz, the block has no source resource to refer to.
     assert!(node.get("reference").is_none());
     assert_eq!(state["lesson"]["links"]["intro"]["target"], 0);
-    // Nothing in the data offers the file: only text and the bare name.
-    let public = serde_json::to_string(&state).unwrap();
-    assert!(!public.contains("/media") && !public.contains("sidecar"));
+    // The sidecar directory holds nothing, so the block says its file is absent.
+    assert_eq!(node["available"], false);
+    assert!(node.get("version").is_none());
     server.stop();
 
     // Older schemas keep rejecting the new block.
@@ -1426,6 +1426,365 @@ fn external_artifact_blocks_compile_without_inputs_and_serve_only_their_fallback
     assert!(!output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["diagnostics"][0]["code"], "source.deserialize");
+}
+
+/// A valid 1x1 PNG.
+const TINY_PNG: [u8; 69] = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+    0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+    0x00, 0x03, 0x01, 0x01, 0x00, 0xc9, 0xfe, 0x92, 0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+    0x44, 0xae, 0x42, 0x60, 0x82,
+];
+
+fn header_value(response: &Http, name: &str) -> Option<String> {
+    response.headers.lines().skip(1).find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case(name)
+            .then(|| value.trim().to_owned())
+    })
+}
+
+#[test]
+fn sidecar_media_files_are_served_with_ranges_and_looked_up_on_every_request() {
+    let root = TempDir::new("sidecar");
+    let lesson = root.path().join("lesson.json");
+    let media = |id: &str, kind: &str, file: &str| {
+        serde_json::json!({
+            "type": "external_artifact",
+            "id": id,
+            "kind": kind,
+            "file": file,
+            "alt": format!("Alt of {id}"),
+            "fallback": format!("Fallback of {id}")
+        })
+    };
+    let source = serde_json::json!({
+        "schema_version": "2.5.0",
+        "title": "Queues in motion",
+        "blocks": [
+            {
+                "type": "markdown",
+                "id": "intro",
+                "source": {"kind": "inline", "content": "A queue releases its oldest item first."}
+            },
+            media("picture", "image", "picture.PNG"),
+            media("bell", "audio", "bell.mp3"),
+            media("demo", "video", "demo.mp4"),
+            media("later", "video", "later.webm"),
+            media("folder", "image", "folder.png"),
+            media("escape", "image", "escape.png"),
+            media("figure", "image", "figure.svg"),
+        ]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+    output_success(Command::new(learnc()).arg("build").arg(&lesson));
+
+    // `lesson.learn` has its files in `lesson.assets`, a file at a time.
+    let sidecar = root.path().join("lesson.assets");
+    fs::create_dir(&sidecar).unwrap();
+    fs::write(sidecar.join("picture.PNG"), TINY_PNG).unwrap();
+    fs::write(sidecar.join("bell.mp3"), b"ID3-fake-audio").unwrap();
+    fs::write(sidecar.join("demo.mp4"), b"0123456789").unwrap();
+    fs::write(
+        sidecar.join("figure.svg"),
+        b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+    )
+    .unwrap();
+    // A directory with a file's name, and a link that leaves the directory.
+    fs::create_dir(sidecar.join("folder.png")).unwrap();
+    fs::write(root.path().join("secret.png"), b"secret").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.path().join("secret.png"), sidecar.join("escape.png")).unwrap();
+
+    // Started from the lesson's directory with a relative path.
+    let mut server = ChildGuard(Some(
+        Command::new(learn())
+            .current_dir(root.path())
+            .args(["serve", "lesson.learn"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn learn server"),
+    ));
+    let (address, startup) = serve_address(&mut server);
+    let mut fields: Vec<_> = startup.as_object().unwrap().keys().cloned().collect();
+    fields.sort();
+    assert_eq!(fields, ["artifact", "run_enabled", "status", "url"]);
+
+    let availability = |address: &str| -> Vec<(String, bool, Option<String>)> {
+        let state = request_json(address, "GET", "/api/v1/state", None);
+        state["lesson"]["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|node| node["type"] == "external_artifact")
+            .map(|node| {
+                (
+                    node["source_id"].as_str().unwrap().to_owned(),
+                    node["available"].as_bool().unwrap(),
+                    node["version"].as_str().map(str::to_owned),
+                )
+            })
+            .collect()
+    };
+    let before = availability(&address);
+    let flags: Vec<_> = before
+        .iter()
+        .map(|(id, available, _)| (id.as_str(), *available))
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            ("picture", true),
+            ("bell", true),
+            ("demo", true),
+            ("later", false),
+            ("folder", false),
+            ("escape", false),
+            ("figure", true),
+        ]
+    );
+    // Only an available file has a version, which is its size and time.
+    for (id, available, version) in &before {
+        assert_eq!(version.is_some(), *available, "{id}");
+    }
+    assert!(before[2].2.as_ref().unwrap().starts_with("10-"));
+
+    // The whole file, with the headers a player needs.
+    let whole = http(&address, "GET", "/api/v1/artifacts/3/file", &[], "");
+    assert_eq!(whole.status, 200, "{}", whole.headers);
+    assert_eq!(whole.body, b"0123456789");
+    assert_eq!(header_value(&whole, "content-type").unwrap(), "video/mp4");
+    assert_eq!(header_value(&whole, "content-length").unwrap(), "10");
+    assert_eq!(header_value(&whole, "accept-ranges").unwrap(), "bytes");
+    assert_eq!(header_value(&whole, "cache-control").unwrap(), "no-cache");
+    assert!(header_value(&whole, "content-range").is_none());
+    // The cache-busting query is accepted and changes nothing.
+    let versioned = http(&address, "GET", "/api/v1/artifacts/3/file?v=10-1", &[], "");
+    assert_eq!(versioned.body, b"0123456789");
+
+    // Each other kind has its own type and exact bytes.
+    for (node, content_type, bytes) in [
+        (1, "image/png", TINY_PNG.to_vec()),
+        (2, "audio/mpeg", b"ID3-fake-audio".to_vec()),
+        (
+            7,
+            "image/svg+xml",
+            b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec(),
+        ),
+    ] {
+        let response = http(
+            &address,
+            "GET",
+            &format!("/api/v1/artifacts/{node}/file"),
+            &[],
+            "",
+        );
+        assert_eq!(response.status, 200, "{node}");
+        assert_eq!(
+            header_value(&response, "content-type").unwrap(),
+            content_type
+        );
+        assert_eq!(
+            header_value(&response, "content-length").unwrap(),
+            bytes.len().to_string()
+        );
+        assert_eq!(response.body, bytes, "{node}");
+    }
+
+    // Ranges: a slice, an open end, a suffix, and one past the end.
+    for (range, bytes, content_range) in [
+        ("bytes=2-4", "234", "bytes 2-4/10"),
+        ("bytes=6-", "6789", "bytes 6-9/10"),
+        ("bytes=-3", "789", "bytes 7-9/10"),
+        ("bytes=8-100", "89", "bytes 8-9/10"),
+    ] {
+        let response = http(
+            &address,
+            "GET",
+            "/api/v1/artifacts/3/file",
+            &[("Range", range)],
+            "",
+        );
+        assert_eq!(response.status, 206, "{range}: {}", response.headers);
+        assert_eq!(response.body, bytes.as_bytes(), "{range}");
+        assert_eq!(
+            header_value(&response, "content-range").unwrap(),
+            content_range
+        );
+        assert_eq!(
+            header_value(&response, "content-length").unwrap(),
+            bytes.len().to_string()
+        );
+        assert_eq!(
+            header_value(&response, "content-type").unwrap(),
+            "video/mp4"
+        );
+    }
+    for range in ["bytes=10-", "bytes=50-60", "bytes=-0"] {
+        let response = http(
+            &address,
+            "GET",
+            "/api/v1/artifacts/3/file",
+            &[("Range", range)],
+            "",
+        );
+        assert_eq!(response.status, 416, "{range}");
+        assert_eq!(
+            header_value(&response, "content-range").unwrap(),
+            "bytes */10"
+        );
+        assert_eq!(response.json()["code"], "range_not_satisfiable");
+    }
+    // Several ranges are not served as parts: the whole file comes back.
+    let several = http(
+        &address,
+        "GET",
+        "/api/v1/artifacts/3/file",
+        &[("Range", "bytes=0-1,4-5")],
+        "",
+    );
+    assert_eq!(
+        (several.status, several.body.as_slice()),
+        (200, &b"0123456789"[..])
+    );
+
+    // Nothing else is served: other blocks, other nodes, absent files, and a
+    // directory or a link that leaves the sidecar directory.
+    for (node, code) in [
+        (0, "not_external_artifact"),
+        (99, "unknown_node"),
+        (4, "file_missing"),
+        (5, "file_missing"),
+        (6, "file_missing"),
+    ] {
+        let response = http(
+            &address,
+            "GET",
+            &format!("/api/v1/artifacts/{node}/file"),
+            &[],
+            "",
+        );
+        assert_eq!(response.status, 404, "{node}");
+        assert_eq!(response.json()["code"], code, "{node}");
+        assert!(response.json()["message"].is_string());
+    }
+    // The route takes no file name: a path in its place is not a route.
+    let by_name = http(
+        &address,
+        "GET",
+        "/api/v1/artifacts/3/file/../../secret.png",
+        &[],
+        "",
+    );
+    assert_eq!(by_name.status, 404);
+    assert!(!String::from_utf8_lossy(&by_name.body).contains("secret"));
+
+    // A file produced while `learn` runs shows up on the next state request.
+    fs::write(sidecar.join("later.webm"), b"webm-bytes").unwrap();
+    let after = availability(&address);
+    assert_eq!(after[3].0, "later");
+    assert!(after[3].1 && after[3].2.as_ref().unwrap().starts_with("10-"));
+    let later = http(&address, "GET", "/api/v1/artifacts/4/file", &[], "");
+    assert_eq!(later.status, 200);
+    assert_eq!(later.body, b"webm-bytes");
+    assert_eq!(header_value(&later, "content-type").unwrap(), "video/webm");
+    // Replacing a file changes its version; removing it flips it back.
+    fs::write(sidecar.join("later.webm"), b"webm-bytes-longer").unwrap();
+    let replaced = availability(&address);
+    assert_ne!(replaced[3].2, after[3].2);
+    fs::remove_file(sidecar.join("later.webm")).unwrap();
+    assert!(!availability(&address)[3].1);
+    assert_eq!(
+        http(&address, "GET", "/api/v1/artifacts/4/file", &[], "").json()["code"],
+        "file_missing"
+    );
+
+    // The warnings written at startup are exactly for the absent files.
+    let mut stderr = String::new();
+    let child = server.0.as_mut().unwrap();
+    let mut pipe = child.stderr.take().unwrap();
+    server.stop();
+    pipe.read_to_string(&mut stderr).unwrap();
+    let warnings: Vec<serde_json::Value> = stderr
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap_or_else(|_| panic!("not JSON: {line}")))
+        .collect();
+    let blocks: Vec<_> = warnings
+        .iter()
+        .map(|warning| {
+            assert_eq!(warning["status"], "warning");
+            assert_eq!(warning["warning"]["code"], "media_file_missing");
+            warning["warning"]["message"].as_str().unwrap()
+        })
+        .collect();
+    let named = |block: &str, file: &str| {
+        blocks
+            .iter()
+            .filter(|message| {
+                message.contains(&format!("`{block}`"))
+                    && message.contains(&format!("`{file}`"))
+                    && message.contains(&sidecar.display().to_string())
+                    && message.contains("fallback")
+            })
+            .count()
+    };
+    assert_eq!(blocks.len(), 3, "{stderr}");
+    assert_eq!(named("later", "later.webm"), 1, "{stderr}");
+    assert_eq!(named("folder", "folder.png"), 1, "{stderr}");
+    assert_eq!(named("escape", "escape.png"), 1, "{stderr}");
+}
+
+#[test]
+fn a_lesson_whose_media_is_all_present_starts_without_warnings_and_text_mode_warns_in_text() {
+    let root = TempDir::new("sidecar-present");
+    let lesson = root.path().join("lesson.json");
+    let source = serde_json::json!({
+        "schema_version": "2.5.0",
+        "title": "One picture",
+        "blocks": [{
+            "type": "external_artifact",
+            "id": "picture",
+            "kind": "image",
+            "file": "picture.png",
+            "alt": "A picture",
+            "fallback": "A picture, in words."
+        }]
+    });
+    fs::write(&lesson, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+    output_success(Command::new(learnc()).arg("build").arg(&lesson));
+    let artifact = root.path().join("lesson.learn");
+
+    // No sidecar directory at all: one warning, in the requested mode.
+    let mut server = ChildGuard::spawn_with(&artifact, &["--text"]);
+    let startup = server.0.as_mut().unwrap().stdout.take().unwrap();
+    let mut line = String::new();
+    BufReader::new(startup).read_line(&mut line).unwrap();
+    assert!(line.starts_with("Serving "), "{line}");
+    let mut pipe = server.0.as_mut().unwrap().stderr.take().unwrap();
+    server.stop();
+    let mut stderr = String::new();
+    pipe.read_to_string(&mut stderr).unwrap();
+    assert!(
+        stderr.starts_with("warning[media_file_missing]: block `picture`"),
+        "{stderr}"
+    );
+    assert_eq!(stderr.lines().count(), 1);
+
+    // With the file in place there is nothing to warn about.
+    let sidecar = root.path().join("lesson.assets");
+    fs::create_dir(&sidecar).unwrap();
+    fs::write(sidecar.join("picture.png"), TINY_PNG).unwrap();
+    let mut server = ChildGuard::spawn(&artifact);
+    let (address, _) = serve_address(&mut server);
+    let state = request_json(&address, "GET", "/api/v1/state", None);
+    assert_eq!(state["lesson"]["nodes"][0]["available"], true);
+    let mut pipe = server.0.as_mut().unwrap().stderr.take().unwrap();
+    server.stop();
+    let mut stderr = String::new();
+    pipe.read_to_string(&mut stderr).unwrap();
+    assert_eq!(stderr, "");
 }
 
 fn source_with_version(path: &Path, source: &serde_json::Value, version: &str) {

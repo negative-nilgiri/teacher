@@ -132,9 +132,10 @@ export interface RunCodeNode extends LessonNodeBase {
 export type ExternalArtifactKind = "image" | "audio" | "video";
 
 /**
- * A media file produced outside the compiler. Only its text is certain to be
- * shown: `alt` describes the media and `fallback` is Markdown shown in its
- * place. It has no `reference`, like a quiz.
+ * A media file produced outside the compiler. The file is shown when it is
+ * `available`; otherwise only its text is: `alt` describes the media and
+ * `fallback` is Markdown shown in its place. It has no `reference`, like a
+ * quiz.
  */
 export interface ExternalArtifactNode extends LessonNodeBase {
   type: "external_artifact";
@@ -144,6 +145,10 @@ export interface ExternalArtifactNode extends LessonNodeBase {
   alt: string;
   fallback: string;
   caption?: string;
+  /** Whether the file is in the sidecar directory right now. */
+  available: boolean;
+  /** Changes when the file does; sent only when `available`. */
+  version?: string;
 }
 
 export type LessonNode =

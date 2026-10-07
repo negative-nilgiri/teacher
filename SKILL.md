@@ -91,8 +91,13 @@ Answer the user's question in the session; a reference never needs a rebuild.
   with an extension that suits the kind (the allowlist is in
   `docs/AUTHORING.md`), plain-text `alt`, and Markdown `fallback`. Always
   write a real `fallback` that tells the learner in words what the media would
-  have shown or said: this version of `learn` shows only the fallback, and the
-  file may never exist. Never invent a file: name only one you produce
+  have shown or said: the file may never exist. `learn` plays the file when it
+  is in `<artifact name>.assets/` next to the `.learn` file (for
+  `queue.learn`, `queue.assets/queue-demo.mp4`) and shows the fallback when it
+  is not. It looks again on every page load, so you can generate the file after
+  the build, without rebuilding, and the learner refreshes to see it; keep the
+  `.assets/` directory with the artifact, because moving the `.learn` file
+  alone loses the media. Never invent a file: name only one you produce
   yourself, out of band, with tools you already have (`ffmpeg`, `graphviz`,
   `matplotlib`, or a paid service you are allowed to use), and never expect
   `learnc` to create, find, or check it (`check` cannot tell whether the file

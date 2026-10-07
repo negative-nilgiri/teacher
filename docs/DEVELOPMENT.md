@@ -34,7 +34,8 @@ For a first pass through the implementation, read these files in order:
 4. [`src/artifact/mod.rs`](../src/artifact/mod.rs) — `.learn` contract.
 5. [`src/runtime/model.rs`](../src/runtime/model.rs) — artifact loading and public projection.
 6. [`src/runtime/session.rs`](../src/runtime/session.rs) — learner state machine.
-7. [`src/runtime/server.rs`](../src/runtime/server.rs) — HTTP API and embedded assets.
+7. [`src/runtime/server.rs`](../src/runtime/server.rs) — HTTP API and embedded assets;
+   [`src/runtime/media.rs`](../src/runtime/media.rs) — sidecar media lookup.
 8. [`web/src/App.tsx`](../web/src/App.tsx) — browser bootstrap and mutation flow.
 
 Run `just` to list the development commands. The usual pre-review check is:
@@ -60,7 +61,9 @@ effect of a feature.
   block types or fields are added only in response to demonstrated use.
 - **Lessons are immutable during a session.** Changing content means compiling
   a new artifact. Attempts, reveals, and completion are session state, not
-  lesson mutations.
+  lesson mutations. Whether a media file is present is neither: it is read from
+  the sidecar directory for each state request and reported next to the
+  unchanged lesson (see [Serving media](#serving-media)).
 - **`learn` owns shared truth.** Whenever state must be shared between
   components or survive a browser refresh, the runtime owns it. React owns only
   unsubmitted drafts and presentational state such as expanded hints, folds,
@@ -312,7 +315,7 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.20.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.21.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.5.0` | [`SchemaVersion`](../src/source/model.rs) |
 | Artifact schema | `1.9.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
@@ -419,7 +422,8 @@ flowchart LR
 
 [`AppState`](../src/runtime/server.rs) contains an immutable
 `Arc<RuntimeLesson>`, one shared `Arc<Mutex<Session>>`, and the bound port (for
-the run route's `Host` check). Every tab talks to the
+the run route's `Host` check). The `RuntimeLesson` also holds the absolute
+sidecar directory of the artifact (see [Serving media](#serving-media)). Every tab talks to the
 same in-memory session. Refresh keeps server-owned progress; stopping `learn`
 loses it. There is no push channel, so a second tab observes another tab's
 changes only after its next request or refresh.
@@ -429,9 +433,10 @@ The v1 routes are registered in
 
 | Method | Path | Effect |
 | --- | --- | --- |
-| `GET` | `/api/v1/state` | Returns public lesson data and current progress. The lesson includes its root-relative `lesson_path`, the `artifact_path` given to `learn serve`, and a `reference` (frozen provenance) on every node except quizzes and external artifacts. It also carries `run` (`{enabled, token}`) and `runs` (the last `RunResult` of each run block that has run, by node ID). |
+| `GET` | `/api/v1/state` | Returns public lesson data and current progress. The lesson includes its root-relative `lesson_path`, the `artifact_path` given to `learn serve`, and a `reference` (frozen provenance) on every node except quizzes and external artifacts. It also carries `run` (`{enabled, token}`) and `runs` (the last `RunResult` of each run block that has run, by node ID). Every `external_artifact` node carries `available` (is its file in the sidecar directory right now) and, only when it is, a `version` string; both are worked out for each request, see [Serving media](#serving-media). |
 | `POST` | `/api/v1/questions/{node_id}/submit` | Records `{ "choice_id": n }`, grades it, and returns authoritative progress plus the focused question. |
 | `POST` | `/api/v1/questions/{node_id}/reveal` | Records an explicit reveal and returns the same mutation shape. |
+| `GET` | `/api/v1/artifacts/{node_id}/file` | Serves the sidecar file of an `external_artifact` block, whole or one `Range`. Read-only and unauthenticated like the other `GET`s; errors `unknown_node`, `not_external_artifact`, `file_missing` (404) and `range_not_satisfiable` (416). See [Serving media](#serving-media). |
 | `POST` | `/api/v1/runs/{node_id}` | Runs a `run_code` block once and returns `{ "run": RunResult }`. Needs `--allow-run`, the `X-Learn-Token` header, and a loopback `Host`; see [Running code](#running-code). |
 
 Quiz state semantics are intentionally factual:
@@ -504,6 +509,80 @@ an interpreter that is not installed). A non-zero exit or a timeout is a normal
 
 This is a local-prototype safeguard, not a sandbox. A run has the learner's
 permissions and environment, and the artifact is still trusted input.
+
+### Serving media
+
+An `external_artifact` block names a file but the artifact never contains it.
+`learn serve` looks for it in the **sidecar directory** of the artifact:
+[`sidecar_dir`](../src/runtime/media.rs) takes the artifact path as `learn` was
+given it, makes it absolute, and replaces its extension with `.assets`, so
+`dir/queue.learn` has `dir/queue.assets/` and a path without an extension just
+gets `.assets` appended (`dir/queue` has `dir/queue.assets/`). It is made
+absolute once, in `bind`, so changing the working directory later cannot move
+it; symbolic links in the path are not resolved. The `.learn` file itself does
+not have to be in a directory with anything else.
+
+Nothing about the file is decided at load time. The public lesson stays
+immutable; [`RuntimeLesson::public_now`](../src/runtime/model.rs) copies it for
+every state request and fills in, per media block, `available` and `version`
+from the file system at that moment. A file produced, replaced, or removed
+while `learn` runs is therefore seen by the next `GET /api/v1/state`, which the
+page makes when it loads, so a browser refresh picks it up. There is no watcher
+and no push; an open page does not change by itself.
+
+[`media::find`](../src/runtime/media.rs) is the only lookup. It joins only the
+bare file name frozen in the artifact (already validated by `check` and again by
+the artifact validator) to the sidecar directory, and the result counts only
+if it is a regular file whose resolved location is directly inside the resolved
+sidecar directory. A missing name, a directory with that name, a dangling link,
+and a link that leads outside the directory are all just absent (a link to
+another file inside the directory is followed); no request carries a file name,
+so no path can be steered. Full symlink hardening is still not a goal.
+
+`version` is `<size>-<modified time in nanoseconds since the epoch>`. The page
+appends it as `?v=` to the file URL, so a replaced file is fetched again even
+though the response may otherwise be cached by the browser; the server ignores
+the query.
+
+`GET /api/v1/artifacts/{node_id}/file` is typed like the other routes. The node
+must exist (`unknown_node`) and be an `external_artifact` block
+(`not_external_artifact`), and its file must be there (`file_missing`); all are
+404. The success response carries:
+
+| Header | Value |
+| --- | --- |
+| `Content-Type` | From the extension through `mime_guess`, with `m4a` as `audio/mp4` (`svg` is `image/svg+xml`); `application/octet-stream` otherwise |
+| `Content-Length` | The bytes in this response |
+| `Accept-Ranges` | `bytes` |
+| `Cache-Control` | `no-cache`: the file may be replaced while `learn` runs |
+| `Content-Security-Policy` | `sandbox`, so an SVG opened directly cannot run script with the page's authority |
+| `X-Content-Type-Options` | `nosniff` |
+
+`Range` supports one byte range so a browser can seek in a video: `bytes=a-b`,
+`bytes=a-`, and the suffix `bytes=-n`. The response is `206` with
+`Content-Range: bytes a-b/len`; an end past the file is cut to its last byte. A
+range that lies outside the file (a start at or beyond the length, a suffix of
+`0`, any range of an empty file) is `416` with `Content-Range: bytes */len` and
+a typed `range_not_satisfiable` body. A header that is not one valid byte
+range, a list of several ranges, or another unit is ignored and the whole file
+is sent with `200`. `If-Range` is not honored. The file is streamed from disk in
+64 KiB chunks starting at the requested offset, so a large video is never held
+in memory.
+
+The startup check is the only place `learn` reports a missing file: after the
+artifact loads, `bind` records every media block whose file is absent and
+`learn serve` writes one warning per file to stderr, code `media_file_missing`,
+naming the block, the file, the sidecar directory, and that the fallback text
+is shown until the file exists. It never fails the launch and does not change
+the startup record on stdout. `learnc check` cannot report a missing file
+because the file is usually produced after the build.
+
+**Accepted loss of self-containment.** A `.learn` file with media blocks is no
+longer everything the lesson needs: moving it without its `.assets/` directory
+loses the media (the fallback text still renders). That is the price of
+building the lesson before slow or costly media exists and of keeping the
+artifact small. Neither `learnc` nor `learn` generates media or calls a
+generation API.
 
 Domain errors such as unknown question/choice IDs use typed JSON errors.
 Malformed JSON or path-extractor failures currently use Axum's default rejection
@@ -585,10 +664,16 @@ compact label and falls back to `Code` when no specific language is known:
 - [`MultipleChoiceBlock`](../web/src/components/MultipleChoiceBlock.tsx) owns
   local selection/presentation and delegates submit/reveal to `App`.
 - [`ExternalArtifactBlock`](../web/src/components/ExternalArtifactBlock.tsx)
-  shows a media block's caption and its fallback Markdown, with a notice that
-  the media itself is not available and the block's alt text. It renders no
-  media element; a block link to it previews only the alt text and the
-  fallback (`ExternalArtifactPreview`).
+  shows a media block's caption, then, when the state says its file is
+  `available`, an `<img alt>`, `<audio controls>`, or `<video controls>` (the
+  alt text labels audio and video with `aria-label`) whose `src` is the file
+  route plus `?v=<version>`, with the fallback Markdown folded in a "Text
+  version" `<details>` beneath it. When the file is not available, or the
+  element fires an error event (the file was removed or cannot be decoded), it
+  shows the fallback in place of the media with a notice that the media is not
+  available and the block's alt text. The browser loads the file itself; `App`
+  fetches only the state. A block link to it always previews only the alt text
+  and the fallback (`ExternalArtifactPreview`).
 - [`RunCodeBlock`](../web/src/components/RunCodeBlock.tsx) shows a run block's
   caption, its own code through `CodeBlock` (or "Runs `<id>`" as a
   [`ReferenceLink`](../web/src/components/ReferenceLink.tsx) for an `of` block,
@@ -661,7 +746,8 @@ All three CLIs are agent-centric:
   usage, arguments, options, actions, and value cardinality;
 - success and failure payloads go to stdout;
 - process status independently communicates success or failure;
-- operational warnings, such as a failed `--open`, go to stderr.
+- operational warnings, such as a failed `--open` or a media file that is not in
+  the sidecar directory, go to stderr.
 
 Source diagnostics use a stable `code`, RFC 6901 `pointer`, message, and
 optional related locations and suggestions. Structural deserialization normally
@@ -767,10 +853,17 @@ Tests are layered so failures identify the responsible boundary:
   [`web/src/test/ExternalArtifact.test.tsx`](../web/src/test/ExternalArtifact.test.tsx).
   Per-language definition tests live in
   [`src/compiler/definitions.rs`](../src/compiler/definitions.rs).
+- [`src/runtime/media.rs`](../src/runtime/media.rs) unit-tests sidecar path
+  derivation, MIME types for every allowed extension, range parsing, and the
+  file lookup; [`src/runtime/server.rs`](../src/runtime/server.rs) tests the
+  file route (headers, whole files, ranges, chunked streaming, typed errors)
+  and the per-request state.
 - [`tests/v1_contract.rs`](../tests/v1_contract.rs) crosses process boundaries:
   schema fixtures, repository builds, selected diffs, moved refs, live HTTP quiz
   state, private-data projection, running code over HTTP with `sh` (disabled,
-  token, `Host`, timeout, truncation, concurrency), production assets, checker
+  token, `Host`, timeout, truncation, concurrency), serving sidecar media
+  (types, bytes, ranges, `available` flipping after launch, startup warnings, a
+  directory or outward link not served), production assets, checker
   CLI output, and the checker isolation invariant.
 - Checker planning, client validation, cache, config, and grading tests live
   under [`src/learnverify/`](../src/learnverify);
@@ -937,11 +1030,12 @@ validated and enter `presentation.links`; a link to the block itself is a
 whole-block link (a line range is `source.reference.lines_on_non_code`). The
 public projection carries `kind`, `file`, `alt`, `fallback`, and `caption`, and
 no `reference`: like a quiz, the block has no source resource, so a learner's
-copied reference names the block and its fallback text. The projection offers
-no way to fetch the file, and this version adds no route, directory lookup, or
-serving for it; the sidecar contract in
-[`AUTHORING.md`](AUTHORING.md#the-sidecar-contract) is documented intent for a
-later version, which will change the runtime and not the artifact. The
+copied reference names the block and its fallback text. The frozen projection offers
+no way to fetch the file; the runtime adds `available` and `version` to it per
+request and serves the file from the sidecar directory, described under
+[Serving media](#serving-media) and in
+[`AUTHORING.md`](AUTHORING.md#the-sidecar-contract). That changed no artifact
+field (artifact `1.9.0` stays as it is with package `1.21.0`). The
 extension allowlist per kind lives in
 [`ExternalArtifactKind`](../src/source/model.rs) and is shared by the source
 check and the artifact check.
@@ -962,11 +1056,13 @@ binaries must not.
 - No authentication, TLS, CSRF layer, or hostile-artifact hardening in the
   trusted single-user local v1 model. The exception is the opt-in run route,
   which needs the per-launch token and a loopback `Host`; it is not a sandbox.
-- `external_artifact` blocks show only their fallback: `learn` neither serves
-  nor looks for the media file, and neither `learnc` nor `learn` ever generates
-  media or calls a generation API.
+- `external_artifact` files are served only from the sidecar directory, found
+  again on every state request and never watched: an open page changes only on
+  refresh. A lesson with media blocks is not self-contained, and neither
+  `learnc` nor `learn` ever generates media or calls a generation API.
 - Filesystem path containment is lexical; hostile symlink protection is not a
-  v1 goal.
+  v1 goal. The one exception is the media lookup, which only serves a regular
+  file that resolves to a place directly inside the sidecar directory.
 - `.learn` artifacts are readable, disposable build outputs rather than secret
   or migratable containers.
 - Artifact node/content variants are structurally decoded and cross-validated,

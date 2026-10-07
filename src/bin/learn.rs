@@ -30,7 +30,9 @@ enum Command {
         /// flag nothing in a lesson can execute.
         #[arg(long)]
         allow_run: bool,
-        /// Compiled lesson artifact produced by `learnc build`.
+        /// Compiled lesson artifact produced by `learnc build`. The media files
+        /// of its `external_artifact` blocks are read from the `.assets`
+        /// directory next to it (`queue.learn` has `queue.assets/`).
         artifact: PathBuf,
     },
 }
@@ -142,6 +144,20 @@ async fn serve(
         );
     }
     let _ = io::stdout().flush();
+
+    // A missing file is normal until it is generated, so this only warns.
+    for missing in server.missing_media() {
+        emit_warning(
+            "media_file_missing",
+            format!(
+                "block `{}` refers to `{}`, which is not in the sidecar directory {}; its text fallback is shown until the file exists",
+                missing.block,
+                missing.file,
+                missing.sidecar_dir.display()
+            ),
+            text,
+        );
+    }
 
     if open {
         // `url` is generated exclusively from the bound IPv4 loopback address.

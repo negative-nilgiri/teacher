@@ -1,5 +1,6 @@
 //! Artifact loading, learner-session state, and local serving used by `learn`.
 
+mod media;
 mod model;
 mod runner;
 mod server;
@@ -11,4 +12,4 @@ pub use model::{
     RunStatus, StateResponse, load_artifact, project_artifact,
 };
 pub use runner::RunResult;
-pub use server::{BoundServer, RuntimeError, bind};
+pub use server::{BoundServer, MissingMedia, RuntimeError, bind};

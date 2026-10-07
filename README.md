@@ -50,6 +50,16 @@ usage, and warnings. Pass `--text` or `-t` for human-readable output; for
 example, `learnc -t --help`. `learn serve` binds to a random loopback port and
 opens a browser only when `--open` is supplied.
 
+An `external_artifact` block shows an image, audio, or video that is produced
+outside the compiler, with fallback text for when it is absent. `learn serve
+dir/queue.learn` looks for the file in `dir/queue.assets/` (the artifact path
+with `.assets` in place of its extension) on every state request, plays it when
+it is there, and shows the fallback when it is not, so media can be generated
+after `learnc build` and appears on a browser refresh without rebuilding. It
+warns on stderr at startup about each file it does not find and never fails the
+launch. Such an artifact is not fully self-contained: move `queue.assets/` with
+`queue.learn`, or the media is lost and only the fallback text remains.
+
 A lesson's `run_code` blocks run only when the learner starts
 `learn serve --allow-run`. Without the flag they show their code and frozen
 expected output, and nothing in a lesson can execute. With it, the page gets a

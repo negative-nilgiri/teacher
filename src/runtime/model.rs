@@ -15,6 +15,7 @@ use crate::artifact::{
 use crate::repository::{DiffLine, ResolvedDiff};
 use crate::source::{ExternalArtifactKind, NodeId};
 
+use super::media;
 use super::runner::{RunResult, RunSpec};
 
 /// Load and structurally validate a self-contained `.learn` artifact.
@@ -140,6 +141,35 @@ pub(crate) struct RuntimeLesson {
     /// What a run of each `run_code` block needs. The command and scratch file
     /// stay here, never in the public lesson.
     pub runs: BTreeMap<NodeId, RunSpec>,
+    /// Where the media files of `external_artifact` blocks are looked up, set
+    /// when the artifact is served. Without it every such file is absent.
+    pub sidecar_dir: Option<PathBuf>,
+}
+
+impl RuntimeLesson {
+    /// The public lesson as it is right now: every media block says whether its
+    /// file is in the sidecar directory at this moment. The lesson itself never
+    /// changes, so this is worked out for each state request.
+    pub fn public_now(&self) -> PublicLesson {
+        let mut lesson = self.public.clone();
+        for node in &mut lesson.nodes {
+            if let PublicLessonNodeContent::ExternalArtifact {
+                file,
+                available,
+                version,
+                ..
+            } = &mut node.content
+            {
+                let found = self
+                    .sidecar_dir
+                    .as_deref()
+                    .and_then(|dir| media::find(dir, file));
+                *available = found.is_some();
+                *version = found.map(|found| found.version);
+            }
+        }
+        lesson
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -287,6 +317,8 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
                     alt: alt.clone(),
                     fallback: fallback.clone(),
                     caption: caption.clone(),
+                    available: false,
+                    version: None,
                 },
             };
             PublicLessonNode {
@@ -309,6 +341,7 @@ pub(crate) fn project_runtime_lesson(artifact: &CompiledLesson) -> RuntimeLesson
         },
         answers,
         runs,
+        sidecar_dir: None,
     }
 }
 
@@ -472,7 +505,7 @@ pub enum PublicLessonNodeContent {
         expected_output: Option<String>,
     },
     /// A media file the lesson refers to, with the text shown in its place.
-    /// Only the fallback is shown until the runtime serves the file.
+    /// The file is served from the sidecar directory when it is there.
     ExternalArtifact {
         kind: ExternalArtifactKind,
         file: String,
@@ -480,6 +513,14 @@ pub enum PublicLessonNodeContent {
         fallback: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         caption: Option<String>,
+        /// Whether the file is in the sidecar directory. The projection of an
+        /// artifact says `false`; `RuntimeLesson::public_now` fills it in.
+        available: bool,
+        /// Changes with the file's size or modification time; only when
+        /// `available`. The page appends it to the file's URL so a replaced file
+        /// is not shown from the browser's cache.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        version: Option<String>,
     },
 }
 
@@ -814,7 +855,8 @@ pub(crate) mod tests {
                 "file": "queue-demo.mp4",
                 "alt": "A queue",
                 "fallback": "Items leave from the **front**.",
-                "caption": "The oldest leaves first."
+                "caption": "The oldest leaves first.",
+                "available": false
             }),
             "like a quiz, the block has no source resource, so no reference"
         );
@@ -879,6 +921,68 @@ pub(crate) mod tests {
         ));
         crate::artifact::validate_artifact(&artifact).unwrap();
         artifact
+    }
+
+    /// A quiz (0), a video block (1), and an image block (2).
+    pub(crate) fn media_artifact() -> CompiledLesson {
+        let mut artifact = quiz_artifact();
+        for (node_id, kind, file) in [
+            (1, ExternalArtifactKind::Video, "demo.mp4"),
+            (2, ExternalArtifactKind::Image, "diagram.png"),
+        ] {
+            artifact.presentation.nodes.push(CompiledNode {
+                node_id: NodeId::new(node_id),
+                source_id: format!("media-{node_id}"),
+                content: CompiledNodeContent::ExternalArtifact {
+                    kind,
+                    file: file.into(),
+                    alt: "Alt".into(),
+                    fallback: "Fallback".into(),
+                    caption: None,
+                },
+            });
+        }
+        crate::artifact::validate_artifact(&artifact).unwrap();
+        artifact
+    }
+
+    #[test]
+    fn availability_is_worked_out_per_call_and_never_stored_in_the_lesson() {
+        let directory =
+            std::env::temp_dir().join(format!("agent-teacher-availability-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let mut lesson = project_runtime_lesson(&media_artifact());
+        let nodes = |lesson: &RuntimeLesson| {
+            serde_json::to_value(lesson.public_now()).unwrap()["nodes"].clone()
+        };
+
+        // Without a sidecar directory, and with one that holds nothing.
+        for sidecar in [None, Some(directory.join("none.assets"))] {
+            lesson.sidecar_dir = sidecar;
+            let nodes = nodes(&lesson);
+            for node in [&nodes[1], &nodes[2]] {
+                assert_eq!(node["available"], false);
+                assert!(node.get("version").is_none());
+            }
+            assert!(nodes[0].get("available").is_none());
+        }
+
+        lesson.sidecar_dir = Some(directory.clone());
+        fs::write(directory.join("demo.mp4"), b"12345").unwrap();
+        let now = nodes(&lesson);
+        assert_eq!(now[1]["available"], true);
+        assert!(now[1]["version"].as_str().unwrap().starts_with("5-"));
+        assert_eq!(now[2]["available"], false);
+
+        // The stored lesson was not touched, so a later call sees the change.
+        assert_eq!(
+            serde_json::to_value(&lesson.public).unwrap()["nodes"][1]["available"],
+            false
+        );
+        fs::remove_file(directory.join("demo.mp4")).unwrap();
+        assert_eq!(nodes(&lesson)[1]["available"], false);
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
