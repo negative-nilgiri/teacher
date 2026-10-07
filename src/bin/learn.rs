@@ -21,11 +21,14 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Serve one compiled `.learn` artifact on a random loopback port.
+    /// Serve one compiled `.learn` artifact on a loopback port, random unless `--port` is given.
     Serve {
         /// Open the generated loopback URL in the default browser.
         #[arg(long)]
         open: bool,
+        /// Loopback port to listen on instead of a random one; 0 also means random.
+        #[arg(long, value_name = "PORT")]
+        port: Option<u16>,
         /// Compiled lesson artifact produced by `learnc build`.
         artifact: PathBuf,
     },
@@ -96,7 +99,11 @@ async fn main() {
 
     let text = cli.text;
     let result = match cli.command {
-        Command::Serve { open, artifact } => serve(&artifact, open, text).await,
+        Command::Serve {
+            open,
+            port,
+            artifact,
+        } => serve(&artifact, open, port.unwrap_or(0), text).await,
     };
     if let Err(error) = result {
         emit_error(error.code(), error.to_string(), text);
@@ -104,8 +111,8 @@ async fn main() {
     }
 }
 
-async fn serve(artifact: &Path, open: bool, text: bool) -> Result<(), RuntimeError> {
-    let server = bind(artifact).await?;
+async fn serve(artifact: &Path, open: bool, port: u16, text: bool) -> Result<(), RuntimeError> {
+    let server = bind(artifact, port).await?;
     let url = server.url();
     if text {
         println!("Serving {} at {url}", artifact.display());
@@ -189,8 +196,25 @@ mod tests {
             cli.command,
             Command::Serve {
                 open: true,
+                port: None,
                 artifact
             } if artifact == Path::new("lesson.learn")
         ));
+    }
+
+    #[test]
+    fn port_is_optional_and_must_fit_a_port_number() {
+        let port = |value: &str| {
+            Cli::try_parse_from(["learn", "serve", "--port", value, "lesson.learn"]).map(|cli| {
+                match cli.command {
+                    Command::Serve { port, .. } => port,
+                }
+            })
+        };
+        assert_eq!(port("8080").unwrap(), Some(8080));
+        assert_eq!(port("0").unwrap(), Some(0));
+        for invalid in ["65536", "-1", "http", ""] {
+            assert!(port(invalid).is_err(), "{invalid:?}");
+        }
     }
 }

@@ -47,8 +47,10 @@ serves it. See the [`examples` guide](examples/README.md) for the manual flow.
 
 Commands emit JSON by default for agent use, including help, version, invalid
 usage, and warnings. Pass `--text` or `-t` for human-readable output; for
-example, `learnc -t --help`. `learn serve` binds to a random loopback port and
-opens a browser only when `--open` is supplied.
+example, `learnc -t --help`. `learn serve` binds to a random loopback port, or to
+the one given with `--port` (for example `learn serve --port 8080 lesson.learn`),
+and opens a browser only when `--open` is supplied. It never listens beyond
+loopback, and it fails with `server_bind_failed` if the port is not available.
 
 `learnc lint` first runs the same validity checks as `learnc check`, then reports
 separate authoring-policy findings. Its findings never change `check` or `build`

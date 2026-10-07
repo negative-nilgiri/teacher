@@ -306,7 +306,7 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.17.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.18.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.3.0` | [`SchemaVersion`](../src/source/model.rs) |
 | Artifact schema | `1.7.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
@@ -607,7 +607,11 @@ Neither lint rules nor lint config is called by `check` or `build`.
 
 `learn serve` prints and flushes one startup record only after the artifact has
 loaded and a loopback port has been reserved. Process integrations can read that
-line to discover the random URL before waiting on the long-running server.
+line to discover the URL before waiting on the long-running server: the port
+is random unless `--port` fixed it, and `--port 0` also means random. A port
+that is taken or not allowed fails before the record is printed, with
+`server_bind_failed` and a message that names it. The server stays
+loopback-only whatever the port.
 
 ## Developer workflows
 
@@ -643,12 +647,13 @@ errors.
 
 ### Frontend development limitation
 
-[`vite.config.ts`](../web/vite.config.ts) currently proxies `/api` to fixed
-port `3000`, while `learn serve` intentionally binds an OS-selected random port.
-There is not yet a single hot-reload command that wires Vite to a live `learn`
-process. Component work can use Vitest/Vite; integrated changes should rebuild
-`web/dist` and run the embedded application until a development proxy protocol
-or explicit development-port mechanism is designed.
+[`vite.config.ts`](../web/vite.config.ts) proxies `/api` to fixed port `3000`,
+while `learn serve` binds an OS-selected random port unless told otherwise.
+Running `learn serve --port 3000 lesson.learn` next to `npm --prefix web run
+dev` therefore lines the two up: Vite serves the page from source and proxies
+`/api` to `learn`. There is still no single hot-reload command that starts
+both. Component work can use Vitest/Vite; integrated changes should rebuild
+`web/dist` and run the embedded application.
 
 ## Test map
 

@@ -1,7 +1,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -804,6 +804,79 @@ fn compiler_rejects_a_symbolic_ref_that_moves_during_resolution() {
     );
 }
 
+/// A port nothing listens on right now. Another process could take it before
+/// it is used, which is rare enough for a test.
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn build_inline_example(directory: &TempDir) -> PathBuf {
+    let lesson = directory.path().join("lesson.json");
+    fs::copy(manifest_dir().join("examples/inline-lesson.json"), &lesson).unwrap();
+    output_success(Command::new(learnc()).arg("build").arg(&lesson));
+    directory.path().join("lesson.learn")
+}
+
+#[test]
+fn serve_listens_on_the_requested_loopback_port() {
+    let directory = TempDir::new("serve-port");
+    let artifact = build_inline_example(&directory);
+    let port = free_port();
+
+    let mut server = ChildGuard::spawn_with(&artifact, &["--port", &port.to_string()]);
+    let startup = server.startup();
+    assert_eq!(
+        startup["status"], "serving",
+        "learn failed to start: {startup}"
+    );
+    assert_eq!(startup["url"], format!("http://127.0.0.1:{port}/"));
+    let state = request_json(&format!("127.0.0.1:{port}"), "GET", "/api/v1/state", None);
+    assert!(state["lesson"]["title"].is_string());
+    server.stop();
+
+    // Port 0 asks for a random port, as when the option is omitted.
+    let mut server = ChildGuard::spawn_with(&artifact, &["--port", "0"]);
+    let startup = server.startup();
+    let url = startup["url"].as_str().unwrap();
+    assert_ne!(url, "http://127.0.0.1:0/", "{startup}");
+    assert!(url.starts_with("http://127.0.0.1:"), "{url}");
+}
+
+#[test]
+fn serve_reports_a_port_that_is_taken_and_rejects_one_out_of_range() {
+    let directory = TempDir::new("serve-port-taken");
+    let artifact = build_inline_example(&directory);
+
+    let holder = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = holder.local_addr().unwrap().port();
+    let taken = Command::new(learn())
+        .args(["serve", "--port", &port.to_string()])
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert_eq!(taken.status.code(), Some(1));
+    let taken: serde_json::Value = serde_json::from_slice(&taken.stdout).unwrap();
+    assert_eq!(taken["status"], "error");
+    assert_eq!(taken["error"]["code"], "server_bind_failed");
+    let message = taken["error"]["message"].as_str().unwrap();
+    assert!(message.contains(&format!("127.0.0.1:{port}")), "{message}");
+    assert!(message.contains("--port"), "{message}");
+    drop(holder);
+
+    let invalid = Command::new(learn())
+        .args(["serve", "--port", "65536"])
+        .arg(&artifact)
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    let invalid: serde_json::Value = serde_json::from_slice(&invalid.stdout).unwrap();
+    assert_eq!(invalid["error"]["code"], "invalid_arguments");
+}
+
 #[test]
 fn artifact_public_projection_and_live_api_keep_quiz_answers_private() {
     let directory = TempDir::new("api-contract");
@@ -1135,8 +1208,14 @@ struct ChildGuard(Option<Child>);
 
 impl ChildGuard {
     fn spawn(artifact: &Path) -> Self {
+        Self::spawn_with(artifact, &[])
+    }
+
+    /// Like `spawn`, with extra `learn serve` options before the artifact.
+    fn spawn_with(artifact: &Path, options: &[&str]) -> Self {
         let child = Command::new(learn())
             .arg("serve")
+            .args(options)
             .arg(artifact)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

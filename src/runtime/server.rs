@@ -63,18 +63,20 @@ impl BoundServer {
     }
 }
 
-/// Load one artifact, create one shared in-memory session, and reserve a random
-/// IPv4 loopback port. The returned server does not listen beyond loopback.
-pub async fn bind(artifact_path: impl AsRef<Path>) -> Result<BoundServer, RuntimeError> {
+/// Load one artifact, create one shared in-memory session, and reserve an IPv4
+/// loopback port: `port`, or a random one when it is 0. The returned server does
+/// not listen beyond loopback.
+pub async fn bind(artifact_path: impl AsRef<Path>, port: u16) -> Result<BoundServer, RuntimeError> {
     let display_path = artifact_path.as_ref().to_string_lossy().into_owned();
     let artifact = load_artifact(artifact_path).map_err(RuntimeError::Artifact)?;
     let mut lesson = project_runtime_lesson(&artifact);
     lesson.public.artifact_path = Some(display_path);
     let app = router(AppState::new(lesson));
-    let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+    let bind_error = |error| RuntimeError::Bind { port, error };
+    let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port))
         .await
-        .map_err(RuntimeError::Bind)?;
-    let address = listener.local_addr().map_err(RuntimeError::Bind)?;
+        .map_err(bind_error)?;
+    let address = listener.local_addr().map_err(bind_error)?;
     Ok(BoundServer {
         listener,
         app,
@@ -200,7 +202,11 @@ fn escape_html(value: &str) -> String {
 #[derive(Debug)]
 pub enum RuntimeError {
     Artifact(ArtifactLoadError),
-    Bind(std::io::Error),
+    /// `port` is the one that was asked for; 0 means any.
+    Bind {
+        port: u16,
+        error: std::io::Error,
+    },
     Serve(std::io::Error),
 }
 
@@ -208,7 +214,7 @@ impl RuntimeError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::Artifact(error) => error.code(),
-            Self::Bind(_) => "server_bind_failed",
+            Self::Bind { .. } => "server_bind_failed",
             Self::Serve(_) => "server_failed",
         }
     }
@@ -218,9 +224,14 @@ impl fmt::Display for RuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Artifact(error) => error.fmt(formatter),
-            Self::Bind(error) => {
+            Self::Bind { port: 0, error } => {
                 write!(formatter, "could not bind the local lesson server: {error}")
             }
+            Self::Bind { port, error } => write!(
+                formatter,
+                "could not bind the local lesson server to 127.0.0.1:{port}: {error}; \
+                 choose another port with --port, or omit it to get a random one"
+            ),
             Self::Serve(error) => write!(formatter, "local lesson server failed: {error}"),
         }
     }
@@ -230,7 +241,7 @@ impl std::error::Error for RuntimeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Artifact(error) => Some(error),
-            Self::Bind(error) | Self::Serve(error) => Some(error),
+            Self::Bind { error, .. } | Self::Serve(error) => Some(error),
         }
     }
 }
