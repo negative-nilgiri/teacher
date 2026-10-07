@@ -130,6 +130,9 @@ struct LintOverrides {
     /// Blocks within which a name formatted as code should be shown.
     #[arg(long)]
     code_reference_gap: Option<usize>,
+    /// Minimum characters in an external-media fallback before it counts as thin.
+    #[arg(long)]
+    min_media_fallback_chars: Option<usize>,
     /// Suppress one info finding code; repeat for several. Adds to ignore_codes.
     #[arg(long = "ignore-code", value_name = "CODE")]
     ignore_codes: Vec<String>,
@@ -187,6 +190,9 @@ impl LintOverrides {
         }
         if let Some(value) = self.code_reference_gap {
             config.code_reference_gap = value;
+        }
+        if let Some(value) = self.min_media_fallback_chars {
+            config.min_media_fallback_chars = value;
         }
         config.ignore_codes.extend(self.ignore_codes);
     }

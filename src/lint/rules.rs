@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use crate::artifact::{CompiledLesson, CompiledNodeContent, RunCodeSource};
 use crate::language::Language;
 use crate::source::{
-    Block, CodeSource, DiffSource, GitDiffTarget, LessonSource, MarkdownSource, OutputSource,
-    RunCodeBlock,
+    Block, CodeSource, DiffSource, ExternalArtifactBlock, GitDiffTarget, LessonSource,
+    MarkdownSource, OutputSource, RunCodeBlock,
 };
 
 use super::{LintConfig, LintDiagnostic, Severity, SourceLocation, SpanIndex};
@@ -124,8 +124,9 @@ pub(super) fn collect(
             (Block::RunCode(block), CompiledNodeContent::RunCode { code, .. }) => {
                 rules.run_code(index, block, code);
             }
-            // External artifacts have no lint rules of their own yet.
-            (Block::ExternalArtifact(_), CompiledNodeContent::ExternalArtifact { .. }) => {}
+            (Block::ExternalArtifact(block), CompiledNodeContent::ExternalArtifact { .. }) => {
+                rules.external_artifact(index, block);
+            }
             _ => unreachable!("compiled nodes retain the source block order and kind"),
         }
     }
@@ -360,6 +361,52 @@ impl Rules<'_> {
                 &format!("/blocks/{index}"),
                 "run block has no `expected_output`, so it shows only code unless the learner runs it",
                 "Run the code once yourself and add its output as `expected_output`.",
+                None,
+            );
+        }
+    }
+
+    /// The fallback is all the learner sees until the file exists, which is
+    /// the normal state, and the alt text is all a screen reader gets.
+    fn external_artifact(&mut self, index: usize, block: &ExternalArtifactBlock) {
+        let alt = block.alt.trim().to_lowercase();
+        let file = block.file.to_lowercase();
+        let stem = Path::new(&file)
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or(&file);
+        if alt == file || alt == stem {
+            self.add(
+                Some(index),
+                "lint.external_artifact.alt_is_filename",
+                &format!("/blocks/{index}/alt"),
+                format!("alt text is the file name {:?}", block.file),
+                "Describe what the media shows or says; a screen-reader user learns nothing from the file name.",
+                None,
+            );
+        }
+        let fallback = block.fallback.trim();
+        let chars = fallback.chars().count();
+        if chars < self.config.min_media_fallback_chars {
+            self.add(
+                Some(index),
+                "lint.external_artifact.thin_fallback",
+                &format!("/blocks/{index}/fallback"),
+                format!(
+                    "fallback has {chars} characters, under {} (min_media_fallback_chars), and is all the learner sees until the file exists",
+                    self.config.min_media_fallback_chars
+                ),
+                "Write the explanation the media would give: its steps, labels, or narration, in words.",
+                None,
+            );
+        }
+        if fallback.to_lowercase() == alt {
+            self.add(
+                Some(index),
+                "lint.external_artifact.fallback_repeats_alt",
+                &format!("/blocks/{index}/fallback"),
+                "fallback repeats the alt text",
+                "The alt text only names what the media is; make the fallback say what it would have shown or said.",
                 None,
             );
         }
@@ -901,7 +948,7 @@ impl Rules<'_> {
     }
 
     /// Markdown the learner reads alongside code: Markdown blocks, captions,
-    /// highlight annotations, quiz prompts, and hints.
+    /// highlight annotations, external-media fallbacks, quiz prompts, and hints.
     fn scanned_texts(&self) -> Vec<(usize, String, TextPlace)> {
         let mut texts = Vec::new();
         for (index, (block, node)) in self
@@ -943,6 +990,21 @@ impl Rules<'_> {
                     }
                 }
                 (Block::Diff(block), _) => {
+                    if let Some(caption) = &block.caption {
+                        texts.push((
+                            index,
+                            caption.clone(),
+                            TextPlace::Json(format!("{base}/caption")),
+                        ));
+                    }
+                }
+                // The alt text is plain text, not Markdown.
+                (Block::ExternalArtifact(block), _) => {
+                    texts.push((
+                        index,
+                        block.fallback.clone(),
+                        TextPlace::Json(format!("{base}/fallback")),
+                    ));
                     if let Some(caption) = &block.caption {
                         texts.push((
                             index,
@@ -1156,6 +1218,7 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.mermaid.style_or_subgraph"
         | "lint.diff.mostly_additions"
         | "lint.reference.large_preview"
+        | "lint.external_artifact.alt_is_filename"
         | "lint.question.unshown_answer_code" => Severity::Warning,
         "lint.code.no_highlights"
         | "lint.code.many_highlight_ranges"
@@ -1168,6 +1231,8 @@ pub(super) fn known_severity(code: &str) -> Option<Severity> {
         | "lint.markdown.distant_code_reference"
         | "lint.question.no_hints"
         | "lint.run_code.no_expected_output"
+        | "lint.external_artifact.thin_fallback"
+        | "lint.external_artifact.fallback_repeats_alt"
         | "lint.question.unexplained_distractors"
         | "lint.markdown.unshown_code_reference" => Severity::Info,
         _ => return None,
@@ -1863,14 +1928,14 @@ mod tests {
     }
 
     #[test]
-    fn external_artifacts_have_no_rules_yet_but_their_text_links_and_previews_are_handled() {
+    fn external_artifact_links_and_previews_are_checked_like_other_blocks() {
         let root = temp_root();
         let fallback = (1..=16).map(|n| format!("Step {n}.\n")).collect::<String>();
         let lesson = json!({"schema_version":"2.5.0","title":"Media","blocks":[
             {"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"print(1)\n"}},
-            {"type":"external_artifact","id":"short","kind":"image","file":"short.png","alt":"Short",
-             "fallback":"One line.","caption":"The [code](#shown)."},
-            {"type":"external_artifact","id":"long","kind":"video","file":"long.mp4","alt":"Long",
+            {"type":"external_artifact","id":"short","kind":"image","file":"short.png","alt":"A short picture",
+             "fallback":"One line, but long enough to explain the picture.","caption":"The [code](#shown)."},
+            {"type":"external_artifact","id":"long","kind":"video","file":"long.mp4","alt":"A long video",
              "fallback":fallback},
             md("far", "Filler."), md("farther", "Filler."),
             md("uses", "See [the picture](#short) and [the video](#long).")
@@ -1889,6 +1954,202 @@ mod tests {
         assert_eq!(large[0].block_id.as_deref(), Some("uses"));
         assert!(large[0].message.contains("`long` previews 17 lines"));
         assert!(large[0].suggestion.contains("fallback"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_artifact_alt_equal_to_the_file_name_is_a_warning() {
+        let root = temp_root();
+        let lesson = json!({"schema_version":"2.5.0","title":"Media","blocks":[
+            {"type":"external_artifact","id":"with-ext","kind":"image","file":"Queue-Diagram.PNG",
+             "alt":" queue-diagram.png ","fallback":"A queue with items entering at the back and leaving at the front."},
+            {"type":"external_artifact","id":"without-ext","kind":"video","file":"demo.mp4",
+             "alt":"DEMO","fallback":"A queue with items entering at the back and leaving at the front."},
+            {"type":"external_artifact","id":"described","kind":"image","file":"queue.png",
+             "alt":"A queue drawn as a row of boxes","fallback":"A queue with items entering at the back and leaving at the front."},
+            {"type":"external_artifact","id":"contains","kind":"image","file":"queue.png",
+             "alt":"queue.png shows a row of boxes","fallback":"A queue with items entering at the back and leaving at the front."}
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let named = codes_of(&found, "lint.external_artifact.alt_is_filename");
+        assert_eq!(
+            named
+                .iter()
+                .map(|f| (f.block_id.as_deref().unwrap(), f.pointer.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("with-ext", "/blocks/0/alt"),
+                ("without-ext", "/blocks/1/alt")
+            ]
+        );
+        assert!(named.iter().all(|f| f.severity == Severity::Warning));
+        // The span is the alt string's line in the lesson.
+        assert_eq!(named[0].location.start.line, 4);
+        assert!(
+            named[0]
+                .suggestion
+                .contains("Describe what the media shows")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_artifact_fallbacks_under_the_threshold_are_info() {
+        let root = temp_root();
+        let media = |id: &str, fallback: &str| {
+            json!({"type":"external_artifact","id":id,"kind":"audio","file":"clip.mp3",
+                "alt":"A narrated clip","fallback":fallback})
+        };
+        let lesson = json!({"schema_version":"2.5.0","title":"Media","blocks":[
+            media("thin", "The narrator reads it."),
+            // 40 characters is not under the default of 40.
+            media("exact", &"x".repeat(40)),
+            // Characters are counted, not bytes, and the text is trimmed.
+            media("accents", &format!("  {}  ", "é".repeat(39))),
+            media("padded", &format!("{}\n\n", "x".repeat(40))),
+        ]});
+        let found = findings(lesson.clone(), &root, &LintConfig::default());
+        let thin = codes_of(&found, "lint.external_artifact.thin_fallback");
+        assert_eq!(
+            thin.iter()
+                .map(|f| (f.block_id.as_deref().unwrap(), f.pointer.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("thin", "/blocks/0/fallback"),
+                ("accents", "/blocks/2/fallback")
+            ]
+        );
+        assert!(thin.iter().all(|f| f.severity == Severity::Info));
+        assert!(thin[0].message.contains("22 characters"));
+        assert!(thin[0].message.contains("min_media_fallback_chars"));
+        assert!(
+            thin[0]
+                .suggestion
+                .contains("explanation the media would give")
+        );
+        assert_eq!(thin[0].location.start.line, 5);
+
+        let strict = LintConfig {
+            min_media_fallback_chars: 23,
+            ..LintConfig::default()
+        };
+        let found = findings(lesson.clone(), &root, &strict);
+        assert_eq!(
+            codes_of(&found, "lint.external_artifact.thin_fallback").len(),
+            1
+        );
+        let strictest = LintConfig {
+            min_media_fallback_chars: 41,
+            ..LintConfig::default()
+        };
+        let found = findings(lesson.clone(), &root, &strictest);
+        assert_eq!(
+            codes_of(&found, "lint.external_artifact.thin_fallback").len(),
+            4
+        );
+        let lax = LintConfig {
+            min_media_fallback_chars: 5,
+            ..LintConfig::default()
+        };
+        let found = findings(lesson.clone(), &root, &lax);
+        assert!(codes_of(&found, "lint.external_artifact.thin_fallback").is_empty());
+
+        let ignored = LintConfig {
+            ignore_codes: vec!["lint.external_artifact.thin_fallback".to_owned()],
+            ..LintConfig::default()
+        };
+        let found = findings(lesson, &root, &ignored);
+        assert!(codes_of(&found, "lint.external_artifact.thin_fallback").is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_artifact_fallback_equal_to_alt_is_info() {
+        let root = temp_root();
+        let long = "A queue with items entering at the back and leaving at the front.";
+        let lesson = json!({"schema_version":"2.5.0","title":"Media","blocks":[
+            {"type":"external_artifact","id":"same","kind":"image","file":"queue.png",
+             "alt":long,"fallback":format!(" {} ", long.to_uppercase())},
+            {"type":"external_artifact","id":"longer","kind":"image","file":"queue.png",
+             "alt":long,"fallback":format!("{long} The oldest item leaves first.")},
+            {"type":"external_artifact","id":"different","kind":"image","file":"queue.png",
+             "alt":"A queue drawn as boxes","fallback":long}
+        ]});
+        let found = findings(lesson.clone(), &root, &LintConfig::default());
+        let repeats = codes_of(&found, "lint.external_artifact.fallback_repeats_alt");
+        assert_eq!(repeats.len(), 1);
+        assert_eq!(repeats[0].block_id.as_deref(), Some("same"));
+        assert_eq!(repeats[0].pointer, "/blocks/0/fallback");
+        assert_eq!(repeats[0].severity, Severity::Info);
+        assert_eq!(repeats[0].location.start.line, 5);
+        assert!(codes_of(&found, "lint.external_artifact.thin_fallback").is_empty());
+
+        let ignored = LintConfig {
+            ignore_codes: vec!["lint.external_artifact.fallback_repeats_alt".to_owned()],
+            ..LintConfig::default()
+        };
+        let found = findings(lesson, &root, &ignored);
+        assert!(codes_of(&found, "lint.external_artifact.fallback_repeats_alt").is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_artifact_fallbacks_and_captions_are_scanned_as_markdown() {
+        let root = temp_root();
+        let lesson = json!({"schema_version":"2.5.0","title":"Media","blocks":[
+            {"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"class Queue:\n    def push(self): pass\n"}},
+            {"type":"external_artifact","id":"media","kind":"image","file":"queue.png",
+             "alt":"A queue of `hidden_name` boxes",
+             "fallback":"The picture shows `Queue.push` and `ghost_call()`; see [the later note](#note).",
+             "caption":"The caption names `phantom_total`."},
+            md("far-one", "Filler one."), md("far-two", "Filler two."), md("far-three", "Filler three."),
+            md("note", "A note.")
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let on_media = |code: &str| {
+            codes_of(&found, code)
+                .into_iter()
+                .filter(|f| f.block_id.as_deref() == Some("media"))
+                .map(|f| {
+                    (
+                        f.message.split('`').nth(1).unwrap_or(""),
+                        f.pointer.as_str(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            on_media("lint.markdown.unshown_code_reference"),
+            [
+                ("ghost_call", "/blocks/1/fallback"),
+                ("phantom_total", "/blocks/1/caption")
+            ]
+        );
+        // The names shown in the code block next to it are not distant.
+        assert!(on_media("lint.markdown.distant_code_reference").is_empty());
+        let forward = codes_of(&found, "lint.reference.forward");
+        assert_eq!(forward.len(), 1);
+        assert_eq!(forward[0].pointer, "/blocks/1/fallback");
+        // The span covers the link inside the decoded fallback string.
+        assert_eq!(forward[0].location.start.line, 15);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn external_artifact_fallback_names_far_from_their_code_are_reported() {
+        let root = temp_root();
+        let lesson = json!({"schema_version":"2.5.0","title":"Media","blocks":[
+            {"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"class Queue:\n    def push_item(self): pass\n"}},
+            md("far-one", "Filler one."), md("far-two", "Filler two."), md("far-three", "Filler three."),
+            {"type":"external_artifact","id":"media","kind":"image","file":"queue.png",
+             "alt":"A queue drawn as boxes",
+             "fallback":"The picture shows `Queue.push_item` going in at the back of the line."}
+        ]});
+        let found = findings(lesson, &root, &LintConfig::default());
+        let distant = codes_of(&found, "lint.markdown.distant_code_reference");
+        assert_eq!(distant.len(), 1);
+        assert_eq!(distant[0].block_id.as_deref(), Some("media"));
+        assert_eq!(distant[0].pointer, "/blocks/4/fallback");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -121,8 +121,13 @@ but no hints or with unexplained distractors, diff hunks that are mostly
 additions, names formatted as code in prose but
 never shown in a code, diff, or run block, run blocks without an
 `expected_output`, and Mermaid `subgraph`/`style` use in
-flowcharts and class diagrams. External-media blocks have no lint rules of
-their own yet. The
+flowcharts and class diagrams. For external-media blocks, lint warns when the
+`alt` is just the file name (`lint.external_artifact.alt_is_filename`), and
+reports as `info` a `fallback` under 40 characters
+(`lint.external_artifact.thin_fallback`, threshold `min_media_fallback_chars`)
+or one that merely repeats the `alt`
+(`lint.external_artifact.fallback_repeats_alt`); the `fallback` and `caption`
+are scanned for names formatted as code like any other Markdown. The
 complete rule and threshold table is in [`LINT_DESIGN.md`](LINT_DESIGN.md).
 
 Lint emits `{"diagnostics":[]}` for a clean JSON run, or no text with `-t`.
@@ -727,7 +732,16 @@ any other Markdown, so a link to an unknown block fails with
 `source.reference.unknown_block`. Like a quiz, it has no source resource, so a
 learner's copied reference names the block and the fallback text, and the
 exact text lives in the lesson. `learnverify` includes the block's text as
-quiz context; neither lint nor `learnverify` has rules for it yet.
+quiz context but has no checks for it. Lint warns when `alt` equals the file
+name, with or without its extension, since that tells a screen-reader user
+nothing (`lint.external_artifact.alt_is_filename`, `warning`), and reports as
+`info` a `fallback` shorter than 40 characters
+(`lint.external_artifact.thin_fallback`; change the limit with
+`min_media_fallback_chars` or `--min-media-fallback-chars`) and a `fallback`
+identical to the `alt` (`lint.external_artifact.fallback_repeats_alt`). Both
+`info` codes can be ignored with `--ignore-code`. Names formatted as code in the
+`fallback` and `caption` are compared with the code the lesson shows, like those
+in any other Markdown; the `alt` is plain text and is not scanned.
 
 | Diagnostic | Meaning |
 | --- | --- |

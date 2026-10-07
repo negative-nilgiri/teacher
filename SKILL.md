@@ -103,7 +103,10 @@ Answer the user's question in the session; a reference never needs a rebuild.
   `learnc` to create, find, or check it (`check` cannot tell whether the file
   exists, because it is made after the build). Never call a generation API from
   the compiler or put a key in the lesson. Do not use media for something a
-  code block or a few sentences already make clear.
+  code block or a few sentences already make clear. Lint warns when `alt` is
+  just the file name and reports a `fallback` under 40 characters or one that
+  repeats the `alt`: describe what the media shows in `alt`, and put the
+  explanation it would give in `fallback`.
 
 ## Judgment lint cannot check
 

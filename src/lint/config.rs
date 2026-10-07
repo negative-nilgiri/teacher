@@ -25,6 +25,7 @@ pub struct LintConfig {
     pub repeated_excerpt_gap: usize,
     pub repeated_excerpt_min_lines: usize,
     pub code_reference_gap: usize,
+    pub min_media_fallback_chars: usize,
     /// `info` codes to suppress. Only `info` findings are guesses weak enough
     /// to switch off per rule; stronger findings are filtered by severity.
     pub ignore_codes: Vec<String>,
@@ -50,6 +51,7 @@ impl Default for LintConfig {
             repeated_excerpt_gap: 3,
             repeated_excerpt_min_lines: 5,
             code_reference_gap: 3,
+            min_media_fallback_chars: 40,
             ignore_codes: Vec::new(),
         }
     }
@@ -170,6 +172,7 @@ mod tests {
         let config: LintConfig = toml::from_str("max_code_lines = 9").unwrap();
         assert_eq!(config.max_code_lines, 9);
         assert_eq!(config.max_inline_prose_chars, 512);
+        assert_eq!(config.min_media_fallback_chars, 40);
         assert!(toml::from_str::<LintConfig>("max_code_line = 9").is_err());
         let example: LintConfig =
             toml::from_str(include_str!("../../config.example.toml")).unwrap();
@@ -185,14 +188,32 @@ mod tests {
         assert!(
             config(&[
                 "lint.markdown.unshown_code_reference",
-                "lint.run_code.no_expected_output"
+                "lint.run_code.no_expected_output",
+                "lint.external_artifact.thin_fallback",
+                "lint.external_artifact.fallback_repeats_alt"
             ])
             .validate()
             .is_ok()
         );
-        for code in ["lint.code.plain_text", "lint.diff.new_file", "lint.nope"] {
+        for code in [
+            "lint.code.plain_text",
+            "lint.diff.new_file",
+            "lint.external_artifact.alt_is_filename",
+            "lint.nope",
+        ] {
             let error = config(&[code]).validate().unwrap_err();
             assert_eq!(error.code, "lint.config.ignore_code.invalid", "{code}");
+        }
+    }
+
+    #[test]
+    fn the_media_fallback_threshold_reads_a_count_and_rejects_anything_else() {
+        let config: LintConfig = toml::from_str("min_media_fallback_chars = 5").unwrap();
+        assert_eq!(config.min_media_fallback_chars, 5);
+        assert!(config.validate().is_ok());
+        for value in ["-1", "1.5", "\"forty\""] {
+            let text = format!("min_media_fallback_chars = {value}");
+            assert!(toml::from_str::<LintConfig>(&text).is_err(), "{value}");
         }
     }
 }

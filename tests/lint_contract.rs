@@ -298,6 +298,140 @@ fn run_blocks_are_linted_with_editable_spans_and_their_info_code_can_be_ignored(
 }
 
 #[test]
+fn media_blocks_are_linted_with_editable_spans_and_a_configurable_fallback_threshold() {
+    let root = TempRoot::new();
+    root.write(
+        "lesson.json",
+        r#"{"schema_version":"2.5.0","title":"Media","blocks":[
+            {"type":"code","id":"shown","language":"python","source":{"kind":"inline","content":"print(1)\n"}},
+            {"type":"external_artifact","id":"demo","kind":"video","file":"demo.mp4","alt":"demo",
+             "fallback":"A queue animation.","caption":"It prints `ghost_total`."},
+            {"type":"external_artifact","id":"echo","kind":"image","file":"echo.png",
+             "alt":"The echo diagram shows two boxes joined by an arrow",
+             "fallback":"The echo diagram shows two boxes joined by an arrow"}
+        ]}"#,
+    );
+    let summary = |output: &std::process::Output| {
+        json_output(output)["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| {
+                (
+                    finding["code"].as_str().unwrap().to_owned(),
+                    finding["severity"].as_str().unwrap().to_owned(),
+                    finding["pointer"].as_str().unwrap().to_owned(),
+                    finding["location"]["start"]["line"].as_u64().unwrap(),
+                )
+            })
+            .filter(|(code, ..)| code != "lint.lesson.few_questions")
+            .collect::<Vec<_>>()
+    };
+    let expect = |code: &str, severity: &str, pointer: &str, line: u64| {
+        (
+            code.to_owned(),
+            severity.to_owned(),
+            pointer.to_owned(),
+            line,
+        )
+    };
+
+    let linted = root.learnc(&["lint", "lesson.json"]);
+    assert!(linted.status.success());
+    // Block findings come first, in block order; the prose rules follow.
+    assert_eq!(
+        summary(&linted),
+        [
+            expect(
+                "lint.external_artifact.alt_is_filename",
+                "warning",
+                "/blocks/1/alt",
+                3
+            ),
+            expect(
+                "lint.external_artifact.thin_fallback",
+                "info",
+                "/blocks/1/fallback",
+                4
+            ),
+            expect(
+                "lint.external_artifact.fallback_repeats_alt",
+                "info",
+                "/blocks/2/fallback",
+                7
+            ),
+            expect(
+                "lint.markdown.unshown_code_reference",
+                "info",
+                "/blocks/1/caption",
+                4
+            ),
+        ]
+    );
+
+    // Lowering the threshold below the fallback's 18 characters silences it.
+    let lowered = root.learnc(&["lint", "--min-media-fallback-chars", "5", "lesson.json"]);
+    assert!(
+        summary(&lowered)
+            .iter()
+            .all(|(code, ..)| code != "lint.external_artifact.thin_fallback")
+    );
+    root.write("lint.toml", "min_media_fallback_chars = 19\n");
+    let configured = root.learnc(&["lint", "--config", "lint.toml", "lesson.json"]);
+    assert!(
+        summary(&configured)
+            .iter()
+            .any(|(code, ..)| code == "lint.external_artifact.thin_fallback")
+    );
+    let overridden = root.learnc(&[
+        "lint",
+        "--config",
+        "lint.toml",
+        "--min-media-fallback-chars",
+        "18",
+        "lesson.json",
+    ]);
+    assert!(
+        summary(&overridden)
+            .iter()
+            .all(|(code, ..)| code != "lint.external_artifact.thin_fallback")
+    );
+    let invalid = root.learnc(&["lint", "--min-media-fallback-chars", "-1", "lesson.json"]);
+    assert!(!invalid.status.success());
+    assert_eq!(
+        json_output(&invalid)["diagnostics"][0]["code"],
+        "cli.arguments.invalid"
+    );
+
+    // The info codes can be ignored; the warning cannot.
+    let ignored = root.learnc(&[
+        "lint",
+        "--ignore-code",
+        "lint.external_artifact.thin_fallback",
+        "--ignore-code",
+        "lint.external_artifact.fallback_repeats_alt",
+        "lesson.json",
+    ]);
+    assert!(summary(&ignored).iter().all(|(code, ..)| code
+        == "lint.external_artifact.alt_is_filename"
+        || code == "lint.markdown.unshown_code_reference"));
+    let not_info = root.learnc(&[
+        "lint",
+        "--ignore-code",
+        "lint.external_artifact.alt_is_filename",
+        "lesson.json",
+    ]);
+    assert!(!not_info.status.success());
+    assert_eq!(
+        json_output(&not_info)["diagnostics"][0]["code"],
+        "lint.config.ignore_code.invalid"
+    );
+
+    // Lint advice never changes whether the lesson checks.
+    assert!(root.learnc(&["check", "lesson.json"]).status.success());
+}
+
+#[test]
 fn lint_help_exposes_each_config_threshold_as_a_flag() {
     let root = TempRoot::new();
     let output = root.learnc(&["lint", "-t", "--help"]);
@@ -321,6 +455,7 @@ fn lint_help_exposes_each_config_threshold_as_a_flag() {
         "--repeated-excerpt-gap",
         "--repeated-excerpt-min-lines",
         "--code-reference-gap",
+        "--min-media-fallback-chars",
         "--ignore-code",
     ] {
         assert!(help.contains(flag), "missing {flag} from lint help");

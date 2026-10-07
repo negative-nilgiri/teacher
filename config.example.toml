@@ -38,6 +38,9 @@ repeated_excerpt_min_lines = 5
 # Report a name formatted as code that no block within this many blocks shows.
 code_reference_gap = 3
 
+# Report an external-media fallback shorter than this many characters.
+min_media_fallback_chars = 40
+
 # Error when inline code or diff content exceeds this many decoded characters.
 max_inline_code_diff_chars = 256
 # Error when inline Markdown or quiz prompt content exceeds this many characters.
