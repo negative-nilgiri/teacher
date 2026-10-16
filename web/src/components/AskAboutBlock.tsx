@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useAskList } from "../askList";
 import { formatReference, type LessonContext, type LineSelection } from "../reference";
 import { selectedLines } from "../selection";
 import type { LessonNode } from "../types";
@@ -14,7 +15,7 @@ interface ChipPosition {
   left: number;
 }
 
-type CopyState = "idle" | "copied" | "manual";
+type CopyState = "idle" | "copied" | "added" | "manual";
 
 /**
  * A discreet way to ask an agent about a block: an icon that shows on hover or
@@ -31,6 +32,7 @@ export function AskAboutBlock({ lesson, node }: AskAboutBlockProps) {
   const [selection, setSelection] = useState<LineSelection | undefined>();
   const [chip, setChip] = useState<ChipPosition | null>(null);
   const [copy, setCopy] = useState<CopyState>("idle");
+  const list = useAskList();
 
   const block = () => anchorRef.current?.closest<HTMLElement>(".lesson-block") ?? null;
 
@@ -65,7 +67,7 @@ export function AskAboutBlock({ lesson, node }: AskAboutBlockProps) {
   }, [open, copy]);
 
   useEffect(() => {
-    if (copy !== "copied") return undefined;
+    if (copy !== "copied" && copy !== "added") return undefined;
     const timer = window.setTimeout(() => setCopy("idle"), 2000);
     return () => window.clearTimeout(timer);
   }, [copy]);
@@ -97,6 +99,12 @@ export function AskAboutBlock({ lesson, node }: AskAboutBlockProps) {
     }
   };
 
+  const addToList = () => {
+    list?.add({ block: node.source_id, question: question.trim(), selection });
+    close();
+    setCopy("added");
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
@@ -109,9 +117,9 @@ export function AskAboutBlock({ lesson, node }: AskAboutBlockProps) {
 
   return (
     <span className="ask-anchor" ref={anchorRef}>
-      {copy === "copied" ? (
+      {copy === "copied" || copy === "added" ? (
         <span className="ask-copied" role="status">
-          Copied
+          {copy === "copied" ? "Copied" : "Added to list"}
         </span>
       ) : null}
       <button
@@ -181,9 +189,16 @@ export function AskAboutBlock({ lesson, node }: AskAboutBlockProps) {
               {selection ? (
                 <p className="ask-hint">Includes your selected lines.</p>
               ) : null}
-              <button className="ask-copy" onClick={() => void copyReference()} type="button">
-                Copy reference
-              </button>
+              <div className="ask-list-actions">
+                {list ? (
+                  <button onClick={addToList} type="button">
+                    Add to list
+                  </button>
+                ) : null}
+                <button className="ask-copy" onClick={() => void copyReference()} type="button">
+                  Copy reference
+                </button>
+              </div>
             </>
           )}
         </div>

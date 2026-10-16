@@ -38,7 +38,7 @@ function shown(node: LessonNode): string | null {
   }
 }
 
-function selected(selection: LineSelection | undefined): string | null {
+export function selectionLabel(selection: LineSelection | undefined): string | null {
   if (!selection) return null;
   if (selection.kind === "code") {
     const group = selection.group === undefined ? "" : ` (highlight group ${selection.group})`;
@@ -95,7 +95,7 @@ export function formatReference(
     `Question about lesson "${lesson.title}"${source}, block \`${node.source_id}\` (${KIND_LABELS[node.type]}):`,
   ];
   const shownText = shown(node);
-  const selectedText = selected(selection);
+  const selectedText = selectionLabel(selection);
   if (shownText || selectedText) {
     lines.push(`- shown: ${[shownText, selectedText].filter(Boolean).join("; ")}`);
   }

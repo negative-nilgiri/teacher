@@ -49,6 +49,8 @@ build: web-build
 install: web-build
     cargo install --path . --locked --force
 
+alias i := install
+
 # Pass arbitrary arguments directly to the compiler binary.
 learnc *args: web-build
     cargo run --quiet --bin learnc -- "$@"

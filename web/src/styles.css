@@ -225,3 +225,10 @@ progress { width: 100%; accent-color: var(--accent); }
   .diff-hunk-header { background: #263943; color: #a9c5d2; }
   button.primary { color: #16251e; }
 }
+.ask-list { position: fixed; right: 1rem; bottom: 1rem; z-index: 7; display: grid; justify-items: end; gap: .5rem; }
+.ask-list-toggle { padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--ink); font-size: .8rem; box-shadow: 0 2px 8px rgb(0 0 0 / .14); }
+.ask-list-panel { display: grid; gap: .6rem; width: min(26rem, calc(100vw - 2rem)); max-height: 70vh; overflow: auto; padding: .75rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--paper); box-shadow: 0 6px 18px rgb(0 0 0 / .14); }
+.ask-list-entries { display: grid; gap: .6rem; margin: 0; padding: 0; list-style: none; }
+.ask-list-entries li { display: grid; gap: .3rem; justify-items: start; }
+.ask-list-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+.ask-list-actions button, .ask-list-entries button { padding: .3rem .7rem; font-size: .78rem; }

@@ -578,6 +578,13 @@ frozen content; it never includes the content itself or quiz answers. Authors
 do nothing extra, but keeping the lesson source inside the filesystem root lets
 the reference name it.
 
+For several questions at once, the Ask popover also has **Add to list**. An
+**Asks (n)** button then opens a panel listing the questions in the order they
+were added, each editable and removable, with **Copy all** (one numbered
+reference per question) and **Clear**. The list lives in the browser's
+`sessionStorage` for that lesson: it survives a refresh but not a new `learn`
+run or another port.
+
 ## Acting on diagnostics
 
 Default failures are stable JSON and may include several independent problems:

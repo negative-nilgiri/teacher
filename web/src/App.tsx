@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { loadState, revealAnswer, submitChoice } from "./api";
+import { AskListPanel, AskListProvider } from "./askList";
 import { LessonNodeView } from "./components/LessonNodeView";
 import { LinkContext } from "./links";
 import { DefinitionLayer } from "./components/DefinitionLayer";
@@ -99,6 +100,7 @@ export function App() {
         </div>
       </header>
 
+      <AskListProvider lesson={lesson}>
       <LinkContext.Provider
         value={{
           definitions: lesson.definitions ?? {},
@@ -125,6 +127,8 @@ export function App() {
         ))}
       </main>
       </LinkContext.Provider>
+      <AskListPanel lesson={lesson} nodes={lesson.nodes} />
+      </AskListProvider>
     </>
   );
 }
