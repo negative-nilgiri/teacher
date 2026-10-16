@@ -37,7 +37,6 @@ export function AskAboutBlock({ lesson, node }: AskAboutBlockProps) {
   const block = () => anchorRef.current?.closest<HTMLElement>(".lesson-block") ?? null;
 
   useEffect(() => {
-    if (node.type !== "code" && node.type !== "diff") return undefined;
     const update = () => {
       const element = block();
       if (!element) return;
@@ -187,7 +186,9 @@ export function AskAboutBlock({ lesson, node }: AskAboutBlockProps) {
                 />
               </label>
               {selection ? (
-                <p className="ask-hint">Includes your selected lines.</p>
+                <p className="ask-hint">
+                  Includes your selected {selection.kind === "text" ? "text" : "lines"}.
+                </p>
               ) : null}
               <div className="ask-list-actions">
                 {list ? (

@@ -306,7 +306,7 @@ Three SemVer values evolve independently:
 
 | Version | Current value | Defined by |
 | --- | --- | --- |
-| Cargo package | `1.19.0` | [`Cargo.toml`](../Cargo.toml) |
+| Cargo package | `1.20.0` | [`Cargo.toml`](../Cargo.toml) |
 | Authored schema | `2.3.0` | [`SchemaVersion`](../src/source/model.rs) |
 | Artifact schema | `1.7.0` | [`ArtifactVersion`](../src/artifact/mod.rs) |
 
@@ -513,7 +513,9 @@ compact label and falls back to `Code` when no specific language is known:
   lines, and a popover that copies an agent-ready reference built by
   [`formatReference`](../web/src/reference.ts); nothing is sent anywhere.
   [`selection.ts`](../web/src/selection.ts) maps a text selection to source
-  lines, a highlight group, or old/new diff lines.
+  lines, a highlight group, or old/new diff lines, or, in a Markdown block or a
+  question's prompt or hints (never its choices), to its rendered text with
+  math as TeX source, which `formatReference` quotes.
 - [`askList.tsx`](../web/src/askList.tsx) collects several questions: Ask's
   **Add to list** stores the block, selection and question text as data (not
   formatted text, so entries stay editable) in a context backed by

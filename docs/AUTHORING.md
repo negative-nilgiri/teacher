@@ -578,6 +578,13 @@ frozen content; it never includes the content itself or quiz answers. Authors
 do nothing extra, but keeping the lesson source inside the filesystem root lets
 the reference name it.
 
+Selecting text in a Markdown block, a question's prompt, or its hints also
+offers the "Ask" chip. Prose has no line numbers, so the reference then quotes
+what was selected (`- selected text, as rendered:` and a blockquote), as it
+appeared on the page: formatting is dropped and math is copied as its TeX
+source. Only the learner's own selection is quoted, with no length cap, and
+selecting in a question's choices offers nothing, so an answer is never copied.
+
 For several questions at once, the Ask popover also has **Add to list**. An
 **Asks (n)** button then opens a panel listing the questions in the order they
 were added, each editable and removable, with **Copy all** (one numbered

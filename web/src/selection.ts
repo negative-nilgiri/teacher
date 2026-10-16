@@ -32,15 +32,49 @@ function rowsBetween(block: HTMLElement, start: HTMLElement, end: HTMLElement): 
   return rows.slice(Math.min(first, last), Math.max(first, last) + 1);
 }
 
+const BLOCK_ELEMENTS = "p, li, h1, h2, h3, h4, h5, h6, pre, blockquote, tr";
+
+/** The tagged element that holds both ends of the range, if there is one. */
+function holder(range: Range, selector: string): Element | null {
+  const of = (node: Node) =>
+    (node instanceof Element ? node : node.parentElement)?.closest(selector) ?? null;
+  const start = of(range.startContainer);
+  return start && start === of(range.endContainer) ? start : null;
+}
+
 /**
- * The source lines of the current text selection inside `block`, or null when
- * nothing inside a code listing or diff is selected.
+ * The rendered text of a range, with line breaks between blocks. Math is its
+ * TeX source (`$...$`), because the rendered form selects as two copies.
+ */
+function renderedText(range: Range): string {
+  const box = document.createElement("div");
+  box.append(range.cloneContents());
+  for (const math of box.querySelectorAll(".katex")) {
+    const tex = math.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
+    const fence = math.parentElement?.classList.contains("katex-display") ? "$$" : "$";
+    math.replaceWith(tex ? `${fence}${tex}${fence}` : "");
+  }
+  for (const element of box.querySelectorAll(BLOCK_ELEMENTS)) element.append("\n");
+  return box.textContent.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * The selection inside `block`: source lines of a code listing or diff, or the
+ * rendered text of a Markdown block, a question prompt or its hints (never the
+ * choices, which could show an answer). Null when none of those is selected.
  */
 export function selectedLines(block: HTMLElement, node: LessonNode): LineSelection | null {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
   const range = selection.getRangeAt(0);
   if (!block.contains(range.startContainer) || !block.contains(range.endContainer)) return null;
+
+  if (node.type === "markdown" || node.type === "multiple_choice") {
+    const selector = node.type === "markdown" ? ".prose-block" : ".question-prompt, .hints";
+    if (!holder(range, selector)) return null;
+    const text = renderedText(range);
+    return text ? { kind: "text", text } : null;
+  }
 
   if (node.type === "code") {
     const source = block.querySelector(".code-listing-source");

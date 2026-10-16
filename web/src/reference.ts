@@ -1,7 +1,11 @@
 import type { LessonNode, PublicLesson, ResourceReference } from "./types";
 
-/** Lines the learner selected inside a code or diff block, in source-file numbers. */
+/**
+ * What the learner selected inside a block: lines of a code or diff block, in
+ * source-file numbers, or the rendered text of a Markdown block or question.
+ */
 export type LineSelection =
+  | { kind: "text"; text: string }
   | { kind: "code"; start: number; end: number; group?: number }
   | { kind: "diff"; path?: string; old?: [number, number]; new?: [number, number] };
 
@@ -40,6 +44,7 @@ function shown(node: LessonNode): string | null {
 
 export function selectionLabel(selection: LineSelection | undefined): string | null {
   if (!selection) return null;
+  if (selection.kind === "text") return "selected text";
   if (selection.kind === "code") {
     const group = selection.group === undefined ? "" : ` (highlight group ${selection.group})`;
     return `selected ${span(selection.start, selection.end)}${group}`;
@@ -95,13 +100,17 @@ export function formatReference(
     `Question about lesson "${lesson.title}"${source}, block \`${node.source_id}\` (${KIND_LABELS[node.type]}):`,
   ];
   const shownText = shown(node);
-  const selectedText = selectionLabel(selection);
+  // Selected text is quoted below instead of being described.
+  const selectedText = selection?.kind === "text" ? null : selectionLabel(selection);
   if (shownText || selectedText) {
     lines.push(`- shown: ${[shownText, selectedText].filter(Boolean).join("; ")}`);
   }
   lines.push(`- version: ${version(node, node.reference)}`);
   if (lesson.artifact_path) {
     lines.push(`- exact shown text: block \`${node.source_id}\` in ${lesson.artifact_path}`);
+  }
+  if (selection?.kind === "text") {
+    lines.push("- selected text, as rendered:", ...selection.text.split("\n").map((line) => (line ? `> ${line}` : ">")));
   }
   const trimmed = question?.trim();
   if (trimmed) lines.push(`My question: ${trimmed}`);
